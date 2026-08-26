@@ -212,3 +212,63 @@ def detect_enumerations(names: Iterable[str], min_members: int = 3,
     # 覆盖的样品多的排前面；同样多时前缀长的更具体，排前面
     out.sort(key=lambda e: (-e.count, -len(e.prefix)))
     return out[:limit]
+
+
+# ------------------------------------------------------------------ 原位测量的文件夹名
+_RUN_TS = re.compile(r"^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{0,2})$")
+
+
+@dataclass(frozen=True)
+class RunFolder:
+    """一次原位测量的文件夹名解析结果。
+
+        ZG0013_2026072918354709_Mode5_202607291932_SPS100
+        └ device ┘└─ measured_at ─┘└mode┘└ 次要时间戳 ┘└ 其余 ┘
+
+    **sample 用完整文件夹名**，不是 device。同一片样品可能测好几次
+    （ZG0014 就有两个文件夹），只按 device 认身份会把它们静默合并。
+    device 单独留一个字段，用来做「样品号」这一维筛选。
+    """
+    name: str                      # 完整文件夹名 = 样品名
+    device: str = ""               # ZG0013
+    measured_at: str = ""          # ISO 8601，解析不出来就是空
+    mode: str = ""                 # Mode5
+    extras: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "device": self.device,
+                "measured_at": self.measured_at, "mode": self.mode,
+                "extras": list(self.extras)}
+
+
+def parse_run_folder(folder_name: str) -> RunFolder:
+    """从文件夹名里挖出样品号、测量时间和模式。
+
+    挖不出来也不报错 —— 文件夹名本身永远是样品名，其余字段留空。
+    命名规则以后变了，最坏情况是筛选少一维，不会导不进来。
+    """
+    name = folder_name.strip().rstrip("/")
+    parts = [p for p in name.split("_") if p]
+    if not parts:
+        return RunFolder(name=name)
+
+    device = parts[0]
+    measured_at = ""
+    mode = ""
+    extras: list[str] = []
+
+    for seg in parts[1:]:
+        m = _RUN_TS.match(seg)
+        if m and not measured_at:
+            y, mo, d, hh, mm, ss, frac = m.groups()
+            measured_at = f"{y}-{mo}-{d}T{hh}:{mm}:{ss}"
+            if frac:
+                measured_at += f".{frac.ljust(2, '0')}"
+            continue
+        if seg.lower().startswith("mode") and not mode:
+            mode = seg
+            continue
+        extras.append(seg)
+
+    return RunFolder(name=name, device=device, measured_at=measured_at,
+                     mode=mode, extras=tuple(extras))

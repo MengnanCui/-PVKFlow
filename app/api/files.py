@@ -77,10 +77,19 @@ def browse(path: str = Query(...), show_hidden: bool = False) -> dict:
 
 @router.post("/scan")
 def scan(payload: dict = Body(...)) -> dict:
-    """扫描 + 分类 + 样品匹配预览。不写任何东西，给人确认用。"""
+    """扫描 + 分类 + 样品匹配预览。不写任何东西，给人确认用。
+
+    mode="folders"：主文件夹 → 每个含 Data.csv 的子文件夹算一次测量。
+    mode="files"（默认）：按文件名走命名规则，老流程不变。
+    """
     path = payload.get("path")
     if not path:
         raise ApiError("缺少 path", 400)
+    mode = (payload.get("mode") or "files").strip()
+    if mode == "folders":
+        return guard(ingest.scan_folders, path)
+    if mode != "files":
+        raise ApiError(f"不认识的导入模式：{mode}。可用的是 files / folders", 400)
     recursive = bool(payload.get("recursive", True))
     return guard(ingest.scan_preview, path, recursive)
 

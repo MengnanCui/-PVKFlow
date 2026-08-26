@@ -152,8 +152,11 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
     }
     for (const [i, s] of series.entries()) {
       // 有分组时按组着色（最多 12 组，对齐 matplotlib 规范的 12 色）
-      const color = s.group ? seriesColor(groupIndex.get(s.group) + shift)
-                            : seriesColor(i + shift);
+      // s.color 显式指定时优先 —— 时刻叠加谱要按时间由浅到深，
+      // 那是一条连续的色阶，不是 12 色循环。
+      const color = s.color
+        || (s.group ? seriesColor(groupIndex.get(s.group) + shift)
+                    : seriesColor(i + shift));
       const pts = [];
       let d = '', pen = false;
       for (let k = 0; k < s.x.length; k++) {
@@ -307,7 +310,7 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
       }
       if (best && bd < 40) {
         items.push({ label: s.label, px: best[0], py: best[1], y: best[3],
-                     color: seriesColor(i + shift) });
+                     color: s.color || seriesColor(i + shift) });
         hoverX = best[2];
       }
     }
@@ -345,7 +348,7 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
     legend.className = 'chart-legend';
     const items = groups.length
       ? groups.map((g, i) => [g, seriesColor(i + shift)])
-      : series.map((s, i) => [s.label, seriesColor(i + shift)]);
+      : series.map((s, i) => [s.label, s.color || seriesColor(i + shift)]);
     for (const [label, color] of items) {
       const span = document.createElement('span');
       const swatch = document.createElement('i');

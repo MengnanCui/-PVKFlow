@@ -52,7 +52,7 @@ export const api = {
   // 文件
   roots: () => get('/api/files/roots'),
   browse: (path, showHidden = false) => get('/api/files/browse', { path, show_hidden: showHidden }),
-  scan: (path, recursive = true) => post('/api/files/scan', { path, recursive }),
+  scan: (path, opts = {}) => post('/api/files/scan', { path, ...opts }),
   importFiles: (files, sourceHint) => post('/api/files/import', { files, source_hint: sourceHint }),
   upload: (fileList) => {
     const fd = new FormData();

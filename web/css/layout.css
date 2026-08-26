@@ -91,7 +91,7 @@
 .page.is-active { display: block; }
 /* 工作台需要全宽：三栏本来就挤 */
 #page-process { max-width: none; }
-#page-sample  { max-width: 1400px; }
+#page-sample  { max-width: none; }   /* 三个模块要横着排，占满宽度 */
 
 /* 长段文字限制在可读行长内 —— 一行 100+ 字是没法读的 */
 .measure { max-width: 74ch; }
@@ -146,6 +146,17 @@
 }
 
 /* 选择页：左分面 + 右列表 */
+/* 图并排。样品页要「宽度占满一整页」，一行两张比上下堆着好比对。
+   窄屏各自塌成一列 —— 两张挤在 500px 里谁也看不清。 */
+.fig-grid-2, .fig-grid-4 {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: var(--s6x) var(--s5x); align-items: start;
+}
+.fig-grid-2 > *, .fig-grid-4 > * { min-width: 0; }
+@media (max-width: 1100px) {
+  .fig-grid-2, .fig-grid-4 { grid-template-columns: 1fr; }
+}
+
 .select-layout { display: grid; grid-template-columns: 264px 1fr; gap: var(--s4x);
                  align-items: start; }
 .select-layout > aside { position: sticky; top: var(--s4x); max-height: calc(100vh - 120px);

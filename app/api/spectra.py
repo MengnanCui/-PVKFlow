@@ -167,7 +167,7 @@ def heatmap(
     lam_min: float | None = None,
     lam_max: float | None = None,
     norm: str = Query("frame", pattern="^(none|frame|global|wavelength)$"),
-    cmap: str = Query("ice"),
+    cmap: str = Query("ice", pattern="^(gray|ice|steel|rainbow)$"),
     width: int = Query(1100, ge=120, le=3000),
     height: int = Query(560, ge=120, le=3000),
 ) -> Response:

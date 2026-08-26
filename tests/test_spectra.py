@@ -150,12 +150,32 @@ def test_normalisation_modes():
     assert g.min() == 0 and g.max() == 1
 
 
+def _luminance(name):
+    lut = render._lut(name).astype(float)
+    return 0.2126 * lut[:, 0] + 0.7152 * lut[:, 1] + 0.0722 * lut[:, 2]
+
+
+# 彩虹是刻意的例外：亮度不单调，但强度分布的整体形状看得最清楚，
+# 也是光谱仪软件的惯用画法。代价写在 render.py 的注释里，界面上可以切别的。
+NON_MONOTONE = {"rainbow"}
+
+
 def test_colormaps_are_monotone_in_luminance():
     """亮度不单调的色标会让数值不同的区域看起来一样亮，人眼直接读错。"""
     for name in render.COLORMAPS:
-        lut = render._lut(name).astype(float)
-        y = 0.2126 * lut[:, 0] + 0.7152 * lut[:, 1] + 0.0722 * lut[:, 2]
-        assert np.all(np.diff(y) >= -1.0), f"色标 {name} 的亮度不单调"
+        if name in NON_MONOTONE:
+            continue
+        assert np.all(np.diff(_luminance(name)) >= -1.0), f"色标 {name} 的亮度不单调"
+
+
+def test_the_rainbow_exception_is_deliberate_and_only_one():
+    """彩虹确实不单调 —— 这一条把「例外」钉死。
+
+    以后谁再加一条不单调的色标，要么在 NON_MONOTONE 里写明理由，
+    要么这条测试会拦住他。不能悄悄溜进来。
+    """
+    assert np.diff(_luminance("rainbow")).min() < -1.0
+    assert NON_MONOTONE == {"rainbow"}
 
 
 # ---------------------------------------------------------------- 派生曲线

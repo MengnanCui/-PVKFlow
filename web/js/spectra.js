@@ -95,3 +95,40 @@ export function cyclesFor(otNm, lamMin, lamMax) {
   const r = windowResolution(lamMin, lamMax);
   return r ? (2 * otNm) * r.dk : null;
 }
+
+
+/**
+ * 短波端的饱和区从哪里结束。
+ *
+ * 光源在紫外端没有输出，仪器会把值顶到量程两端（真实文件里就是一串
+ * 0 和 100）。这段数据不是信号，但它参与「按自身最大值归一化」的话，
+ * 会把真正的谱压扁到图的下半部分 —— 一张全是噪声的图。
+ *
+ * 判据：某条波长上有超过 60% 的帧恰好落在全局最小或最大值上，就算饱和。
+ * 从短波端连续数过去，第一条不饱和的波长就是可用区的起点。
+ */
+export function saturatedHead(frames, threshold = 0.6) {
+  const { lambda: lam, values: V } = frames;
+  if (!lam?.length) return { index: 0, lambda: null, count: 0 };
+
+  let lo = Infinity, hi = -Infinity;
+  for (const row of V) {
+    for (let j = 0; j < row.length; j++) {
+      const v = row[j];
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  }
+  if (!(hi > lo)) return { index: 0, lambda: null, count: 0 };
+
+  let i = 0;
+  for (; i < lam.length; i++) {
+    const row = V[i];
+    let pinned = 0;
+    for (let j = 0; j < row.length; j++) {
+      if (row[j] === lo || row[j] === hi) pinned++;
+    }
+    if (pinned / row.length < threshold) break;
+  }
+  return { index: i, lambda: i < lam.length ? lam[i] : null, count: i };
+}

@@ -83,6 +83,17 @@ class ScannedFile:
 _SKIP_DIRS = {".git", "__pycache__", ".venv", "node_modules", ".idea", ".vscode", "$RECYCLE.BIN"}
 
 
+def _mtime_iso(path: Path) -> str:
+    """文件修改时间，ISO 8601。文件夹名里没有时间戳时的退路。"""
+    from datetime import datetime, timezone
+
+    try:
+        ts = path.stat().st_mtime
+    except OSError:
+        return ""
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="seconds")
+
+
 def scan(root: str | Path, recursive: bool = True) -> list[ScannedFile]:
     """扫描一个目录或单个文件，返回可导入的文件清单。不写任何东西。"""
     root = Path(root).expanduser()
@@ -112,6 +123,68 @@ def scan(root: str | Path, recursive: bool = True) -> list[ScannedFile]:
     return out
 
 
+# 原位测量一个子文件夹一次，数据文件固定叫这个
+RUN_DATA_FILE = "Data.csv"
+
+
+def scan_folders(root: str | Path, data_file: str = RUN_DATA_FILE) -> dict:
+    """按子文件夹扫描：主文件夹 → 每个含 Data.csv 的子文件夹出一条。
+
+    为什么单独一条路径，而不是改命名规则：默认规则里的 `{sample}` 会把
+    每个 Data.csv 都命名成 "Data"，所有测量挤成同一个样品。改全局规则
+    又会打断已有的按文件名导入。所以做成导入时的**模式选择**。
+
+    样品名 = 完整文件夹名。同一片样品测两次就是两个文件夹、两个样品 ——
+    只按前缀 ZG0014 认身份的话，两次测量会被静默合并成一次。
+    """
+    root = Path(root).expanduser()
+    if not root.is_dir():
+        raise NotADirectoryError(f"按子文件夹导入需要一个目录：{root}")
+
+    base = root.resolve()
+    rows = []
+    skipped = []
+    for child in sorted(base.iterdir()):
+        if not child.is_dir() or child.name.startswith(".") or child.name in _SKIP_DIRS:
+            continue
+        target = child / data_file
+        if not target.is_file():
+            skipped.append({"folder": child.name, "reason": f"没有 {data_file}"})
+            continue
+        info = naming.parse_run_folder(child.name)
+        try:
+            size = target.stat().st_size
+        except OSError as exc:
+            skipped.append({"folder": child.name, "reason": str(exc)})
+            continue
+        rows.append({
+            "abs_path": str(target),
+            "display_path": f"{child.name}/{data_file}",
+            "filename": data_file,
+            "ext": target.suffix.lower(),
+            "size": size,
+            "storage_mode": "copied",
+            "sample": info.name,          # 完整文件夹名
+            "batch": info.device,         # ZG0013 —— 界面上叫「样品号」
+            "method": "absorbance",
+            "measured_at": info.measured_at,
+            "mode": info.mode,
+            "rule": "@run-folder",
+            "matched": True,
+        })
+
+    return {
+        "root": str(base),
+        "mode": "folders",
+        "count": len(rows),
+        "matched": len(rows),
+        "to_copy": len(rows),
+        "to_reference": 0,
+        "files": rows,
+        "skipped": skipped,
+    }
+
+
 def scan_preview(root: str | Path, recursive: bool = True) -> dict:
     """扫描 + 分类 + 样品匹配预览。导入前给人看，确认后才写库。"""
     files = scan(root, recursive)
@@ -134,6 +207,7 @@ def scan_preview(root: str | Path, recursive: bool = True) -> dict:
         })
     return {
         "root": str(Path(root).expanduser().resolve()),
+        "mode": "files",
         "count": len(rows),
         "matched": sum(1 for r in rows if r["matched"]),
         "to_copy": sum(1 for r in rows if r["storage_mode"] == "copied"),
@@ -303,12 +377,21 @@ def ingest_paths(
                     ),
                 )
                 if method and sample_id:
+                    # measured_at 是「按时间筛选」的唯一来源。文件夹名里解析不出来时
+                    # 退回文件的修改时间 —— 有个近似的时间，比这一维直接失效强。
+                    measured_at = (entry.get("measured_at") or "").strip()
+                    if not measured_at:
+                        measured_at = _mtime_iso(src)
                     c.execute(
-                        "INSERT INTO measurement(measurement_id, sample_id, method, created_at)"
-                        " SELECT ?,?,?,? WHERE NOT EXISTS("
+                        "INSERT INTO measurement(measurement_id, sample_id, method,"
+                        " measured_at, created_at)"
+                        " SELECT ?,?,?,?,? WHERE NOT EXISTS("
                         "   SELECT 1 FROM measurement WHERE sample_id=? AND method=?)",
-                        (db.new_id("mea"), sample_id, method, db.now(), sample_id, method),
+                        (db.new_id("mea"), sample_id, method, measured_at, db.now(),
+                         sample_id, method),
                     )
+
+            _mark_matrix(aid, src, ext)
 
             report.imported.append({
                 "artifact_id": aid, "filename": src.name, "display_path": display,
@@ -421,3 +504,41 @@ def verify_references() -> dict:
         elif not alive:
             missing.append(r["artifact_id"])
     return {"checked": len(rows), "missing": missing, "restored": restored}
+
+
+def _mark_matrix(artifact_id: str, path: Path, ext: str) -> None:
+    """导入时就判定这个文件是不是光谱矩阵。
+
+    以前这件事是惰性的 —— 只有当有人访问 /api/spectra/samples 时才回填。
+    在那之前，筛选式的 has_matrix 和批处理看到的是「零个矩阵」，
+    刚导完就去跑批处理会命中 0 个样品，而且没有任何提示。
+    """
+    fmt = ""
+    try:
+        if ext in {".xlsx", ".xls", ".xlsm"}:
+            flag, cols = True, None
+        else:
+            from app.parsers import insitu_csv, sniff
+
+            if insitu_csv.looks_like_insitu(path):
+                flag, cols, fmt = True, None, "insitu_data_csv"
+            else:
+                sn = sniff.sniff_text(path, max_lines=40)   # 抬头可能有十几行
+                cols = len(sn.columns)
+                flag = bool(sn.ok and cols >= 8)
+    except Exception:
+        return          # 判不出来就留 NULL，让惰性那条路以后再补
+
+    with db.tx() as c:
+        row = c.execute("SELECT meta_json FROM artifact WHERE artifact_id=?",
+                        (artifact_id,)).fetchone()
+        try:
+            meta = json.loads((row["meta_json"] if row else None) or "{}")
+        except json.JSONDecodeError:
+            meta = {}
+        meta["matrix_like"] = flag
+        meta["columns_hint"] = cols
+        if fmt:
+            meta["source_format"] = fmt
+        c.execute("UPDATE artifact SET is_matrix=?, meta_json=? WHERE artifact_id=?",
+                  (1 if flag else 0, json.dumps(meta, ensure_ascii=False), artifact_id))
