@@ -423,7 +423,7 @@ tr.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset
 .vlist-canvas { position: absolute; top: 0; left: 0; right: 0; will-change: transform; }
 .vrow { display: grid; align-items: center; gap: var(--s3x);
         padding: 0 var(--s3x); border-bottom: 1px solid var(--line);
-        grid-template-columns: 28px 1fr 90px 1fr 84px 74px; cursor: pointer; }
+        grid-template-columns: 28px 1fr 84px 124px 1fr 78px 70px; cursor: pointer; }
 .vrow:hover { background: var(--surface-2); }
 .vrow[aria-selected="true"] { background: var(--accent-wash);
                               box-shadow: inset 2px 0 0 var(--accent); }

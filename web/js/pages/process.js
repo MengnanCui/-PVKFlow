@@ -246,7 +246,8 @@ function drawTable() {
   }
 
   const header = h('div.vrow.vrow-head',
-    h('span'), h('span', '样品'), h('span', '样品号'), h('span', '光谱矩阵'),
+    h('span'), h('span', '样品'), h('span', '样品号'), h('span', '测量时间'),
+    h('span', '光谱矩阵'),
     h('span', { style: { textAlign: 'right' } }, '大小'), h('span'));
 
   // 上千行全塞进 DOM 会卡死浏览器，只渲染视口里那几十行
@@ -351,6 +352,9 @@ function renderRow(r, index) {
       h('div.name.truncate', r.name),
       r.n_results ? h('div.xsmall.dim', `${fmtInt(r.n_results)} 条结果`) : null),
     h('span.small.muted', r.batch || '—'),
+    // 时间现在是三个筛选维度之一 —— 按它筛，就该看得见它
+    h('span.small.muted.nowrap',
+      r.measured_at ? String(r.measured_at).slice(0, 16).replace('T', ' ') : '—'),
     h('div.min0',
       r.matrix_name
         ? h('div.truncate.small.muted', { title: r.matrix_name }, r.matrix_name)

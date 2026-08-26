@@ -279,12 +279,19 @@ def page(flt: dict, limit: int = 100, offset: int = 0, order: str = "name") -> d
         "name": "s.name",
         "batch": "s.batch, s.name",
         "created": "s.created_at DESC, s.name",
+        "measured": "measured_at DESC, s.name",
     }.get(order, "s.name")
 
     total = db.scalar(f"SELECT COUNT(*) FROM sample s {c.clause}", tuple(c.params)) or 0
     # 矩阵信息用一次 JOIN 取回，不要三个相关子查询各扫一遍
     rows = db.query(
         f"""SELECT s.sample_id, s.name, s.batch, s.created_at,
+                   (SELECT MIN(m.measured_at) FROM measurement m
+                     WHERE m.sample_id = s.sample_id
+                       AND m.measured_at IS NOT NULL) AS measured_at,
+                   (SELECT MIN(a.display_path) FROM artifact a
+                     WHERE a.sample_id = s.sample_id
+                       AND a.display_path LIKE '%/%') AS display_path,
                    (SELECT COUNT(*) FROM artifact a
                      WHERE a.sample_id = s.sample_id AND a.kind='raw') AS n_files,
                    (SELECT COUNT(*) FROM key_result k
