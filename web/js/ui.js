@@ -1,0 +1,179 @@
+// 极小的 DOM 工具集。没有框架、没有构建步骤——这是「打开就能用」的前提。
+
+/**
+ * h('div.klass#id', {attrs}, ...children)
+ * 标签支持 tag、#id、.class 的任意组合与顺序：
+ * 'section.page#page-overview' 和 'section#page-overview.page' 等价。
+ */
+export function h(tag, props = null, ...children) {
+  const node = document.createElement(parseTagName(tag) || 'div');
+  for (const token of tag.match(/[#.][\w-]+/g) || []) {
+    if (token[0] === '#') node.id = token.slice(1);
+    else node.classList.add(token.slice(1));
+  }
+
+  if (props && (props.nodeType || Array.isArray(props) || typeof props !== 'object')) {
+    children.unshift(props);
+    props = null;
+  }
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class') node.classList.add(...String(v).split(/\s+/).filter(Boolean));
+    else if (k === 'style' && typeof v === 'object') Object.assign(node.style, v);
+    else if (k === 'html') node.innerHTML = v;
+    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
+    else if (k === 'dataset') Object.assign(node.dataset, v);
+    else if (k in node && k !== 'list' && typeof v !== 'object') node[k] = v;
+    else node.setAttribute(k, v === true ? '' : v);
+  }
+  append(node, children);
+  return node;
+}
+
+function parseTagName(tag) {
+  const m = /^[a-z][a-z0-9-]*/i.exec(tag);
+  return m ? m[0] : '';
+}
+
+export function append(node, children) {
+  for (const c of children.flat(Infinity)) {
+    if (c === null || c === undefined || c === false) continue;
+    node.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+
+export const $ = (sel, root = document) => root.querySelector(sel);
+export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+export function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); return node; }
+export function mount(node, ...children) { clear(node); return append(node, children); }
+
+// ------------------------------------------------------------------ 格式化
+export function fmtBytes(n) {
+  if (!n && n !== 0) return '—';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${i === 0 ? v : v.toFixed(v < 10 ? 1 : 0)} ${u[i]}`;
+}
+
+export function fmtNum(v, digits) {
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v !== 'number') return String(v);
+  if (!Number.isFinite(v)) return String(v);
+  if (digits !== undefined) return v.toFixed(digits);
+  const a = Math.abs(v);
+  if (a === 0) return '0';
+  if (a >= 1e6 || a < 1e-4) return v.toExponential(3).replace('e', '×10^');
+  if (Number.isInteger(v)) return v.toLocaleString('en-US');
+  return v.toFixed(a < 1 ? 4 : a < 100 ? 3 : 2);
+}
+
+export function fmtInt(v) {
+  return (v ?? 0).toLocaleString('en-US');
+}
+
+export function fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(+d)) return iso;
+  const diff = (Date.now() - d) / 1000;
+  if (diff < 60) return '刚刚';
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+  if (diff < 86400 * 7) return `${Math.floor(diff / 86400)} 天前`;
+  return d.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
+// ------------------------------------------------------------------ Toast
+const toastStack = h('div.toast-stack');
+document.addEventListener('DOMContentLoaded', () => document.body.appendChild(toastStack));
+
+export function toast(message, kind = 'info', ms = 3600) {
+  if (!toastStack.isConnected) document.body.appendChild(toastStack);
+  const node = h(`div.toast.toast-${kind}`, h('div.grow', message));
+  toastStack.appendChild(node);
+  setTimeout(() => {
+    node.style.transition = 'opacity .18s, transform .18s';
+    node.style.opacity = '0';
+    node.style.transform = 'translateY(4px)';
+    setTimeout(() => node.remove(), 200);
+  }, ms);
+  return node;
+}
+
+// ------------------------------------------------------------------ Modal
+export function modal({ title, body, foot, width, onClose, flush = false }) {
+  const close = () => { backdrop.remove(); document.removeEventListener('keydown', onKey); onClose?.(); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+
+  const panel = h('div.modal', { style: width ? { width } : null },
+    h('div.modal-head',
+      h('h3', title),
+      h('button.btn.btn-ghost.btn-sm', { onclick: close, title: '关闭 (Esc)' }, '关闭')),
+    h('div.modal-body' + (flush ? '.flush' : ''), body),
+    foot ? h('div.modal-foot', foot) : null);
+
+  const backdrop = h('div.modal-backdrop', {
+    onclick: (e) => { if (e.target === backdrop) close(); },
+  }, panel);
+
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(backdrop);
+  panel.querySelector('input,select,textarea,button')?.focus();
+  return { close, panel, backdrop };
+}
+
+export function confirmDialog(message, { confirmLabel = '确定', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const m = modal({
+      title: '请确认',
+      body: h('p', message),
+      foot: [
+        h('button.btn', { onclick: () => { m.close(); resolve(false); } }, '取消'),
+        h(`button.btn.${danger ? 'btn-danger' : 'btn-primary'}`,
+          { onclick: () => { m.close(); resolve(true); } }, confirmLabel),
+      ],
+      onClose: () => resolve(false),
+    });
+  });
+}
+
+// ------------------------------------------------------------------ 状态视图
+export function empty(text, action) {
+  return h('div.empty', h('div.empty-text', text), action ? h('div.empty-action', action) : null);
+}
+
+export function skeletonRows(n = 5) {
+  return h('div.col.gap-3', { style: { padding: 'var(--s4x)' } },
+    ...Array.from({ length: n }, (_, i) =>
+      h('div.skeleton', { style: { width: `${92 - (i % 3) * 18}%` } })));
+}
+
+export function errorBox(err, retry) {
+  const msg = err?.message || String(err);
+  return h('div.notice.notice-danger',
+    h('div.grow',
+      h('div', msg),
+      err?.detail ? h('pre', err.detail) : null,
+      retry ? h('div.mt-2', h('button.btn.btn-sm', { onclick: retry }, '重试')) : null));
+}
+
+/** 异步渲染的统一包装：加载 → 成功 / 失败，三种状态都有交代。 */
+export async function render(host, loader, view) {
+  mount(host, skeletonRows(4));
+  try {
+    const data = await loader();
+    mount(host, view(data));
+    return data;
+  } catch (err) {
+    mount(host, errorBox(err, () => render(host, loader, view)));
+    return null;
+  }
+}
+
+export function busy(button, on) {
+  button.classList.toggle('is-busy', on);
+  button.disabled = on;
+}

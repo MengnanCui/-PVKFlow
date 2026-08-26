@@ -1,0 +1,160 @@
+/* 设计令牌 —— 颜色只在这里定义，别处一律用 var()。
+   配色对齐 Mengnan 的 matplotlib 规范：主色 #2470a0，序列色即那 12 色。 */
+
+:root {
+  color-scheme: light;
+
+  /* 中性色：偏暖的灰阶，比纯灰更像纸 */
+  --paper:        #ffffff;
+  --surface:      #fbfaf9;
+  --surface-2:    #f5f4f2;
+  --surface-sunk: #f0efec;
+
+  --ink:          #1a1a1c;   /* 标题 */
+  --ink-2:        #55555c;   /* 正文 */
+  --ink-3:        #8b8b93;   /* 次要 */
+  --ink-4:        #b4b4ba;   /* 占位 */
+
+  --line:         #e8e6e2;   /* 发丝线：分组靠它，不靠卡片 */
+  --line-2:       #d8d5d0;
+  --line-strong:  #c2beb7;
+
+  /* 主色 = matplotlib 规范里的第一个颜色 */
+  --accent:       #2470a0;   /* 文字 / 描边用 */
+  --accent-ink:   #1b567c;
+  --accent-wash:  #eaf2f8;
+  --accent-line:  #bcd6e8;
+  --accent-solid: #2470a0;   /* 填充面用，与 --on-accent 配对 */
+  --accent-solid-hover: #1b567c;
+  --on-accent:    #ffffff;
+
+  /* 状态：只用小色点 + 文字，不用填充胶囊 */
+  --ok:      #1f7a4d;
+  --warn:    #b06a12;
+  --danger:  #b3383f;
+  --ok-wash: #edf6f1;
+  --warn-wash: #fdf4e7;
+  --danger-wash: #fbeeee;
+
+  /* 图表序列色 —— 与 matplotlib 规范逐个对齐 */
+  --s1:  #2470a0;  --s2:  #ca3e47;  --s3:  #f29c2b;  --s4:  #1f640a;
+  --s5:  #2ca02c;  --s6:  #9467bd;  --s7:  #8c564b;  --s8:  #e377c2;
+  --s9:  #7f7f7f;  --s10: #bcbd22;  --s11: #17becf;  --s12: #005555;
+
+  /* 排印 */
+  --font: "Inter var", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas,
+          "Liberation Mono", monospace;
+
+  --t-xs:   11px;
+  --t-sm:   12px;
+  --t-base: 13.5px;   /* 正文基准。原型的 9–10px 实际读不了 */
+  --t-md:   15px;
+  --t-lg:   17px;
+  --t-xl:   21px;
+  --t-2xl:  27px;
+  --t-num:  30px;     /* 大数字 */
+
+  /* 4/8 栅格 */
+  --s1x: 4px;  --s2x: 8px;  --s3x: 12px; --s4x: 16px;
+  --s5x: 20px; --s6x: 24px; --s8x: 32px; --s10x: 40px; --s12x: 48px;
+
+  --r-sm: 5px;
+  --r:    7px;
+  --r-lg: 10px;
+
+  /* 阴影只留给浮层 */
+  --shadow-pop: 0 6px 24px -6px rgb(26 26 28 / .16), 0 1px 3px rgb(26 26 28 / .07);
+
+  --dur: 140ms;
+  --ease: cubic-bezier(.22, .61, .36, 1);
+
+  --sidebar-w: 208px;
+  --topbar-h: 60px;
+}
+
+:root[data-theme="dark"],
+:root:not([data-theme="light"]) {
+  /* 深色留空，见下面的 media / [data-theme] 块 */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper:        #17171a;
+    --surface:      #131316;
+    --surface-2:    #1c1c20;
+    --surface-sunk: #101013;
+
+    --ink:          #f2f1ef;
+    --ink-2:        #b6b5b2;
+    --ink-3:        #83827f;
+    --ink-4:        #5c5b59;
+
+    --line:         #2a2a2f;
+    --line-2:       #35353b;
+    --line-strong:  #464650;
+
+    --accent:       #63a8d4;
+    --accent-ink:   #8cc3e4;
+    --accent-wash:  #16262f;
+    --accent-line:  #2c4a5c;
+    /* 暗色下 #63a8d4 太亮，白字压不住；填充面单独用一个中间调 */
+    --accent-solid: #2a6c94;
+    --accent-solid-hover: #35809e;
+    --on-accent:    #ffffff;
+
+    --ok:      #56b585;
+    --warn:    #d8a154;
+    --danger:  #e0797f;
+    --ok-wash: #14231c;
+    --warn-wash: #251d10;
+    --danger-wash: #251314;
+
+    --s1: #63a8d4; --s2: #e4737a; --s3: #f2b45f; --s4: #6aa84f;
+    --s5: #63c463; --s6: #b18ed6; --s7: #b58077; --s8: #eda3d3;
+    --s9: #a3a3a3; --s10: #d2d356; --s11: #56d3e2; --s12: #3f9a9a;
+
+    --shadow-pop: 0 6px 26px -6px rgb(0 0 0 / .6), 0 1px 3px rgb(0 0 0 / .4);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper:        #17171a;
+  --surface:      #131316;
+  --surface-2:    #1c1c20;
+  --surface-sunk: #101013;
+
+  --ink:          #f2f1ef;
+  --ink-2:        #b6b5b2;
+  --ink-3:        #83827f;
+  --ink-4:        #5c5b59;
+
+  --line:         #2a2a2f;
+  --line-2:       #35353b;
+  --line-strong:  #464650;
+
+  --accent:       #63a8d4;
+  --accent-ink:   #8cc3e4;
+  --accent-wash:  #16262f;
+  --accent-line:  #2c4a5c;
+  /* 暗色下 #63a8d4 太亮，白字压不住；填充面单独用一个中间调 */
+  --accent-solid: #2a6c94;
+  --accent-solid-hover: #35809e;
+  --on-accent:    #ffffff;
+
+  --ok:      #56b585;
+  --warn:    #d8a154;
+  --danger:  #e0797f;
+  --ok-wash: #14231c;
+  --warn-wash: #251d10;
+  --danger-wash: #251314;
+
+  --s1: #63a8d4; --s2: #e4737a; --s3: #f2b45f; --s4: #6aa84f;
+  --s5: #63c463; --s6: #b18ed6; --s7: #b58077; --s8: #eda3d3;
+  --s9: #a3a3a3; --s10: #d2d356; --s11: #56d3e2; --s12: #3f9a9a;
+
+  --shadow-pop: 0 6px 26px -6px rgb(0 0 0 / .6), 0 1px 3px rgb(0 0 0 / .4);
+}

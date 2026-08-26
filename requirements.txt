@@ -1,0 +1,15 @@
+# HTE Studio / PVKFlow —— 刻意收紧的依赖清单
+# 新增依赖前先问：能不能用标准库做？
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+python-multipart==0.0.20
+
+pandas==2.2.3
+numpy==2.2.1
+pyarrow==18.1.0          # Parquet 读写
+openpyxl==3.1.5          # xlsx 解析
+Pillow==11.1.0           # 图像元信息与缩略图
+
+httpx==0.28.1            # OpenAI 兼容模型调用

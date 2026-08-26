@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<title>HTE Studio</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232470a0'/><path d='M9 22V10h2.6v4.7h5.1V10h2.6v12h-2.6v-5H11.6v5H9z' fill='white'/></svg>" />
+<link rel="stylesheet" href="/assets/css/tokens.css" />
+<link rel="stylesheet" href="/assets/css/base.css" />
+<link rel="stylesheet" href="/assets/css/layout.css" />
+<link rel="stylesheet" href="/assets/css/components.css" />
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-name">HTE Studio</div>
+      <div class="brand-sub">高通量实验数据平台</div>
+    </div>
+
+    <nav class="nav-group" id="navMain"></nav>
+
+    <nav class="nav-group" id="navSystem"></nav>
+
+    <div class="sidebar-foot">
+      <div class="status status-idle small" id="healthStatus">正在连接…</div>
+      <div class="row-between">
+        <span class="xsmall dim" id="versionLabel"></span>
+        <button class="btn btn-ghost btn-sm" id="themeToggle" title="切换明暗">明 / 暗</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="pageTitle">总览</h1>
+        <div class="topbar-desc" id="pageDesc"></div>
+      </div>
+      <div class="topbar-actions" id="pageActions"></div>
+    </header>
+    <div class="viewport" id="viewport"></div>
+  </main>
+</div>
+
+<noscript>
+  <p style="padding:24px">这个界面需要 JavaScript。请用 Chrome / Edge / Firefox 打开。</p>
+</noscript>
+
+<script type="module" src="/assets/js/app.js"></script>
+</body>
+</html>

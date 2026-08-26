@@ -1,0 +1,144 @@
+"""AI 层：规则引擎必须永远可用；模型缺席时要明确说出来，不能假装。"""
+import json
+
+import pytest
+
+from app.ai import openai_compat, rules
+from app.ai.provider import NullProvider, ProviderUnavailable, extract_json
+from app.storage import ingest
+
+
+@pytest.fixture()
+def imported(workspace, sample_dir):
+    from app.skills.registry import registry
+    registry.load_all()
+    ingest.ingest_paths(ingest.scan_preview(sample_dir)["files"])
+    from app.storage import db
+    return db
+
+
+# ---------------------------------------------------------------- 规则引擎
+def test_rules_work_without_any_model(imported):
+    aid = imported.scalar("SELECT artifact_id FROM artifact WHERE filename LIKE '%jv.csv'")
+    out = rules.assist([aid])
+
+    assert out["source"] == "rule"
+    assert out["files"][0]["kind"] == "table"
+    assert out["files"][0]["domain"] == "jv"      # 从列名认出来的
+    assert out["suggestions"], "应该给出候选 skill"
+
+
+def test_identify_recognises_images(imported):
+    aid = imported.scalar("SELECT artifact_id FROM artifact WHERE filename LIKE '%.png'")
+    from app.storage import artifacts
+    info = rules.identify(artifacts.local_path(aid))
+    assert info["kind"] == "image"
+    assert info["width"] == 120 and info["height"] == 90
+
+
+def test_inspect_frame_flags_real_problems():
+    import pandas as pd
+
+    df = pd.DataFrame({"a": [1, 1, 1, 1], "b": [1.0, 2.0, 3.0, 500.0]})
+    messages = " ".join(i["message"] for i in rules.inspect_frame(df))
+    assert "常量" in messages          # a 列没有信息量
+
+    empty = rules.inspect_frame(pd.DataFrame())
+    assert empty[0]["level"] == "error"
+
+
+# ---------------------------------------------------------------- Provider
+def test_null_provider_explains_itself():
+    with pytest.raises(ProviderUnavailable) as exc:
+        NullProvider().chat([])
+    assert "设置" in str(exc.value)      # 告诉用户去哪儿配
+
+
+def test_no_config_means_no_models(workspace):
+    assert openai_compat.list_models() == []
+    with pytest.raises(ProviderUnavailable):
+        openai_compat.resolve()
+
+
+def test_config_is_parsed_in_the_users_format(workspace):
+    from app import config
+
+    config.PROVIDERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    config.PROVIDERS_PATH.write_text(json.dumps({
+        "providers": {
+            "vllm-local": {
+                "baseUrl": "http://example.invalid/v1",
+                "api": "openai-completions",
+                "apiKey": "sk-secret-value-1234",
+                "compat": {"supportsDeveloperRole": False},
+                "models": [{"id": "Qwen3.6-27B", "name": "Qwen", "input": ["text", "image"],
+                            "contextWindow": 101072, "maxTokens": 65535}],
+            }
+        }
+    }), encoding="utf-8")
+
+    models = openai_compat.list_models()
+    assert [m.id for m in models] == ["Qwen3.6-27B"]
+    assert models[0].context_window == 101072
+    assert "image" in models[0].inputs
+
+    provider, model_id = openai_compat.resolve()
+    assert provider.name == "vllm-local" and model_id == "Qwen3.6-27B"
+
+
+def test_api_key_is_never_returned_in_full(workspace):
+    from app import config
+
+    config.PROVIDERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    config.PROVIDERS_PATH.write_text(json.dumps({
+        "providers": {"p": {"baseUrl": "http://x/v1", "apiKey": "sk-secret-value-1234",
+                            "models": [{"id": "m"}]}}
+    }), encoding="utf-8")
+
+    described = json.dumps(openai_compat.describe_config(), ensure_ascii=False)
+    assert "sk-secret-value-1234" not in described
+    assert "…" in described
+
+
+def test_developer_role_downgrades_when_unsupported():
+    from app.ai.provider import ChatMessage
+
+    p = openai_compat.OpenAICompatProvider("x", {
+        "baseUrl": "http://x/v1", "models": [{"id": "m"}],
+        "compat": {"supportsDeveloperRole": False},
+    })
+    assert p._normalize([ChatMessage("developer", "hi")])[0]["role"] == "system"
+
+    q = openai_compat.OpenAICompatProvider("x", {
+        "baseUrl": "http://x/v1", "models": [{"id": "m"}],
+        "compat": {"supportsDeveloperRole": True},
+    })
+    assert q._normalize([ChatMessage("developer", "hi")])[0]["role"] == "developer"
+
+
+def test_test_connection_reports_failure_without_raising(workspace):
+    from app import config
+
+    config.PROVIDERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    config.PROVIDERS_PATH.write_text(json.dumps({
+        "providers": {"dead": {"baseUrl": "http://127.0.0.1:1/v1", "models": [{"id": "m"}]}}
+    }), encoding="utf-8")
+
+    result = openai_compat.test_connection()
+    assert result["ok"] is False and result["error"]
+
+
+# ---------------------------------------------------------------- JSON 抽取
+@pytest.mark.parametrize("raw", [
+    '{"a": 1}',
+    '```json\n{"a": 1}\n```',
+    '```\n{"a": 1}\n```',
+    '好的，结果如下：\n{"a": 1}\n希望有帮助',
+])
+def test_extract_json_survives_model_chatter(raw):
+    assert extract_json(raw) == {"a": 1}
+
+
+def test_extract_json_gives_up_loudly():
+    with pytest.raises(ValueError):
+        extract_json("完全没有 JSON")

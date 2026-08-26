@@ -1,0 +1,47 @@
+{
+  "_comment": [
+    "把这个文件复制成 workspace/config/providers.json 再填真实的 apiKey。",
+    "workspace/ 整个目录在 .gitignore 里，密钥不会被提交。",
+    "也可以直接在「设置 → 模型」页面粘贴整段 JSON。"
+  ],
+  "providers": {
+    "vllm-local": {
+      "baseUrl": "http://your-vllm-host/v1",
+      "api": "openai-completions",
+      "apiKey": "sk-REPLACE-ME",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "Qwen3.6-27B",
+          "name": "Qwen 3.6 27B (Local)",
+          "reasoning": false,
+          "input": ["text", "image"],
+          "contextWindow": 101072,
+          "maxTokens": 65535
+        }
+      ]
+    },
+    "vllm-dev": {
+      "baseUrl": "https://your-gateway/v1",
+      "api": "openai-completions",
+      "apiKey": "sk-REPLACE-ME",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "Kimi-K2.6",
+          "name": "Kimi K2.6 (dev)",
+          "reasoning": false,
+          "input": ["text", "image"],
+          "contextWindow": 201072,
+          "maxTokens": 65535
+        }
+      ]
+    }
+  }
+}

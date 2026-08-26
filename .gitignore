@@ -1,0 +1,28 @@
+# 运行期工作区：数据库、原始文件、派生结果、用户 skill、本地配置
+workspace/
+
+# 本地模型配置（含 API key），永不入库
+config/providers.json
+**/providers.json
+!config/providers.example.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 打包产物
+build/
+dist/
+*.spec
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
