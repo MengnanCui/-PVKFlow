@@ -196,6 +196,9 @@ CREATE INDEX IF NOT EXISTS idx_kr_field_value ON key_result(field_name, value_nu
 CREATE INDEX IF NOT EXISTS idx_kr_sample_field ON key_result(sample_id, field_name, value_num);
 
 -- 分面与筛选用到的相关子查询
+-- 按时间筛选走这条
+CREATE INDEX IF NOT EXISTS idx_mea_measured_at
+    ON measurement(measured_at);
 CREATE INDEX IF NOT EXISTS idx_mea_sample_method ON measurement(sample_id, method);
 CREATE INDEX IF NOT EXISTS idx_artifact_matrix ON artifact(sample_id, is_matrix);
 CREATE INDEX IF NOT EXISTS idx_artifact_path ON artifact(display_path);

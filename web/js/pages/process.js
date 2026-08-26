@@ -36,6 +36,7 @@ const S = {
   total: 0,
   loading: false,
   checked: new Set(),   // 手工勾选的 sample_id
+  anchor: null,         // 上次点选的行号，shift 范围选从这儿起
   suggestions: [],
   sets: [],
   task: null,
@@ -183,40 +184,48 @@ function drawList() {
           onclick: () => saveSetDialog(),
         }, '存为样品集'))),
 
-    S.suggestions.length ? suggestionBlock() : null,
+    h('div#suggestHost'),
     S.task ? progressBlock() : null,
 
     h('div.panel',
       h('div.panel-head',
         h('div.row.gap-3',
           h('label.check',
-            h('input', {
+            h('input#selectAllBox', {
               type: 'checkbox',
               checked: selectedCount > 0 && selectedCount === all,
               indeterminate: selectedCount > 0 && selectedCount < all,
               onchange: (e) => {
                 S.checked = e.target.checked
                   ? new Set(S.rows.map((r) => r.sample_id)) : new Set();
+                S.anchor = null;
+                syncSelection();
                 refreshSuggestions();
-                drawList();
               },
             }),
-            h('span.small', selectedCount ? `已选 ${fmtInt(selectedCount)}` : '全选本页')),
+            h('span.small#selectCount',
+              selectedCount ? `已选 ${fmtInt(selectedCount)}` : '全选本页')),
+          h('span.xsmall.dim', 'shift+点 选中间一整段'),
           S.total > all
-            ? h('span.xsmall.dim', `列表载入前 ${fmtInt(all)} / 共 ${fmtInt(S.total)}`)
+            ? h('span.xsmall.dim',
+                `· 列表载入前 ${fmtInt(all)} 行，「批处理全部」按的是筛选式命中的 ${fmtInt(S.total)} 个`)
             : null),
         h('div.row.gap-2',
-          h('button.btn.btn-sm', {
+          h('button.btn.btn-sm#clearSelBtn', {
             disabled: !selectedCount,
-            onclick: () => { S.checked = new Set(); S.suggestions = []; drawList(); },
+            onclick: () => {
+              S.checked = new Set(); S.anchor = null; S.suggestions = [];
+              syncSelection(); drawSuggestions();
+            },
           }, '取消选择'),
-          h('button.btn.btn-primary.btn-sm', {
+          h('button.btn.btn-primary.btn-sm#runBatchBtn', {
             disabled: !S.facets?.total,
             onclick: () => batchDialog(),
           }, batchLabel()))),
       h('div.panel-body.flush#tableHost')));
 
   drawTable();
+  drawSuggestions();
 }
 
 function batchLabel() {
@@ -237,7 +246,7 @@ function drawTable() {
   }
 
   const header = h('div.vrow.vrow-head',
-    h('span'), h('span', '样品'), h('span', '批次'), h('span', '光谱矩阵'),
+    h('span'), h('span', '样品'), h('span', '样品号'), h('span', '光谱矩阵'),
     h('span', { style: { textAlign: 'right' } }, '大小'), h('span'));
 
   // 上千行全塞进 DOM 会卡死浏览器，只渲染视口里那几十行
@@ -245,13 +254,75 @@ function drawTable() {
     height: Math.min(560, Math.max(220, S.rows.length * 46 + 8)),
     rowHeight: 46,
     count: S.rows.length,
-    renderRow: (i) => renderRow(S.rows[i]),
+    renderRow: (i) => renderRow(S.rows[i], i),
   });
   refs.vlist = list;
   mount(host, header, list);
 }
 
-function renderRow(r) {
+/**
+ * 勾选一行。三种手势：
+ *   普通    单独切换，并把锚点挪到这一行
+ *   shift   锚点到这一行之间**全选**（按列表当前顺序）
+ *   ctrl/⌘  切换单个，不动锚点
+ *
+ * 「从 xx 到 xx」用鼠标就能划出来，不用先去数行号。
+ */
+function toggleRow(index, evt) {
+  const row = S.rows[index];
+  if (!row) return;
+
+  if (evt?.shiftKey && S.anchor !== null && S.anchor !== index) {
+    const [a, b] = S.anchor < index ? [S.anchor, index] : [index, S.anchor];
+    // shift 是「加选这一段」，不是「只留这一段」—— 已经选好的不该被抹掉
+    for (let i = a; i <= b; i++) S.checked.add(S.rows[i].sample_id);
+  } else if (evt?.metaKey || evt?.ctrlKey) {
+    if (S.checked.has(row.sample_id)) S.checked.delete(row.sample_id);
+    else S.checked.add(row.sample_id);
+  } else {
+    if (S.checked.has(row.sample_id)) S.checked.delete(row.sample_id);
+    else S.checked.add(row.sample_id);
+    S.anchor = index;
+  }
+
+  syncSelection();
+  refreshSuggestions();
+}
+
+/**
+ * 只更新受影响的地方，不重建整个列表。
+ *
+ * 以前每勾一下都调 drawList()，虚拟列表整个重建 —— 滚动位置被打回顶部。
+ * 选到第 80 行的时候这个行为是真的难用。
+ */
+function syncSelection() {
+  const host = refs.listHost;
+  if (!host) return;
+
+  for (const el of host.querySelectorAll('.vrow[data-index]')) {
+    const i = Number(el.dataset.index);
+    const on = S.checked.has(S.rows[i]?.sample_id);
+    el.setAttribute('aria-selected', String(on));
+    const box = el.querySelector('input[type=checkbox]');
+    if (box) box.checked = on;
+  }
+
+  const n = S.checked.size;
+  const all = S.rows.length;
+  const head = host.querySelector('#selectAllBox');
+  if (head) {
+    head.checked = n > 0 && n === all;
+    head.indeterminate = n > 0 && n < all;
+  }
+  const label = host.querySelector('#selectCount');
+  if (label) label.textContent = n ? `已选 ${fmtInt(n)}` : '全选本页';
+  const clearBtn = host.querySelector('#clearSelBtn');
+  if (clearBtn) clearBtn.disabled = !n;
+  const runBtn = host.querySelector('#runBatchBtn');
+  if (runBtn) runBtn.textContent = batchLabel();
+}
+
+function renderRow(r, index) {
   if (!r) return null;
   const checked = S.checked.has(r.sample_id);
   const open = () => {
@@ -260,16 +331,21 @@ function renderRow(r) {
   };
   return h('div.vrow', {
     'aria-selected': String(checked),
-    onclick: (e) => { if (!e.target.closest('input,button')) open(); },
+    dataset: { index: String(index) },
+    onclick: (e) => {
+      if (e.target.closest('button')) return;
+      // 带修饰键点行 = 选，不是打开。不然 shift 划一片会开一堆页面。
+      if (e.shiftKey || e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+        toggleRow(index, e);
+        return;
+      }
+      if (!e.target.closest('input')) open();
+    },
   },
     h('input', {
       type: 'checkbox', checked,
-      onclick: (e) => e.stopPropagation(),
-      onchange: () => {
-        checked ? S.checked.delete(r.sample_id) : S.checked.add(r.sample_id);
-        refreshSuggestions();
-        drawList();
-      },
+      onclick: (e) => { e.stopPropagation(); e.preventDefault(); toggleRow(index, e); },
     }),
     h('div.min0',
       h('div.name.truncate', r.name),
@@ -291,14 +367,21 @@ function renderRow(r) {
 let suggestTimer = null;
 function refreshSuggestions() {
   clearTimeout(suggestTimer);
-  if (S.checked.size < 2) { S.suggestions = []; return; }
+  if (S.checked.size < 2) { S.suggestions = []; drawSuggestions(); return; }
   suggestTimer = setTimeout(async () => {
     try {
       const r = await api.suggestExpansion([...S.checked], S.filter);
       S.suggestions = r.suggestions;
-      drawList();
+      drawSuggestions();          // 只换这一块，别把列表和滚动位置一起重置
     } catch { /* 提议失败不该打断操作 */ }
   }, 220);
+}
+
+function drawSuggestions() {
+  const host = refs.listHost?.querySelector('#suggestHost');
+  if (!host) return;
+  if (!S.suggestions.length) { clear(host); return; }
+  mount(host, suggestionBlock());
 }
 
 function suggestionBlock() {
@@ -330,9 +413,17 @@ async function batchDialog() {
     return;
   }
 
+  // 膜厚窗口默认 775–1120：775 避开吸收边，1120 是光谱仪上限
   const recipe = { integral_min: 800, integral_max: 950,
                    slope_center: 950, slope_half_width: 10,
-                   band_min: 780, band_max: 1050 };
+                   band_min: 775, band_max: 1120 };
+  const stamp = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit',
+                                                    hour: '2-digit', minute: '2-digit' });
+  let title = `${pv.with_matrix} 个样品 · ${stamp}`;
+  const nameInput = h('input.input', {
+    type: 'text', value: title, placeholder: '这次对比叫什么',
+    oninput: (e) => { title = e.target.value; },
+  });
   const num = (key, label, unit) => h('div.field',
     h('label.field-label', label, unit ? h('span.unit', ` (${unit})`) : null),
     h('input.input', { type: 'number', value: recipe[key], step: 'any',
@@ -345,6 +436,10 @@ async function batchDialog() {
       h('p.small.muted',
         `命中 ${fmtInt(pv.total)} 个样品，其中 ${fmtInt(pv.with_matrix)} 个有光谱矩阵`,
         pv.without_matrix ? `，${fmtInt(pv.without_matrix)} 个会被跳过` : '', '。'),
+      h('div.field.mt-3',
+        h('label.field-label', '名称',
+          h('span.unit', ' （会出现在对比历史里，方便以后找回来）')),
+        nameInput),
       h('div.notice.mt-3',
         h('div.grow',
           h('div.small', '这套参数就是单样品页上的那套 —— '
@@ -362,7 +457,7 @@ async function batchDialog() {
           busy(e.target, true);
           try {
             const r = await api.batchRun({ filter, recipe,
-              title: `批处理 ${pv.with_matrix} 个样品` });
+              title: title.trim() || `${pv.with_matrix} 个样品` });
             m.close();
             S.task = r.task;
             drawList();
@@ -421,7 +516,14 @@ function startPolling(taskId) {
       if (t.done) {
         stopPolling();
         if (t.status === 'ok') {
-          toast(`批处理完成：${t.n_ok} 成功` + (t.n_failed ? `，${t.n_failed} 失败` : ''), 'ok');
+          toast(`处理完成：${t.n_ok} 成功` + (t.n_failed ? `，${t.n_failed} 失败` : ''), 'ok');
+          // 跑完直接落到对比页。以前还要再点一下「看结果」，而那个按钮
+          // 一刷新就没了 —— 「比完就没了、找不到在哪儿」说的就是这个。
+          // 现在它同时也进了「对比历史」，随时点得回来。
+          if (t.result?.parent_run_id) {
+            refs.nav('batch', { arg: t.result.parent_run_id });
+            return;
+          }
           reload();
         } else if (t.status === 'failed') {
           toast(t.error?.split('\n')[0] || '批处理失败', 'err', 8000);

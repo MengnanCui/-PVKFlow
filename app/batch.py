@@ -161,7 +161,8 @@ def run_batch(ctx: tasks.TaskContext) -> dict:
     parent_id = results.start_run(
         skill_id=BATCH_SKILL_ID, skill_version=BATCH_VERSION,
         skill_name="批处理 · 吸收光谱与膜厚",
-        params={"recipe": recipe.as_dict(), "filter": flt, "n_samples": total},
+        params={"recipe": recipe.as_dict(), "filter": flt, "n_samples": total,
+                "title": (ctx.params.get("title") or "").strip()},
         source="skill")
 
     ctx.progress(0, total, f"准备处理 {total} 个样品")
@@ -316,4 +317,6 @@ def recent_batches(limit: int = 20) -> list[dict]:
         "         WHERE c.parent_run_id = r.analysis_run_id AND c.status='failed')"
         "         AS n_failed"
         " FROM analysis_run r WHERE r.skill_id = ? AND r.parent_run_id IS NULL"
-        " ORDER BY r.started_at DESC LIMIT ?", (BATCH_SKILL_ID, limit))
+        # started_at 只到秒。同一秒里跑的两次会并列，没有第二个排序键的话
+        # 历史列表的顺序就是随机的 —— rowid 是插入顺序，拿来兜底。
+        " ORDER BY r.started_at DESC, r.rowid DESC LIMIT ?", (BATCH_SKILL_ID, limit))

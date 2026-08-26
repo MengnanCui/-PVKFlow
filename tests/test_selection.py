@@ -230,3 +230,104 @@ def test_resolve_gives_an_executable_filter(populated):
     assert selection.count(sets.resolve(pin["set_id"])) == 8
     dyn = sets.create("动态", "dynamic", {"batch": ["B21"]})
     assert selection.count(sets.resolve(dyn["set_id"])) == 8
+
+
+# ------------------------------------------------------------------ 时间维度
+def test_time_filter_compiles_to_measured_at(workspace):
+    """按时间筛选走 measurement.measured_at。
+
+    ISO 8601 是字典序可比的，所以用字符串比较而不是 datetime 函数 ——
+    函数会让 idx_mea_measured_at 这个索引用不上。
+    """
+    from app.storage import selection
+
+    c = selection.compile_filter({"time": {"from": "2026-07-29T00:00",
+                                           "to": "2026-07-30T00:00"}})
+    assert "measured_at >= ?" in c.where and "measured_at <= ?" in c.where
+    assert "datetime(" not in c.where and "strftime(" not in c.where
+    assert c.params == ["2026-07-29T00:00", "2026-07-30T00:00"]
+
+
+def test_time_filter_accepts_one_open_end(workspace):
+    from app.storage import selection
+
+    c = selection.compile_filter({"time": {"from": "2026-01-01"}})
+    assert "measured_at >= ?" in c.where and "measured_at <= ?" not in c.where
+
+
+def test_time_filter_swaps_inverted_ends(workspace):
+    """端点写反了就换过来，不用为这个报错。"""
+    from app.storage import selection
+
+    got = selection.normalize({"time": {"from": "2026-09-01", "to": "2026-01-01"}})
+    assert got["time"] == {"from": "2026-01-01", "to": "2026-09-01"}
+
+
+def test_empty_time_object_means_no_filter(workspace):
+    """`{}` = 没有时间约束，直接丢掉，跟其他键一致。"""
+    from app.storage import selection
+
+    assert selection.normalize({"time": {}}) == {}
+
+
+def test_time_filter_with_both_ends_blank_is_an_error(workspace):
+    """`{from:"", to:""}` 不一样 —— 调用方以为自己在筛，实际什么也没筛。
+
+    这种「以为筛了其实没筛」比报错危险得多：你会拿全部样品当成筛出来的一批。
+    """
+    from app.storage import selection
+
+    with pytest.raises(selection.FilterError, match="至少要有"):
+        selection.normalize({"time": {"from": "", "to": ""}})
+
+
+def test_unknown_filter_keys_are_still_rejected(workspace):
+    """砍掉面板不等于放松筛选式。多一个键都不认 ——
+
+    筛选式可能来自模型，静默忽略一个拼错的键会给出「看起来对」的错结果。
+    """
+    from app.storage import selection
+
+    with pytest.raises(selection.FilterError, match="不认识的筛选项"):
+        selection.normalize({"tiem": {"from": "2026-01-01"}})
+
+
+def test_folder_facet_is_dropped_when_every_folder_holds_one_sample(workspace, tmp_path):
+    """一个子文件夹一次测量时，文件夹分面 = 把样品列表抄了一遍。
+
+    40 个各含 1 个的 chip 不是筛选，是噪声 —— 整个分面直接不给。
+    想按文件夹名找某一个，用搜索框。
+    """
+    import sys
+    sys.path.insert(0, "tests")
+    from test_insitu_csv import write_data_csv
+
+    from app.storage import ingest, selection
+
+    root = tmp_path / "raw"
+    for i in range(4):
+        d = root / f"ZG{i:04d}_2026072909{i:02d}0000_Mode5"
+        d.mkdir(parents=True)
+        write_data_csv(d / "Data.csv", n_lam=40, ot=5000.0 + 300 * i)
+    ingest.ingest_paths(ingest.scan_folders(root)["files"])
+
+    assert selection.count({}) == 4
+    assert selection.facets({})["folder"] == []
+
+
+def test_folder_facet_survives_when_folders_actually_group(workspace, tmp_path):
+    """真的有分组时照常给 —— 挡掉的只是退化情况。"""
+    from app.storage import ingest, selection
+
+    src = tmp_path / "raw"
+    for d, day in enumerate(("2026-07", "2026-08")):
+        (src / day).mkdir(parents=True)
+        for i in range(3):
+            # 内容必须各不相同 —— 导入是按 sha256 内容去重的，
+            # 两个字节相同的文件只会登记一次（这是有意设计）。
+            (src / day / f"B{day[-2:]}_S{i}_jv.csv").write_text(
+                f"V,I\n0,{d * 10 + i}\n1,{d * 10 + i + 1}\n", encoding="utf-8")
+    ingest.ingest_paths(ingest.scan_preview(src)["files"])
+
+    folders = {r["value"]: r["count"] for r in selection.facets({})["folder"]}
+    assert folders == {"2026-07": 3, "2026-08": 3}

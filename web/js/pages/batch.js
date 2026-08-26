@@ -12,7 +12,7 @@ import { xyChart, quantileBand, seriesColor } from '../chart.js';
 
 export const meta = {
   id: 'batch',
-  parent: 'process',
+  parent: 'history',
   title: '批处理结果',
   desc: '',
 };
@@ -21,19 +21,25 @@ export const meta = {
 const SPAGHETTI_LIMIT = 60;
 
 const S = {
-  runId: null, detail: null, curves: null,
-  column: 'integral', mode: 'auto', groupBy: 'batch', error: null,
+  runId: null, detail: null, error: null,
+  // 特殊处理的两条曲线一次拉齐，左右并排 —— 对比看的就是它俩
+  curves: { integral: null, slope: null },
+  mode: 'auto', groupBy: 'batch',
 };
 
 let refs = {};
 
 export function actions(nav) {
-  return [h('button.btn.btn-sm', { onclick: () => nav('process') }, '← 返回样品列表')];
+  return [
+    h('button.btn.btn-sm', { onclick: () => nav('history') }, '← 对比历史'),
+    h('button.btn.btn-sm', { onclick: () => nav('process') }, '挑样品'),
+  ];
 }
 
 export async function view(host, ctx) {
   S.runId = ctx.arg;
-  S.detail = S.curves = S.error = null;
+  S.detail = S.error = null;
+  S.curves = { integral: null, slope: null };
   refs = { host, nav: ctx.nav };
 
   if (!S.runId) {
@@ -51,7 +57,7 @@ export async function view(host, ctx) {
   }
 
   const params = S.detail.run.params || {};
-  document.querySelector('#pageTitle').textContent = '批处理结果';
+  document.querySelector('#pageTitle').textContent = params.title || '对比结果';
   document.querySelector('#pageDesc').textContent =
     `${fmtInt(params.n_samples || S.detail.children.length)} 个样品 · `
     + fmtTime(S.detail.run.started_at);
@@ -80,7 +86,8 @@ function header() {
     h('div.mt-4.row.wrap.gap-3',
       h('span.small.muted', '配方：'),
       ...Object.entries(recipe).filter(([, v]) => v !== null && v !== 0)
-        .map(([k, v]) => h('span.tag', `${RECIPE_LABELS[k] || k} ${fmtNum(v)}`))));
+        // 波长不加千分位 —— 「1,120 nm」读起来像个计数，不像一个波长
+        .map(([k, v]) => h('span.tag', `${RECIPE_LABELS[k] || k} ${Number(v)}`))));
 }
 
 const RECIPE_LABELS = {
@@ -94,19 +101,24 @@ const metric = (label, value, note) => h('div.metric',
   h('div.metric-value' + (value ? '' : '.is-zero'), fmtInt(value)),
   note ? h('div.metric-note', note) : null);
 
-// ------------------------------------------------------------------ 叠图
+// ------------------------------------------------------------------ 特殊处理对比
+//
+// 左右并排两张：谱斜率 vs 时间 | 波段积分 vs 时间。
+// 对比看的就是这两条 —— 一次全画出来，不用先选一个再切另一个。
 async function loadCurves() {
-  try {
-    S.curves = await api.batchCurves(S.runId, { column: S.column, max_series: 1200 });
-  } catch (err) {
-    S.error = err;
-  }
-  drawChart();
+  await Promise.all(['integral', 'slope'].map(async (col) => {
+    try {
+      S.curves[col] = await api.batchCurves(S.runId, { column: col, max_series: 1200 });
+    } catch (err) {
+      S.error = err;
+    }
+    drawChart();
+  }));
 }
 
 /** 屏幕上现在画的是叠图还是分位数带。导出必须跟它一致。 */
-function effectiveMode() {
-  const n = S.curves?.series?.length || 0;
+function effectiveMode(col) {
+  const n = S.curves[col]?.series?.length || 0;
   return (S.mode === 'band' || (S.mode === 'auto' && n > SPAGHETTI_LIMIT)) ? 'band' : 'overlay';
 }
 
@@ -114,11 +126,38 @@ function drawChart() {
   const host = refs.chartHost;
   if (!host) return;
   if (S.error) { mount(host, errorBox(S.error, loadCurves)); return; }
-  if (!S.curves) { mount(host, skeletonRows(5)); return; }
 
-  const all = S.curves.series;
+  mount(host,
+    h('div.section-head',
+      h('div.section-title', '特殊处理对比'),
+      h('div.row.gap-3.wrap',
+        select('显示', S.mode,
+          [['auto', `自动（>${SPAGHETTI_LIMIT} 条降级）`], ['all', '全部画出'],
+           ['band', '强制分位数带']],
+          (v) => { S.mode = v; drawChart(); }),
+        select('着色', S.groupBy, [['batch', '按样品号'], ['none', '逐条']],
+          (v) => { S.groupBy = v; drawChart(); }))),
+    h('div.fig-grid-2',
+      curveFigure('slope', '谱斜率 vs 时间'),
+      curveFigure('integral', '波段积分 vs 时间')));
+}
+
+function curveFigure(col, title) {
+  const data = S.curves[col];
+  const body = data ? paintCurve(col, data) : skeletonRows(4);
+  return h('div.figure',
+    h('div.figure-head',
+      h('div.figure-title', title),
+      data
+        ? h('button.btn.btn-sm', { onclick: () => exportDialog(col) }, '导出脚本')
+        : null),
+    body);
+}
+
+function paintCurve(col, data) {
+  const all = data.series;
   const n = all.length;
-  const degrade = effectiveMode() === 'band';
+  const degrade = effectiveMode(col) === 'band';
 
   let chart, caption;
   if (degrade) {
@@ -128,41 +167,26 @@ function drawChart() {
     const reps = all.filter((_, i) => i % step === 0).slice(0, 6)
       .map((s) => ({ ...s, group: undefined }));
     chart = xyChart({
-      x_label: '时间 (s)', y_label: Y_LABEL[S.column], band,
+      x_label: '时间 (s)', y_label: Y_LABEL[col], band,
       series: reps.map((s) => ({ ...s, style: 'line' })),
-    }, { height: 340 });
+    }, { height: 320 });
     caption = `${fmtInt(n)} 条曲线 —— 显示中位数与四分位区间，另叠了 ${reps.length} 条代表曲线。`
       + `超过 ${SPAGHETTI_LIMIT} 条自动降级，因为上千条叠一起是噪声不是图。`;
   } else {
     chart = xyChart({
-      x_label: '时间 (s)', y_label: Y_LABEL[S.column],
+      x_label: '时间 (s)', y_label: Y_LABEL[col],
       series: all.map((s) => ({ ...s, style: 'line',
         group: S.groupBy === 'batch' ? s.group : undefined })),
-    }, { height: 340 });
+    }, { height: 320 });
     caption = `${fmtInt(n)} 条曲线`
-      + (S.groupBy === 'batch' ? '，按批次着色（最多 12 组）' : '');
+      + (S.groupBy === 'batch' ? '，按样品号着色（最多 12 组）' : '');
   }
 
-  if (S.curves.truncated) {
-    caption += `　服务端只返回了前 ${fmtInt(S.curves.returned)} 条，`
-      + `另有 ${fmtInt(S.curves.truncated)} 条没取。`;
+  if (data.truncated) {
+    caption += `　服务端只返回了前 ${fmtInt(data.returned)} 条，`
+      + `另有 ${fmtInt(data.truncated)} 条没取。`;
   }
-
-  mount(host,
-    h('div.section-head',
-      h('div.section-title', '跨样品叠图'),
-      h('div.row.gap-3',
-        select('曲线', S.column, [['integral', '波段积分'], ['slope', '谱斜率']],
-          (v) => { S.column = v; S.curves = null; drawChart(); loadCurves(); }),
-        select('显示', S.mode,
-          [['auto', `自动（>${SPAGHETTI_LIMIT} 条降级）`], ['all', '全部画出'],
-           ['band', '强制分位数带']],
-          (v) => { S.mode = v; drawChart(); }),
-        select('着色', S.groupBy, [['batch', '按批次'], ['none', '逐条']],
-          (v) => { S.groupBy = v; drawChart(); }),
-        h('button.btn.btn-sm', { onclick: () => exportDialog() }, '导出脚本'))),
-    chart,
-    h('div.chart-caption', caption));
+  return h('div', chart, h('div.chart-caption', caption));
 }
 
 const Y_LABEL = { integral: '积分强度 (a.u.·nm)', slope: 'dI/dλ (a.u./nm)' };
@@ -253,11 +277,11 @@ async function previewScript(params) {
   }
 }
 
-function exportDialog() {
+function exportDialog(col) {
   // 「自动」模式下屏幕已经降级成分位数带了，导出就不能还是 90 条叠图 ——
   // 拿到手的图跟屏幕上看到的不是同一张，是最让人困惑的一种不一致。
-  const mode = effectiveMode();
-  const params = { column: S.column, mode, group_by: S.groupBy };
+  const mode = effectiveMode(col);
+  const params = { column: col, mode, group_by: S.groupBy };
   const url = api.batchExportUrl(S.runId, params);
   const m = modal({
     title: '导出绘图脚本',
@@ -277,7 +301,7 @@ function exportDialog() {
             '而且论文里那张图是你自己能读、能改、能引用的代码画的 —— ',
             '不是模型在某个沙箱里跑出来的黑箱。'))),
       h('p.xsmall.dim.mt-3',
-        '当前导出：', h('span.mono', `${Y_LABEL[S.column]} · `
+        '当前导出：', h('span.mono', `${Y_LABEL[col]} · `
           + (mode === 'band' ? '分位数带' : '叠图')
           + ` · 按${S.groupBy === 'batch' ? '批次' : '逐条'}着色`),
         mode === 'band' && S.mode === 'auto'

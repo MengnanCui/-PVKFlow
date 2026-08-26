@@ -15,6 +15,7 @@
       "import":  ["bat_xxx"],             # 导入批次
       "name_prefix": "B20_S",             # 名称前缀
       "name_range":  {"prefix": "B20_S", "min": 1, "max": 12},   # 名称里的可枚举段
+      "time":    {"from": "2026-07-29T00:00", "to": "2026-07-30T00:00"},  # 测量时间
       "field":   [{"name":"PCE","min":20,"max":null}],           # 关键结果区间
       "ids":     ["smp_a", "smp_b"],      # 显式钉住的样品（固定集用）
       "exclude": ["smp_c"],               # 手工排除
@@ -35,7 +36,7 @@ from app.storage import db
 # 允许出现在筛选式里的键。多一个都不认 —— 免得前端或模型塞进来奇怪的东西。
 ALLOWED_KEYS = {
     "batch", "folder", "method", "import", "name_prefix", "name_range",
-    "field", "ids", "exclude", "q", "has_matrix",
+    "time", "field", "ids", "exclude", "q", "has_matrix",
 }
 
 _SAFE_FIELD = re.compile(r"^[\w.\-/%()][\w .\-/%()²³·]*$")
@@ -92,6 +93,18 @@ def normalize(raw: Any) -> dict:
             "min": None if lo is None else int(lo),
             "max": None if hi is None else int(hi),
         }
+
+    tw = raw.get("time")
+    if tw:
+        if not isinstance(tw, dict):
+            raise FilterError("time 必须是对象，形如 {from: ISO, to: ISO}")
+        a = str(tw.get("from") or "").strip()
+        b = str(tw.get("to") or "").strip()
+        if not a and not b:
+            raise FilterError("time 至少要有 from 或 to")
+        if a and b and a > b:
+            a, b = b, a          # 端点反了就换过来，不用为这个报错
+        out["time"] = {"from": a, "to": b}
 
     fields = raw.get("field")
     if fields:
@@ -198,6 +211,22 @@ def compile_filter(flt: dict) -> Compiled:
         if nr["max"] is not None:
             where.append(f"CAST({expr} AS INTEGER) <= ?")
             params.append(nr["max"])
+
+    if f.get("time"):
+        # 测量时间存在 measurement.measured_at 上（导入时从文件夹名的时间戳解析，
+        # 解析不出来退回文件修改时间）。ISO 8601 是字典序可比的，
+        # 所以直接字符串比较就行，不用 datetime 函数 —— 索引也才用得上。
+        tw = f["time"]
+        parts: list[str] = []
+        if tw.get("from"):
+            parts.append("m.measured_at >= ?")
+            params.append(tw["from"])
+        if tw.get("to"):
+            parts.append("m.measured_at <= ?")
+            params.append(tw["to"])
+        where.append(
+            "EXISTS (SELECT 1 FROM measurement m WHERE m.sample_id = s.sample_id"
+            "        AND m.measured_at IS NOT NULL AND " + " AND ".join(parts) + ")")
 
     for spec in f.get("field", []):
         cond = ["k.sample_id = s.sample_id", "k.field_name = ?", "k.value_num IS NOT NULL"]
@@ -321,6 +350,7 @@ def facets(flt: dict, top: int = 40) -> dict:
             "selected": r["value"] in set(f.get("import", [])),
         })
 
+    out["time"] = _time_facet(without("time"), f.get("time"))
     out["folder"] = _folder_facet(without("folder"), set(f.get("folder", [])), top)
     out["name"] = _name_facet(without("name_range"))
     out["field"] = _field_facet(without("field"), f.get("field", []))
@@ -328,26 +358,43 @@ def facets(flt: dict, top: int = 40) -> dict:
     return out
 
 
-def _folder_facet(c: Compiled, selected: set[str], top: int) -> list[dict]:
-    """文件夹分面。目录树本身就是一棵分面树 —— display_path 切一刀就有了。"""
-    rows = db.query(f"""
-        SELECT a.display_path AS p, COUNT(DISTINCT s.sample_id) AS n
-        FROM sample s JOIN artifact a ON a.sample_id = s.sample_id
-        {c.clause} {'AND' if c.where else 'WHERE'} a.display_path LIKE '%/%'
-        GROUP BY a.display_path""", tuple(c.params))
+def _time_facet(c: Compiled, selected: dict | None) -> dict:
+    """测量时间的真实范围。
 
-    counts: dict[str, set] = {}
-    for r in rows:
-        head = str(r["p"]).split("/")[0]
-        counts.setdefault(head, set()).add(r["p"])
-    tally = db.query(f"""
+    跟名称滑块一个道理：端点就是数据里的真实 min/max，
+    范围不用去别处读 —— 范围本身就画在那儿。
+    """
+    where = c.clause or "WHERE 1=1"
+    row = db.query_one(
+        f"SELECT MIN(m.measured_at) AS lo, MAX(m.measured_at) AS hi,"
+        f"       COUNT(DISTINCT s.sample_id) AS n"
+        f" FROM sample s JOIN measurement m ON m.sample_id = s.sample_id"
+        f" {where} AND m.measured_at IS NOT NULL",
+        tuple(c.params)) or {}
+    return {"min": row.get("lo"), "max": row.get("hi"),
+            "count": row.get("n") or 0, "selected": selected}
+
+
+def _folder_facet(c: Compiled, selected: set[str], top: int) -> list[dict]:
+    """文件夹分面。目录树本身就是一棵分面树 —— display_path 切一刀就有了。
+
+    有一种情况要挡掉：原位数据是一个子文件夹一次测量，于是文件夹和样品
+    一一对应，40 个样品出 40 个各含 1 个的 chip —— 那不是筛选，那是把
+    列表又抄了一遍。**每个值都只有 1 个样品时整个分面就没有意义**，直接不给。
+    （想按文件夹名找某一个，上面的搜索框就是干这个的。）
+    """
+    rows = db.query(f"""
         SELECT a.display_path AS p, s.sample_id AS sid
         FROM sample s JOIN artifact a ON a.sample_id = s.sample_id
         {c.clause} {'AND' if c.where else 'WHERE'} a.display_path LIKE '%/%'""",
         tuple(c.params))
+
     per_head: dict[str, set] = {}
-    for r in tally:
+    for r in rows:
         per_head.setdefault(str(r["p"]).split("/")[0], set()).add(r["sid"])
+
+    if not per_head or max(len(v) for v in per_head.values()) < 2:
+        return []
 
     out = [{"value": k, "count": len(v), "selected": k in selected}
            for k, v in per_head.items()]

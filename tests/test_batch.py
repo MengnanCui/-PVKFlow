@@ -406,3 +406,47 @@ def test_export_preview_returns_the_script_before_downloading(batch_client, impo
     z = _export(batch_client, t["result"]["parent_run_id"],
                 column="integral", mode="band", group_by="none")
     assert z.read("plot.py").decode("utf-8") == j["script"]
+
+
+# ---------------------------------------------------------------- 对比历史
+def test_run_title_lands_on_the_parent_run_not_just_the_task(batch_client, imported):
+    """名字要跟着**父运行**落库。
+
+    只放在 task 上的话，任务表清掉之后这次对比就没名字了 ——
+    而对比历史读的正是父运行的 params。
+    """
+    r = batch_client.post("/api/batch/run", json={
+        "filter": {"batch": ["B20"]}, "recipe": {}, "title": "干燥速率对比"})
+    assert r.status_code == 200, r.text
+    t = _wait(r.json()["task"]["task_id"])
+    assert t["status"] == "ok"
+
+    detail = batch.batch_detail(t["result"]["parent_run_id"])
+    assert detail["run"]["params"]["title"] == "干燥速率对比"
+
+
+def test_history_lists_runs_with_their_titles(batch_client, imported):
+    """对比历史就是 /api/batch/runs —— 后端一直都在，缺的只是入口。"""
+    import json as _json
+
+    for name in ("第一次", "第二次"):
+        r = batch_client.post("/api/batch/run", json={
+            "filter": {"batch": ["B20"]}, "recipe": {}, "title": name})
+        _wait(r.json()["task"]["task_id"])
+
+    runs = batch_client.get("/api/batch/runs").json()["runs"]
+    titles = [_json.loads(x["params_json"] or "{}").get("title") for x in runs]
+    assert "第一次" in titles and "第二次" in titles
+    # 最近的排前面 —— 历史列表按这个顺序显示
+    assert titles[0] == "第二次"
+
+
+def test_untitled_run_still_gets_a_usable_name(batch_client, imported):
+    import json as _json
+
+    r = batch_client.post("/api/batch/run",
+                          json={"filter": {"batch": ["B20"]}, "recipe": {}})
+    t = _wait(r.json()["task"]["task_id"])
+    params = batch.batch_detail(t["result"]["parent_run_id"])["run"]["params"]
+    assert params["title"]                      # 不能是空的
+    assert "个样品" in params["title"]

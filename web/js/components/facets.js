@@ -23,20 +23,62 @@ export function facetPanel({ facets, filter, onChange }) {
     onChange({ ...f });
   };
 
+  // 只留三维：时间 / 文件夹 / 样品号。
+  // 测量方法、导入批次、关键结果区间、名称枚举滑块都砍了 ——
+  // 维度多不等于好用，找样品时真正会用的就这三个。
+  // 筛选式本身还支持那些键（模型和样品集会用），只是不摆在面板上。
   const sections = [];
 
-  if (facets.name?.patterns?.length) sections.push(nameSection(f, facets.name, onChange));
-  if (facets.batch?.length) sections.push(chipSection('批次', 'batch', facets.batch, f, toggle));
+  if (facets.time?.min) sections.push(timeSection(f, facets.time, onChange));
+  if (facets.batch?.length) sections.push(chipSection('样品号', 'batch', facets.batch, f, toggle));
   if (facets.folder?.length) sections.push(chipSection('文件夹', 'folder', facets.folder, f, toggle));
-  if (facets.method?.length) sections.push(chipSection('测量方法', 'method', facets.method, f, toggle));
-  if (facets.field?.length) sections.push(fieldSection(f, facets.field, onChange));
-  if (facets.import?.length) {
-    sections.push(chipSection('导入批次', 'import',
-      facets.import.map((i) => ({ ...i, value: i.value, label: i.label })), f, toggle));
-  }
 
   return h('div.facets', ...sections);
 }
+
+/**
+ * 测量时间区间。
+ *
+ * 两个输入框的 placeholder 就是数据里的真实首末时刻 —— 跟名称滑块一个道理：
+ * 范围不用先去别处读再回来输，范围本身就写在框里。
+ */
+function timeSection(f, facet, onChange) {
+  const cur = f.time || {};
+  const short = (v) => (v ? String(v).slice(0, 16).replace('T', ' ') : '');
+
+  const from = h('input.input.input-sm', {
+    type: 'text', value: short(cur.from), placeholder: short(facet.min),
+    style: { width: '100%' } });
+  const to = h('input.input.input-sm', {
+    type: 'text', value: short(cur.to), placeholder: short(facet.max),
+    style: { width: '100%' } });
+
+  const emit = () => {
+    const a = from.value.trim().replace(' ', 'T');
+    const b = to.value.trim().replace(' ', 'T');
+    const next = { ...f };
+    if (a || b) next.time = { from: a, to: b };
+    else delete next.time;
+    onChange(next);
+  };
+  from.onchange = emit;
+  to.onchange = emit;
+
+  return h('div.facet',
+    h('div.facet-head',
+      h('span.facet-title', '测量时间'),
+      (cur.from || cur.to)
+        ? h('button.facet-clear', {
+            onclick: () => { const n = { ...f }; delete n.time; onChange(n); },
+          }, '清除')
+        : null),
+    h('div.col.gap-2',
+      from,
+      h('div.row.gap-2', h('span.xsmall.dim', '到'), to)),
+    h('div.xsmall.dim.mt-2',
+      `数据里是 ${short(facet.min)} — ${short(facet.max)}`));
+}
+
 
 function chipSection(title, key, items, f, toggle) {
   const selected = new Set(f[key] || []);
@@ -188,9 +230,13 @@ export function filterSummary(filter, onChange) {
     h('button.filter-chip', { onclick: () => drop(key, value), title: '点击移除' },
       label, h('span.filter-chip-x', '×')));
 
-  for (const [key, title] of [['batch', '批次'], ['folder', '文件夹'],
+  for (const [key, title] of [['batch', '样品号'], ['folder', '文件夹'],
                               ['method', '方法'], ['import', '导入']]) {
     for (const v of f[key] || []) push(`${title} ${v}`, key, v);
+  }
+  if (f.time) {
+    const short = (v) => (v ? String(v).slice(0, 16).replace('T', ' ') : '…');
+    push(`时间 ${short(f.time.from)} — ${short(f.time.to)}`, 'time');
   }
   if (f.name_range) {
     const r = f.name_range;

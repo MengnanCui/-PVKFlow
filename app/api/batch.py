@@ -38,10 +38,13 @@ def run(payload: dict = Body(...)) -> dict:
     except ValueError as exc:
         raise ApiError(str(exc), 400, "bad_recipe") from exc
 
+    title = (payload.get("title") or "").strip() or f"{n} 个样品"
     task = tasks.submit(
         batch_mod.BATCH_SKILL_ID,
-        {"filter": flt, "recipe": recipe.as_dict()},
-        title=payload.get("title") or f"批处理 {n} 个样品",
+        # title 也放进 params：它要跟着**父运行**落库，对比历史才找得回来。
+        # 只放在 task 上的话，任务表清掉之后这次对比就没名字了。
+        {"filter": flt, "recipe": recipe.as_dict(), "title": title},
+        title=title,
     )
     return {"task": task, "n_samples": n, "recipe": recipe.as_dict()}
 
