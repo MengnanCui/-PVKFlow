@@ -107,11 +107,14 @@ def _process_one(row: dict, recipe: Recipe) -> SampleOutcome:
                 f"斜率窗口 {recipe.slope_center:g}±{recipe.slope_half_width:g} nm "
                 f"落在数据范围之外")
 
-        # 膜厚窗口的分辨率诊断是纯几何量，不依赖尚未接入的算法
+        # 分辨率诊断是纯几何量。用 fringe_ot 那一份实现，别在这儿抄第二遍 ——
+        # 抄第二遍就会有一天两边对不上。
         if lam[0] <= recipe.band_min and recipe.band_max <= lam[-1]:
-            dk = 1.0 / recipe.band_min - 1.0 / recipe.band_max
-            out.metrics["ot_floor"] = 1.5 / dk / 2
-            out.metrics["fringe_bin"] = 1.0 / dk
+            from app.analysis import fringe_ot
+
+            diag = fringe_ot.diagnostics_for(recipe.band_min, recipe.band_max)
+            out.metrics["ot_floor"] = diag["ot_floor_nm"]
+            out.metrics["fringe_bin"] = diag["bin_f_nm"]
         else:
             out.warnings.append(
                 f"膜厚窗口 {recipe.band_min:g}–{recipe.band_max:g} nm 超出数据范围")

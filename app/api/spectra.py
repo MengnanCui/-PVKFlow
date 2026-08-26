@@ -245,31 +245,53 @@ def curve(
 @router.get("/{artifact_id}/thickness")
 def thickness(
     artifact_id: str,
-    lam_min: float = 780.0,
-    lam_max: float = 1050.0,
+    lam_min: float = Query(775.0, gt=0),
+    lam_max: float = Query(1120.0, gt=0),
+    max_points: int = Query(0, ge=0, le=5000),
 ) -> dict:
-    """光学厚度 OT vs 时间。
+    """光学厚度 OT = n·d·cosθ vs 时间。
 
-    算法由 fringe-optical-thickness skill 提供，尚未接入。
-    这里只保留接口形状，接入后前端不用改。
+    算法是 fringe-optical-thickness 冻结规范的可执行副本
+    （app/analysis/fringe_ot.py），STEP 0–10 逐条对应。
+
+    默认窗口 775–1120 nm：775 避开约 775 nm 的吸收边，1120 是光谱仪上限。
+    这是**平台传的 override**，规范里的 DEFAULTS 仍是 780–1050 —— 块 A
+    回显的是本次实际用的值，所以两边都成立。
     """
-    from app.skills.registry import registry
+    from app.analysis import fringe_ot
 
+    if lam_min >= lam_max:
+        raise ApiError(f"波段反了：{lam_min:g}–{lam_max:g} nm", 400, "bad_band")
+
+    sm = _load(artifact_id)
     try:
-        skill = registry.get("thickness.generic")
-        ready = skill.spec.ready
-        note = skill.spec.ready_note
-    except KeyError:
-        ready, note = False, "膜厚 skill 未注册"
-
-    if not ready:
-        raise ApiError(
-            note or "膜厚算法尚未接入",
-            501, "not_ready",
-            detail=("接口已就位：接入后本端点返回 {x: 时间[], y: 光学厚度[], "
-                    "flags: 每点可信性标志}，前端不需要改动。"),
+        res = fringe_ot.extract_series(
+            sm.lam, sm.t, sm.M,
+            target_times_s="all",
+            window_nm=[float(lam_min), float(lam_max)],
+            input_is_absorbance=bool(sm.meta.get("input_is_absorbance", False)),
         )
-    raise ApiError("膜厚 skill 已就绪但尚未接到这个端点", 501, "not_wired")
+    except fringe_ot.FringeError as exc:
+        raise ApiError(str(exc), 400, "fringe_failed") from exc
+
+    pts = res["points"]
+    return {
+        "x": [round(q["t"], 4) for q in pts],
+        "y": [round(q["ot_nm"], 3) for q in pts],
+        "flags": [q["flags"] for q in pts],
+        "status": [q["status"] for q in pts],
+        "cycles": [round(q["cycles"], 3) for q in pts],
+        "snr_db": [round(q["snr_db"], 2) for q in pts],
+        "label": f"OT @ {lam_min:g}–{lam_max:g} nm",
+        "unit": "nm",
+        "n_points": len(pts),
+        "n_ok": res["n_ok"],
+        "diagnostics": res["diagnostics"],
+        # §5 要求块 A–D 全文，且禁止简化、禁止省略。这里原样带上，
+        # 前端把它整段显示出来，不折叠。
+        "report": fringe_ot.format_report(res, max_rows=max_points or 24),
+    }
+
 
 # ------------------------------------------------------------------ 样品清单
 @router.get("/samples")

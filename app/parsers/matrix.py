@@ -102,10 +102,20 @@ def _parse_preamble(path: Path, max_lines: int = 60) -> tuple[dict[str, Any], in
 
 
 def parse(path: str | Path) -> SpectralMatrix:
-    """把一个宽表文件解析成光谱矩阵。两个方向都认。"""
+    """把一个宽表文件解析成光谱矩阵。两个方向都认。
+
+    原位仪器的 Data.csv 是另一种格式（tab 分隔、两个数据块、时间轴在块内），
+    在这里分流出去 —— 分流点放在 parse 里，npz 缓存和下游全都不用改。
+    """
+    p = Path(path)
+
+    from app.parsers import insitu_csv
+
+    if insitu_csv.looks_like_insitu(p):
+        return insitu_csv.parse(p)      # 这条路不需要 pandas，别为它付导入的钱
+
     import pandas as pd
 
-    p = Path(path)
     meta, _ = _parse_preamble(p)
 
     if p.suffix.lower() in {".xlsx", ".xls", ".xlsm"}:

@@ -215,14 +215,43 @@ def test_curve_endpoints(matrix_client):
     assert slope["n_points"] == 80
 
 
-def test_thickness_endpoint_is_honest_about_not_being_wired(matrix_client):
+def test_thickness_endpoint_returns_a_real_curve(matrix_client):
+    """膜厚算法已接入（fringe-optical-thickness 冻结规范的可执行副本）。"""
     r = matrix_client.get(f"/api/spectra/{matrix_client.matrix_id}/thickness")
-    assert r.status_code == 501
-    err = r.json()["error"]
-    assert err["kind"] == "not_ready"
-    assert "膜厚" in err["message"]
-    # 不能只说"没做"，要说清楚接上之后会返回什么，前端才敢照着写
-    assert "光学厚度" in err["detail"] and "flags" in err["detail"]
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert len(d["x"]) == len(d["y"]) == d["n_points"] > 0
+    assert d["unit"] == "nm"
+    # 每一点都要带可信性标志 —— 只给数字不给判据是不行的
+    assert len(d["flags"]) == len(d["status"]) == d["n_points"]
+    assert set(d["status"]) <= {"OK", "DEGRADED", "LOW_CYCLES",
+                                "LOW_SNR", "UNDERSAMPLED"}
+    # 分辨率诊断（规范 §4 STEP 3）
+    assert d["diagnostics"]["ot_floor_nm"] > 0
+    assert d["diagnostics"]["bin_f_nm"] > 0
+    # §5 的块 A–D 全文，四块一个都不能少
+    for block in ("参数（本次运行实际使用）", "分辨率诊断",
+                  "光学厚度结果", "必读声明"):
+        assert block in d["report"]
+
+
+def test_thickness_window_defaults_to_the_platform_band(matrix_client):
+    """默认窗口是 775–1120，不是规范 DEFAULTS 里的 780–1050。
+
+    冻结的默认值没动，平台是用 override 传的 —— 块 A 回显本次实际用的值。
+    """
+    from app.analysis import fringe_ot
+
+    r = matrix_client.get(f"/api/spectra/{matrix_client.matrix_id}/thickness")
+    assert r.json()["diagnostics"]["window_nm"] == [775.0, 1120.0]
+    assert fringe_ot.DEFAULTS["window_nm"] == [780, 1050]
+
+
+def test_thickness_rejects_an_inverted_band(matrix_client):
+    r = matrix_client.get(f"/api/spectra/{matrix_client.matrix_id}/thickness",
+                          params={"lam_min": 1120, "lam_max": 775})
+    assert r.status_code == 400
+    assert r.json()["error"]["kind"] == "bad_band"
 
 
 def test_non_matrix_file_gives_a_readable_error(matrix_client):

@@ -27,5 +27,6 @@ dist/
 .DS_Store
 Thumbs.db
 
-# 样例光谱矩阵体积大，用 sample_data/make_insitu.py 现场生成
-sample_data/insitu/*.csv
+# 样例光谱矩阵体积大（一个 2.3 MB），用 sample_data/make_insitu.py 现场生成。
+# 真格式是一个子文件夹一次测量，所以要连子目录一起忽略。
+sample_data/insitu/
