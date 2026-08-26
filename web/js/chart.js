@@ -4,18 +4,20 @@
 const PALETTE = ['--s1','--s2','--s3','--s4','--s5','--s6','--s7','--s8','--s9','--s10','--s11','--s12'];
 const NS = 'http://www.w3.org/2000/svg';
 
-const el = (name, attrs = {}) => {
-  const n = document.createElementNS(NS, name);
+export const svgEl = (name, attrs = {}) => {
+    const n = document.createElementNS(NS, name);
   for (const [k, v] of Object.entries(attrs)) {
     if (v !== null && v !== undefined) n.setAttribute(k, v);
   }
   return n;
 };
 
+const el = svgEl;
+
 export const seriesColor = (i) => `var(${PALETTE[i % PALETTE.length]})`;
 
-/** 「好看」的刻度：1 / 2 / 5 × 10^n */
-function niceTicks(min, max, count = 6) {
+/** 「好看」的刻度：1 / 2 / 5 × 10^n。热力图的坐标轴也用它，保持一致。 */
+export function niceTicks(min, max, count = 6) {
   if (!Number.isFinite(min) || !Number.isFinite(max)) return { ticks: [0, 1], lo: 0, hi: 1 };
   if (min === max) { const d = Math.abs(min) || 1; min -= d * 0.5; max += d * 0.5; }
   const raw = (max - min) / count;
@@ -29,7 +31,7 @@ function niceTicks(min, max, count = 6) {
   return { ticks, lo, hi, step };
 }
 
-function tickLabel(v, step) {
+export function tickLabel(v, step) {
   if (v === 0) return '0';
   const a = Math.abs(v);
   if (a >= 1e5 || a < 1e-3) return v.toExponential(1);

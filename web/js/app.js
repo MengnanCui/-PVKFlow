@@ -5,13 +5,15 @@ import { h, mount, $, toast } from './ui.js';
 
 import * as overview from './pages/overview.js';
 import * as process_ from './pages/process.js';
+import * as sample from './pages/sample.js';
 import * as storage from './pages/storage.js';
 import * as relation from './pages/relation.js';
 import * as settings from './pages/settings.js';
 
-const PAGES = [overview, process_, storage, relation, settings];
+const PAGES = [overview, process_, sample, storage, relation, settings];
 const BY_ID = Object.fromEntries(PAGES.map((p) => [p.meta.id, p]));
 
+// sample 不出现在侧栏 —— 它是从数据处理页下钻进去的
 const MAIN_NAV = ['overview', 'process', 'storage', 'relation'];
 const SYSTEM_NAV = ['settings'];
 
@@ -45,19 +47,25 @@ function buildNav(hostId, ids, heading) {
     }, h('span.grow', BY_ID[id].meta.title))));
 }
 
-function navigate(id, { push = true } = {}) {
+/**
+ * navigate('process') 或 navigate('sample', {arg: 'art_xxx'})
+ * hash 形如 #sample/art_xxx —— 下钻页面可以直接分享链接、可以刷新、可以后退。
+ */
+function navigate(id, { push = true, arg = null } = {}) {
   const page = BY_ID[id];
   if (!page) return navigate('overview');
 
   current = id;
+  // 下钻页面把父级导航项保持高亮，用户才不会觉得自己"掉出去"了
+  const highlight = page.meta.parent || id;
   document.querySelectorAll('.nav-item').forEach((b) => {
-    if (b.dataset.page === id) b.setAttribute('aria-current', 'page');
+    if (b.dataset.page === highlight) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   });
 
   $('#pageTitle').textContent = page.meta.title;
   $('#pageDesc').textContent = page.meta.desc || '';
-  mount($('#pageActions'), ...(page.actions?.(navigate) || []));
+  mount($('#pageActions'), ...(page.actions?.(navigate, arg) || []));
 
   let host = mounted.get(id);
   if (!host) {
@@ -68,9 +76,10 @@ function navigate(id, { push = true } = {}) {
   for (const [pid, node] of mounted) node.classList.toggle('is-active', pid === id);
 
   // 每次进入都重新取数 —— 数据会变，缓存一份旧的更糟
-  page.view(host, { nav: navigate });
+  page.view(host, { nav: navigate, arg });
 
-  if (push && location.hash.slice(1) !== id) location.hash = id;
+  const target = arg ? `${id}/${arg}` : id;
+  if (push && location.hash.slice(1) !== target) location.hash = target;
   document.title = `${page.meta.title} · HTE Studio`;
   viewport.scrollTop = 0;
 }
@@ -78,8 +87,20 @@ function navigate(id, { push = true } = {}) {
 buildNav('#navMain', MAIN_NAV, '平台');
 buildNav('#navSystem', SYSTEM_NAV, '系统');
 
-window.addEventListener('hashchange', () => navigate(location.hash.slice(1) || 'overview', { push: false }));
-window.addEventListener('hte:nav', (e) => navigate(e.detail));
+function fromHash() {
+  const [id, ...rest] = (location.hash.slice(1) || 'overview').split('/');
+  return { id: id || 'overview', arg: rest.join('/') || null };
+}
+
+window.addEventListener('hashchange', () => {
+  const { id, arg } = fromHash();
+  navigate(id, { push: false, arg });
+});
+window.addEventListener('hte:nav', (e) => {
+  const d = e.detail;
+  if (typeof d === 'string') navigate(d);
+  else navigate(d.page, { arg: d.arg });
+});
 
 // ------------------------------------------------------------------ 健康检查
 async function checkHealth() {
@@ -102,4 +123,5 @@ async function checkHealth() {
 checkHealth();
 setInterval(checkHealth, 30000);
 
-navigate(location.hash.slice(1) || 'overview', { push: false });
+const initial = fromHash();
+navigate(initial.id, { push: false, arg: initial.arg });

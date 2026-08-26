@@ -26,3 +26,6 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 样例光谱矩阵体积大，用 sample_data/make_insitu.py 现场生成
+sample_data/insitu/*.csv

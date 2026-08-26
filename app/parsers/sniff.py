@@ -94,9 +94,26 @@ def _split(line: str, delim: str) -> list[str]:
 def sniff_text(path: Path, max_lines: int = 200) -> Sniffed:
     """找出抬头有多少行、表头在哪、每列什么类型。"""
     text, enc = read_text(Path(path))
-    lines = text.splitlines()[:max_lines]
-    if not lines:
+    raw_lines = text.splitlines()[:max_lines]
+    if not raw_lines:
         return Sniffed(encoding=enc, ok=False, reason="文件为空")
+
+    # 先摘掉 # / % 开头的注释行再判分隔符。仪器导出文件普遍带几行说明性
+    # 抬头，那些行里的逗号数量和数据行完全不同，会把分隔符判断带偏。
+    comment_lines = []
+    body_start = 0
+    for i, ln in enumerate(raw_lines):
+        if ln.lstrip().startswith(("#", "%")):
+            comment_lines.append(ln.lstrip().lstrip("#%").strip())
+            body_start = i + 1
+        elif not ln.strip():
+            body_start = i + 1
+        else:
+            break
+    lines = raw_lines[body_start:]
+    if not lines:
+        return Sniffed(encoding=enc, ok=False, reason="除了注释行没有别的内容",
+                       preamble=comment_lines)
 
     delim = _guess_delimiter(lines)
 
@@ -114,6 +131,7 @@ def sniff_text(path: Path, max_lines: int = 200) -> Sniffed:
 
     if not numeric_rows:
         return Sniffed(encoding=enc, delimiter=delim, header_row=None, ok=False,
+                       preamble=comment_lines,
                        reason="没有识别到数值数据行，可能不是表格文件")
 
     first_data = numeric_rows[0]
@@ -126,8 +144,9 @@ def sniff_text(path: Path, max_lines: int = 200) -> Sniffed:
                 header_row = j
             break
 
-    preamble = [ln for ln in lines[: (header_row if header_row is not None else first_data)]
-                if ln.strip()]
+    preamble = comment_lines + [
+        ln for ln in lines[: (header_row if header_row is not None else first_data)]
+        if ln.strip()]
 
     if header_row is not None:
         columns = [c.strip().strip('"') or f"col{i+1}"
@@ -146,9 +165,12 @@ def sniff_text(path: Path, max_lines: int = 200) -> Sniffed:
         else:
             dtypes[name] = "text"
 
+    # 行号要还原到原始文件的坐标系，否则 pandas 的 skiprows 会错位
+    abs_header = None if header_row is None else header_row + body_start
     return Sniffed(
         encoding=enc, delimiter=delim,
-        header_row=header_row, skip_rows=(header_row if header_row is not None else first_data),
+        header_row=abs_header,
+        skip_rows=(abs_header if abs_header is not None else first_data + body_start),
         columns=columns, dtypes=dtypes, preamble=preamble,
         n_data_rows_sampled=len(sample),
     )

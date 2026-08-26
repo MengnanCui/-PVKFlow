@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import config
-from app.api import artifacts, assist, files, results, settings, skills
+from app.api import artifacts, assist, files, results, settings, skills, spectra
 from app.api.common import error_response
 from app.skills.registry import registry
 
@@ -46,7 +46,7 @@ app = FastAPI(
 )
 
 for router in (files.router, skills.router, results.router, artifacts.router,
-               assist.router, settings.router):
+               assist.router, settings.router, spectra.router):
     app.include_router(router)
 
 

@@ -265,3 +265,89 @@ table.data tr:last-child td { border-bottom: 0; }
   background: var(--accent-wash); border: 1.5px dashed var(--accent);
   border-radius: var(--r-lg);
 }
+
+/* ---------------------------------------------------------------- 功能切换 */
+.fn-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--s2x); }
+.fn-tab {
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-start;
+  padding: var(--s3x) var(--s4x); text-align: left;
+  border: 1px solid var(--line); border-radius: var(--r-lg);
+  background: var(--paper); color: var(--ink-2);
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.fn-tab:hover:not(:disabled) { border-color: var(--line-strong); background: var(--surface-2); }
+.fn-tab[aria-selected="true"] {
+  border-color: var(--accent); background: var(--accent-wash);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.fn-tab:disabled { opacity: .5; cursor: not-allowed; }
+.fn-tab-name { font-size: var(--t-base); font-weight: 600; color: var(--ink); }
+.fn-tab[aria-selected="true"] .fn-tab-name { color: var(--accent-ink); }
+.fn-tab-desc { font-size: var(--t-xs); color: var(--ink-4); line-height: 1.4; }
+
+/* ---------------------------------------------------------------- 样品详情 */
+.sample-head { margin-bottom: var(--s6x); }
+.facts { display: flex; flex-wrap: wrap; gap: var(--s6x); align-items: flex-start; }
+.fact-k { font-size: var(--t-xs); color: var(--ink-4); }
+.fact-v { font-size: var(--t-base); color: var(--ink); font-weight: 500;
+          font-variant-numeric: tabular-nums; margin-top: 2px; }
+.fact-meta { flex-basis: 100%; }
+
+.sample-layout { display: grid; grid-template-columns: 132px 1fr; gap: var(--s8x); align-items: start; }
+.module-nav { position: sticky; top: var(--s4x); display: flex; flex-direction: column; gap: 2px; }
+.module-link {
+  padding: 6px var(--s3x); border-radius: var(--r-sm);
+  font-size: var(--t-sm); color: var(--ink-3); text-decoration: none;
+  border-left: 2px solid transparent;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.module-link:hover { background: var(--surface-2); color: var(--ink); text-decoration: none; }
+.module-link.is-active { color: var(--ink); font-weight: 550; border-left-color: var(--accent);
+                         background: var(--surface-2); }
+
+.module-body { min-width: 0; display: flex; flex-direction: column; gap: var(--s12x); }
+.module { scroll-margin-top: var(--s4x); min-width: 0; }
+.module-head { display: flex; align-items: baseline; justify-content: space-between;
+               gap: var(--s4x); padding-bottom: var(--s3x); margin-bottom: var(--s4x);
+               border-bottom: 1px solid var(--line); }
+.module-head h2 { font-size: var(--t-md); }
+
+.figure { margin-bottom: var(--s8x); min-width: 0; }
+.figure-head { display: flex; align-items: center; justify-content: space-between;
+               gap: var(--s4x); flex-wrap: wrap; margin-bottom: var(--s3x); }
+.figure-title { font-size: var(--t-base); font-weight: 550; color: var(--ink); }
+.chart-caption { font-size: var(--t-xs); color: var(--ink-4); margin-top: 6px;
+                 display: flex; align-items: center; flex-wrap: wrap; }
+.heatmap { min-width: 0; }
+
+/* 待接入的能力：说清楚缺什么，不画假界面 */
+.slot { border: 1px dashed var(--line-2); border-radius: var(--r-lg);
+        padding: var(--s4x); background: var(--surface-2); margin-top: var(--s3x); }
+.slot-title { font-size: var(--t-base); font-weight: 550; color: var(--ink-2); }
+
+/* ---------------------------------------------------------------- 内联控件 */
+.inline-field { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.input-sm, .select-sm { padding: 3px 7px; font-size: var(--t-xs); }
+.range { -webkit-appearance: none; appearance: none; width: 118px; height: 3px;
+         border-radius: 2px; background: var(--line-2); outline: none; }
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: var(--accent-solid); border: 2px solid var(--paper); cursor: grab;
+  box-shadow: 0 0 0 1px var(--line-2);
+}
+.range::-webkit-slider-thumb:active { cursor: grabbing; }
+.range::-moz-range-thumb {
+  width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--paper);
+  background: var(--accent-solid); cursor: grab; box-shadow: 0 0 0 1px var(--line-2);
+}
+.band-control { display: flex; flex-direction: column; gap: 5px; }
+.band-sliders { display: flex; gap: var(--s2x); }
+.band-sliders .range { width: 100px; }
+
+@media (max-width: 900px) {
+  .sample-layout { grid-template-columns: 1fr; gap: var(--s4x); }
+  .module-nav { position: static; flex-direction: row; flex-wrap: wrap; }
+  .module-link { border-left: 0; border-bottom: 2px solid transparent; }
+  .module-link.is-active { border-left-color: transparent; border-bottom-color: var(--accent); }
+}

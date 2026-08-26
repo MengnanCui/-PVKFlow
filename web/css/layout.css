@@ -91,6 +91,7 @@
 .page.is-active { display: block; }
 /* 工作台需要全宽：三栏本来就挤 */
 #page-process { max-width: none; }
+#page-sample  { max-width: 1400px; }
 
 /* 长段文字限制在可读行长内 —— 一行 100+ 字是没法读的 */
 .measure { max-width: 74ch; }

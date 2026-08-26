@@ -133,3 +133,105 @@ def test_unknown_api_path_returns_json_not_html(client):
 def test_unknown_page_path_falls_back_to_the_app(client):
     r = client.get("/some/deep/route")
     assert r.status_code == 200 and "HTE Studio" in r.text
+
+
+# ------------------------------------------------------------------ 光谱矩阵
+@pytest.fixture()
+def matrix_client(client, tmp_path):
+    """导入一个真的光谱矩阵。"""
+    import numpy as np
+
+    lam = np.linspace(600, 1100, 240)
+    t = np.linspace(0, 20, 80)
+    src = tmp_path / "insitu"
+    src.mkdir()
+    p = src / "B99_M1_absorbance.csv"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("# Instrument: TestSpec\n")
+        f.write("Wavelength(nm)," + ",".join(f"{x:.4f}" for x in t) + "\n")
+        for i, w in enumerate(lam):
+            row = 0.6 + 0.2 * np.cos(2 * np.pi * 2 * 4000 * (1 - 0.5 * t / 20) / w)
+            f.write(f"{w:.4f}," + ",".join(f"{v:.6f}" for v in row) + "\n")
+
+    scan = client.post("/api/files/scan", json={"path": str(src)}).json()
+    client.post("/api/files/import", json={"files": scan["files"]})
+    client.matrix_id = client.get(
+        "/api/files", params={"q": "absorbance"}).json()["rows"][0]["artifact_id"]
+    return client
+
+
+def test_spectra_samples_finds_the_matrix(matrix_client):
+    d = matrix_client.get("/api/spectra/samples").json()
+    assert d["with_matrix"] >= 1
+    hit = next(s for s in d["samples"] if s["matrices"])
+    assert hit["matrices"][0]["columns_hint"] == 81
+
+
+def test_spectra_meta(matrix_client):
+    d = matrix_client.get(f"/api/spectra/{matrix_client.matrix_id}/meta").json()
+    assert d["n_lambda"] == 240 and d["n_time"] == 80
+    assert d["meta"]["Instrument"] == "TestSpec"
+    assert d["sample"]["name"] == "M1"
+    assert d["frames_lambda_step"] > 0
+
+
+def test_frames_json_and_binary_agree(matrix_client):
+    import numpy as np
+
+    info = matrix_client.get(f"/api/spectra/{matrix_client.matrix_id}/frames").json()
+    L, T = info["shape"]
+    assert len(info["lambda"]) == L and len(info["time"]) == T
+
+    raw = matrix_client.get(info["data_url"]).content
+    arr = np.frombuffer(raw, dtype="<f4")
+    assert arr.size == L * T, "二进制长度必须和 shape 对得上，否则前端会错位"
+
+
+def test_heatmap_renders_png_with_axis_headers(matrix_client):
+    r = matrix_client.get(f"/api/spectra/{matrix_client.matrix_id}/heatmap.png",
+                          params={"axis": "wavenumber"})
+    assert r.status_code == 200
+    assert r.content[:8] == b"\x89PNG\r\n\x1a\n"
+    # header 只能是 latin-1，所以里面只放数字
+    assert float(r.headers["X-Axis-Y-Min"]) > 0
+    assert r.headers["X-Render-Info"]
+
+
+def test_heatmap_rejects_a_too_narrow_band(matrix_client):
+    r = matrix_client.get(f"/api/spectra/{matrix_client.matrix_id}/heatmap.png",
+                          params={"lam_min": 900, "lam_max": 900.5})
+    assert r.status_code == 400
+    assert r.json()["error"]["kind"] == "band_too_narrow"
+
+
+def test_curve_endpoints(matrix_client):
+    integ = matrix_client.get(f"/api/spectra/{matrix_client.matrix_id}/curve",
+                              params={"kind": "integral", "lam_min": 700,
+                                      "lam_max": 900}).json()
+    assert integ["n_points"] == 80 and all(v is not None for v in integ["y"])
+
+    slope = matrix_client.get(f"/api/spectra/{matrix_client.matrix_id}/curve",
+                              params={"kind": "slope", "center": 800}).json()
+    assert slope["n_points"] == 80
+
+
+def test_thickness_endpoint_is_honest_about_not_being_wired(matrix_client):
+    r = matrix_client.get(f"/api/spectra/{matrix_client.matrix_id}/thickness")
+    assert r.status_code == 501
+    err = r.json()["error"]
+    assert err["kind"] == "not_ready"
+    assert "膜厚" in err["message"]
+    # 不能只说"没做"，要说清楚接上之后会返回什么，前端才敢照着写
+    assert "光学厚度" in err["detail"] and "flags" in err["detail"]
+
+
+def test_non_matrix_file_gives_a_readable_error(matrix_client):
+    """把一个两列文件丢给光谱接口，要给人话而不是 500。"""
+    r = matrix_client.post("/api/files/upload", files=[
+        ("files", ("B99_M2_jv.csv", b"Voltage,Current\n0,1\n0.1,2\n0.2,3\n0.3,4\n", "text/csv"))])
+    aid = r.json()["imported"][0]["artifact_id"]
+
+    r = matrix_client.get(f"/api/spectra/{aid}/meta")
+    assert r.status_code == 400
+    assert r.json()["error"]["kind"] in ("not_a_matrix", "parse_failed")
+    assert "不像光谱矩阵" in r.json()["error"]["message"]

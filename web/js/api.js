@@ -89,6 +89,19 @@ export const api = {
   samples: () => get('/api/samples'),
   storageStats: () => get('/api/storage/stats'),
 
+  // 光谱矩阵
+  spectraSamples: () => get('/api/spectra/samples'),
+  spectraMeta: (id) => get(`/api/spectra/${id}/meta`),
+  spectraFrames: (id, params) => get(`/api/spectra/${id}/frames`, params),
+  spectraFramesBin: async (dataUrl) => {
+    const res = await request(dataUrl, { raw: true });
+    return new Float32Array(await res.arrayBuffer());
+  },
+  heatmapUrl: (id, params) => `/api/spectra/${id}/heatmap.png?` + new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')),
+  spectraCurve: (id, params) => get(`/api/spectra/${id}/curve`, params),
+  spectraThickness: (id, params) => get(`/api/spectra/${id}/thickness`, params),
+
   // 助手
   assistStatus: () => get('/api/assist/status'),
   inspect: (artifactIds) => post('/api/assist/inspect', { artifact_ids: artifactIds }),
