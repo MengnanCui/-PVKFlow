@@ -388,6 +388,14 @@ table.data tr:last-child td { border-bottom: 0; }
 .field-row .row { align-items: center; }
 .field-row .row > .input { flex: 1 1 0; min-width: 0; }
 
+/* 代码块：导出的 plot.py 在下载之前先读一眼 */
+.code-block {
+  margin: 0; padding: var(--s3x); max-height: 56vh; overflow: auto;
+  background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--r);
+  font-family: var(--mono); font-size: var(--t-xs); line-height: 1.6;
+  color: var(--ink-2); white-space: pre; tab-size: 4;
+}
+
 /* 当前筛选式的摘要 —— 一眼看出「我现在选的是什么」 */
 .filter-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .filter-chip {

@@ -177,6 +177,28 @@ def export_script(parent_run_id: str,
     )
 
 
+@router.get("/runs/{parent_run_id}/export/preview")
+def export_preview(parent_run_id: str,
+                   column: str = Query("integral", pattern="^(integral|slope)$"),
+                   mode: str = Query("overlay", pattern="^(overlay|band)$"),
+                   group_by: str = Query("batch", pattern="^(batch|none)$")) -> dict:
+    """先读脚本，再决定要不要下载。
+
+    这份脚本是「论文里那张图」的来源 —— 应该能在下载之前就读一眼，
+    确认它画的是你想要的东西。
+    """
+    _detail, _table, df = _load_curves(parent_run_id, column)
+    zh_label, en_label = _Y_LABELS[column]
+    n_series = df["sample_id"].nunique()
+    script = script_export.build_script(
+        column=column, y_label=zh_label, y_label_en=en_label, mode=mode,
+        group_by=group_by, n_series=int(n_series),
+        title=f"{zh_label} · {n_series} 个样品",
+        title_en=f"{en_label} · {n_series} samples")
+    return {"script": script, "n_series": int(n_series), "n_rows": len(df),
+            "columns": ["sample_id", "sample_name", "batch", "label", "t", column]}
+
+
 # ------------------------------------------------------------------ 任务
 tasks_router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 

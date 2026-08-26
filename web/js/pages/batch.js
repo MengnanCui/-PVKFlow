@@ -235,12 +235,30 @@ function allTable(children) {
 }
 
 // ------------------------------------------------------------------ 导出
+/** 下载之前先把脚本读一眼 —— 论文里那张图的来源，值得先看看它画的是什么。 */
+async function previewScript(params) {
+  try {
+    const r = await api.batchExportPreview(S.runId, params);
+    modal({
+      title: 'plot.py',
+      width: '860px',
+      body: h('div',
+        h('p.xsmall.dim',
+          `${fmtInt(r.n_series)} 条曲线 · data.csv ${fmtInt(r.n_rows)} 行 · `,
+          h('span.mono', r.columns.join(', '))),
+        h('pre.code-block.mt-3', r.script)),
+    });
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
 function exportDialog() {
   // 「自动」模式下屏幕已经降级成分位数带了，导出就不能还是 90 条叠图 ——
   // 拿到手的图跟屏幕上看到的不是同一张，是最让人困惑的一种不一致。
   const mode = effectiveMode();
-  const url = `/api/batch/runs/${S.runId}/export?column=${S.column}`
-    + `&mode=${mode}&group_by=${S.groupBy}`;
+  const params = { column: S.column, mode, group_by: S.groupBy };
+  const url = api.batchExportUrl(S.runId, params);
   const m = modal({
     title: '导出绘图脚本',
     width: '640px',
@@ -266,7 +284,15 @@ function exportDialog() {
           ? '（跟图上一样，因为曲线超过阈值已经降级）' : null)),
     foot: [
       h('button.btn', { onclick: () => m.close() }, '取消'),
-      h('a.btn.btn-primary', { href: url, download: '' }, '下载 zip'),
+      h('button.btn', {
+        onclick: (e) => { busy(e.target, true); previewScript(params)
+          .finally(() => busy(e.target, false)); },
+      }, '先读一眼 plot.py'),
+      // 没有后端就打不出 zip（静态演示版）。这时候不放一个点了没反应的按钮，
+      // 直接说清楚 —— 脚本本身还是真的，读得到。
+      url
+        ? h('a.btn.btn-primary', { href: url, download: '' }, '下载 zip')
+        : h('span.xsmall.dim', '这个版本没有后端，打不出 zip'),
     ],
   });
 }

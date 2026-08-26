@@ -108,6 +108,9 @@ export const api = {
   batchRuns: () => get('/api/batch/runs'),
   batchDetail: (id) => get(`/api/batch/runs/${id}`),
   batchCurves: (id, params) => get(`/api/batch/runs/${id}/curves`, params),
+  batchExportUrl: (id, params) =>
+    `/api/batch/runs/${id}/export?` + new URLSearchParams(params).toString(),
+  batchExportPreview: (id, params) => get(`/api/batch/runs/${id}/export/preview`, params),
 
   // 后台任务
   listTasks: () => get('/api/tasks'),

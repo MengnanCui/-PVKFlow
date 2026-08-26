@@ -388,3 +388,21 @@ def test_curve_labels_carry_the_batch(batch_client, imported):
                          params={"column": "integral"})
     labels = {s["label"] for s in r.json()["series"]}
     assert "B20/S1" in labels and "B21/S1" in labels
+
+
+def test_export_preview_returns_the_script_before_downloading(batch_client, imported):
+    """下载之前先读一眼 —— 这份脚本是「论文里那张图」的来源。"""
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID,
+                           {"filter": {"batch": ["B20"]}, "recipe": {}})["task_id"])
+    r = batch_client.get(
+        f"/api/batch/runs/{t['result']['parent_run_id']}/export/preview",
+        params={"column": "integral", "mode": "band", "group_by": "none"})
+    assert r.status_code == 200
+    j = r.json()
+    assert j["n_series"] == t["result"]["n_ok"]
+    assert '"#2470a0"' in j["script"] and "nanpercentile" in j["script"]
+    assert j["columns"] == ["sample_id", "sample_name", "batch", "label", "t", "integral"]
+    # 预览出来的脚本必须跟 zip 里那份一模一样，不能是另写一份
+    z = _export(batch_client, t["result"]["parent_run_id"],
+                column="integral", mode="band", group_by="none")
+    assert z.read("plot.py").decode("utf-8") == j["script"]
