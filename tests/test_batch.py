@@ -357,3 +357,34 @@ def test_exported_script_actually_runs(batch_client, imported, tmp_path, mode, g
     from PIL import Image
     with Image.open(png) as im:
         assert im.info.get("dpi", (0, 0))[0] == pytest.approx(300, abs=1)
+
+
+def test_run_and_file_listings_carry_the_batch(imported):
+    """列表里必须能分出是哪个批次的样品。
+
+    只回名字的话，24 个批次的 S9 在界面上长得一模一样 —— 前端拿不到批次，
+    再怎么改也显示不出区别。所以这是查询的问题，不是渲染的问题。
+    """
+    from app.skills import runner
+    from app.storage import artifacts
+
+    _wait(tasks.submit(batch.BATCH_SKILL_ID,
+                       {"filter": {"batch": ["B20", "B21"]}, "recipe": {}})["task_id"])
+
+    runs = runner.recent_runs(50)
+    assert runs and all("sample_batch" in r for r in runs)
+    assert {r["sample_batch"] for r in runs if r["sample_batch"]} >= {"B20", "B21"}
+
+    rows = artifacts.search(limit=50)["rows"]
+    assert rows and all("sample_batch" in r for r in rows)
+
+
+def test_curve_labels_carry_the_batch(batch_client, imported):
+    """图例里只写 S1 的话，24 个批次的 S1 在图上分不出是哪一个。"""
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20", "B21"]}, "recipe": {},
+    })["task_id"])
+    r = batch_client.get(f"/api/batch/runs/{t['result']['parent_run_id']}/curves",
+                         params={"column": "integral"})
+    labels = {s["label"] for s in r.json()["series"]}
+    assert "B20/S1" in labels and "B21/S1" in labels

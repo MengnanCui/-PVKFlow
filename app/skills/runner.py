@@ -186,7 +186,7 @@ def run_detail(run_id: str) -> dict:
 
 def recent_runs(limit: int = 50) -> list[dict]:
     return db.query(
-        "SELECT r.*, s.name AS sample_name,"
+        "SELECT r.*, s.name AS sample_name, s.batch AS sample_batch,"
         "       (SELECT COUNT(*) FROM key_result k WHERE k.analysis_run_id = r.analysis_run_id)"
         "         AS n_results"
         " FROM analysis_run r LEFT JOIN sample s ON s.sample_id = r.sample_id"

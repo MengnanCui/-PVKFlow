@@ -6,7 +6,7 @@
 import { api } from '../api.js';
 import {
   h, mount, clear, toast, empty, skeletonRows, errorBox, busy,
-  fmtInt, fmtNum, fmtTime, modal,
+  fmtInt, fmtNum, fmtTime, modal, sampleLabel,
 } from '../ui.js';
 import { xyChart, quantileBand, seriesColor } from '../chart.js';
 
@@ -104,6 +104,12 @@ async function loadCurves() {
   drawChart();
 }
 
+/** 屏幕上现在画的是叠图还是分位数带。导出必须跟它一致。 */
+function effectiveMode() {
+  const n = S.curves?.series?.length || 0;
+  return (S.mode === 'band' || (S.mode === 'auto' && n > SPAGHETTI_LIMIT)) ? 'band' : 'overlay';
+}
+
 function drawChart() {
   const host = refs.chartHost;
   if (!host) return;
@@ -112,7 +118,7 @@ function drawChart() {
 
   const all = S.curves.series;
   const n = all.length;
-  const degrade = S.mode === 'band' || (S.mode === 'auto' && n > SPAGHETTI_LIMIT);
+  const degrade = effectiveMode() === 'band';
 
   let chart, caption;
   if (degrade) {
@@ -193,7 +199,7 @@ function failedTable(failed) {
     h('table.data',
       h('thead', h('tr', h('th', '样品'), h('th', '批次'), h('th', '失败原因'))),
       h('tbody', ...failed.map((c) => h('tr',
-        h('td.strong', c.sample_name || '—'),
+        h('td.strong', sampleLabel(c.sample_name, c.batch)),
         h('td.small.muted', c.batch || '—'),
         h('td.small', { style: { color: 'var(--danger)' } },
           String(c.error || '').split('\n')[0]))))));
@@ -201,7 +207,7 @@ function failedTable(failed) {
 
 function warningBlock(warned) {
   const rows = warned.slice(0, 50).map((c) => h('tr',
-    h('td.strong', c.sample_name),
+    h('td.strong', sampleLabel(c.sample_name, c.batch)),
     h('td.small.muted', (c.warnings || []).join('；'))));
   return h('details.mb-3',
     h('summary.small.muted', { style: { cursor: 'pointer' } },
@@ -212,7 +218,7 @@ function warningBlock(warned) {
 
 function allTable(children) {
   const rows = children.map((c) => h('tr',
-    h('td', c.sample_name || '—'),
+    h('td', sampleLabel(c.sample_name, c.batch)),
     h('td.small.muted', c.batch || '—'),
     h('td', h('span.status.' + (c.status === 'ok' ? 'status-ok' : 'status-danger'),
               c.status === 'ok' ? '成功' : '失败')),
@@ -230,8 +236,11 @@ function allTable(children) {
 
 // ------------------------------------------------------------------ 导出
 function exportDialog() {
+  // 「自动」模式下屏幕已经降级成分位数带了，导出就不能还是 90 条叠图 ——
+  // 拿到手的图跟屏幕上看到的不是同一张，是最让人困惑的一种不一致。
+  const mode = effectiveMode();
   const url = `/api/batch/runs/${S.runId}/export?column=${S.column}`
-    + `&mode=${S.mode === 'band' ? 'band' : 'overlay'}&group_by=${S.groupBy}`;
+    + `&mode=${mode}&group_by=${S.groupBy}`;
   const m = modal({
     title: '导出绘图脚本',
     width: '640px',
@@ -251,7 +260,10 @@ function exportDialog() {
             '不是模型在某个沙箱里跑出来的黑箱。'))),
       h('p.xsmall.dim.mt-3',
         '当前导出：', h('span.mono', `${Y_LABEL[S.column]} · `
-          + (S.mode === 'band' ? '分位数带' : '叠图') + ` · 按${S.groupBy === 'batch' ? '批次' : '逐条'}着色`))),
+          + (mode === 'band' ? '分位数带' : '叠图')
+          + ` · 按${S.groupBy === 'batch' ? '批次' : '逐条'}着色`),
+        mode === 'band' && S.mode === 'auto'
+          ? '（跟图上一样，因为曲线超过阈值已经降级）' : null)),
     foot: [
       h('button.btn', { onclick: () => m.close() }, '取消'),
       h('a.btn.btn-primary', { href: url, download: '' }, '下载 zip'),

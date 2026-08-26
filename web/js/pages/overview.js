@@ -1,7 +1,7 @@
 // 总览：只显示数据库里真实存在的数字。为零就是零，不编。
 
 import { api } from '../api.js';
-import { h, mount, render, fmtInt, fmtTime, empty } from '../ui.js';
+import { h, mount, render, fmtInt, fmtTime, empty, sampleLabel } from '../ui.js';
 
 export const meta = {
   id: 'overview',
@@ -114,7 +114,7 @@ function runTable(runs) {
       h('th.num', '结果数'), h('th', '版本'), h('th', '时间'))),
     h('tbody', ...runs.map((r) => h('tr',
       h('td', h('span.strong', r.skill_name || r.skill_id)),
-      h('td', r.sample_name || h('span.dim', '—')),
+      h('td', sampleLabel(r.sample_name, r.sample_batch)),
       h('td', h('span.status.' + statusClass(r.status), statusText(r.status))),
       h('td.num', fmtInt(r.n_results)),
       h('td.mono.xsmall.muted', r.skill_version),

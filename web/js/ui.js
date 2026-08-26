@@ -74,6 +74,14 @@ export function fmtInt(v) {
   return (v ?? 0).toLocaleString('en-US');
 }
 
+// 样品的身份是 (名字, 批次)。S1 在每个批次里都有一个 —— 只显示名字的话，
+// 24 个不同的样品在列表里长得一模一样，根本分不出是哪一个。
+export function sampleLabel(name, batch) {
+  if (!name) return h('span.dim', '—');
+  if (!batch) return name;
+  return h('span', h('span.dim', batch + '/'), name);
+}
+
 export function fmtTime(iso) {
   if (!iso) return '—';
   const d = new Date(iso);

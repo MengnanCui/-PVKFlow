@@ -379,9 +379,14 @@ table.data tr:last-child td { border-bottom: 0; }
 .chip-toggle[aria-pressed="true"] .chip-count { color: var(--accent); }
 
 .range-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.field-row { display: flex; align-items: center; justify-content: space-between;
-             gap: var(--s2x); padding: 5px 0; border-bottom: 1px solid var(--line); }
+/* 字段名单独占一行。跟输入框挤在一行会被截成 "integ…"，
+   integral_initial / integral_final / integral_min 全长一个样。 */
+.field-row { display: flex; flex-direction: column; gap: 4px;
+             padding: 7px 0; border-bottom: 1px solid var(--line); }
 .field-row:last-child { border-bottom: 0; }
+.field-name { min-width: 0; overflow-wrap: anywhere; line-height: 1.35; }
+.field-row .row { align-items: center; }
+.field-row .row > .input { flex: 1 1 0; min-width: 0; }
 
 /* 当前筛选式的摘要 —— 一眼看出「我现在选的是什么」 */
 .filter-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }

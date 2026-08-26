@@ -107,7 +107,9 @@ def curves(parent_run_id: str,
         y = g[column].tolist()
         series.append({
             "sample_id": sid,
-            "label": str(g["sample_name"].iloc[0]),
+            # 图例里只写 S1 的话，24 个批次的 S1 在图上分不出是哪一个
+            "label": (f"{g['batch'].iloc[0]}/{g['sample_name'].iloc[0]}"
+                      if g["batch"].iloc[0] else str(g["sample_name"].iloc[0])),
             "group": str(g["batch"].iloc[0] or ""),
             "x": [round(float(v), 4) for v in g["t"]],
             "y": [None if v is None or v != v else round(float(v), 6) for v in y],

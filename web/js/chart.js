@@ -83,6 +83,11 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
 
   const state = { hover: null, drag: null };
 
+  // 分位数带的中位线占了 0 号色。代表曲线从 1 号起，否则第一条跟中位线
+  // 同色同粗细，图上分不出哪条是统计量哪条是样品。
+  // 定义在 draw() 外面：hover 提示和图例也要用同一套颜色。
+  const shift = band ? 1 : 0;
+
   function draw() {
     while (svg.firstChild) svg.removeChild(svg.firstChild);
 
@@ -147,7 +152,8 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
     }
     for (const [i, s] of series.entries()) {
       // 有分组时按组着色（最多 12 组，对齐 matplotlib 规范的 12 色）
-      const color = s.group ? seriesColor(groupIndex.get(s.group)) : seriesColor(i);
+      const color = s.group ? seriesColor(groupIndex.get(s.group) + shift)
+                            : seriesColor(i + shift);
       const pts = [];
       let d = '', pen = false;
       for (let k = 0; k < s.x.length; k++) {
@@ -300,7 +306,8 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
         if (d < bd) { bd = d; best = p; }
       }
       if (best && bd < 40) {
-        items.push({ label: s.label, px: best[0], py: best[1], y: best[3], color: seriesColor(i) });
+        items.push({ label: s.label, px: best[0], py: best[1], y: best[3],
+                     color: seriesColor(i + shift) });
         hoverX = best[2];
       }
     }
@@ -337,8 +344,8 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
     const legend = document.createElement('div');
     legend.className = 'chart-legend';
     const items = groups.length
-      ? groups.map((g, i) => [g, seriesColor(i)])
-      : series.map((s, i) => [s.label, seriesColor(i)]);
+      ? groups.map((g, i) => [g, seriesColor(i + shift)])
+      : series.map((s, i) => [s.label, seriesColor(i + shift)]);
     for (const [label, color] of items) {
       const span = document.createElement('span');
       const swatch = document.createElement('i');

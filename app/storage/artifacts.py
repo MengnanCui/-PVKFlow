@@ -110,7 +110,8 @@ def search(
     total = db.scalar(f"SELECT COUNT(*) FROM artifact a {clause}", tuple(params)) or 0
     rows = db.query(
         f"SELECT a.artifact_id, a.filename, a.display_path, a.ext, a.size, a.storage_mode,"
-        f"       a.status, a.thumb_path, a.mime, a.created_at, a.sample_id, s.name AS sample_name"
+        f"       a.status, a.thumb_path, a.mime, a.created_at, a.sample_id,"
+        f"       s.name AS sample_name, s.batch AS sample_batch"
         f" FROM artifact a LEFT JOIN sample s ON s.sample_id = a.sample_id"
         f" {clause} ORDER BY a.created_at DESC, a.rowid DESC LIMIT ? OFFSET ?",
         tuple(params) + (limit, offset),

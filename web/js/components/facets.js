@@ -139,9 +139,9 @@ function fieldSection(f, fields, onChange) {
     ...fields.slice(0, 8).map((fd) => {
       const sel = chosen.get(fd.name);
       const lo = h('input.input.input-sm', { type: 'number', placeholder: fmtRange(fd.min),
-        value: sel?.min ?? '', style: { width: '76px' } });
+        value: sel?.min ?? '', style: { width: '100%' } });
       const hi = h('input.input.input-sm', { type: 'number', placeholder: fmtRange(fd.max),
-        value: sel?.max ?? '', style: { width: '76px' } });
+        value: sel?.max ?? '', style: { width: '100%' } });
       const emit = () => {
         const others = (f.field || []).filter((x) => x.name !== fd.name);
         const a = lo.value === '' ? null : Number(lo.value);
@@ -155,8 +155,10 @@ function fieldSection(f, fields, onChange) {
         onChange(next);
       };
       lo.onchange = emit; hi.onchange = emit;
+      // 名字单独一行：integral_initial 和 integral_final 挤在输入框旁边会被
+      // 截成一样的 "integ…"，五行长得完全一样，等于没写。
       return h('div.field-row',
-        h('div.truncate',
+        h('div.field-name',
           h('span.mono.small', fd.name),
           fd.unit ? h('span.xsmall.dim', ` ${fd.unit}`) : null,
           h('span.xsmall.dim', ` · ${fmtInt(fd.count)}`)),
