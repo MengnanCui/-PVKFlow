@@ -59,10 +59,40 @@ def close() -> None:
         _local.path = None
 
 
+# 给已有表补的列。ALTER TABLE 不幂等，不能写进 schema.sql —— 那个脚本每次启动都跑。
+# 格式：表名 → [(列名, 列定义), ...]
+_ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "analysis_run": [("parent_run_id", "TEXT")],
+    "artifact": [("is_matrix", "INTEGER")],
+}
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> list[str]:
+    """按需补列。老工作区升级上来时不会丢数据。"""
+    added = []
+    for table, columns in _ADDED_COLUMNS.items():
+        try:
+            have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        except sqlite3.Error:
+            continue                      # 表还不存在，建表语句会带上这些列
+        if not have:
+            continue
+        for name, decl in columns:
+            if name not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                added.append(f"{table}.{name}")
+    return added
+
+
 def init(path: Path | None = None) -> sqlite3.Connection:
-    """建表。幂等，每次启动都跑。"""
+    """建表并补列。幂等，每次启动都跑。"""
     conn = connect(path)
-    conn.executescript(_SCHEMA.read_text(encoding="utf-8"))
+    script = _SCHEMA.read_text(encoding="utf-8")
+
+    # 先补列再执行脚本：脚本里有引用新列的索引，列不存在会失败
+    _add_missing_columns(conn)
+    conn.executescript(script)
+    _add_missing_columns(conn)             # 首次建表后再补一次
     conn.commit()
     return conn
 
@@ -135,6 +165,7 @@ def seed_defaults() -> None:
         ("naming_rules", list(d.naming_rules)),
         ("thumbnail_max_px", d.thumbnail_max_px),
         ("max_preview_rows", d.max_preview_rows),
+        ("cache_limit_gb", d.cache_limit_gb),
         ("active_provider", None),
         ("active_model", None),
     ):

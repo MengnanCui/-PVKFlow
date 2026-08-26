@@ -52,7 +52,9 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
   host.className = 'chart-host';
 
   const series = (spec?.series || []).filter((s) => s.x?.length && s.y?.length);
-  if (!series.length) {
+  // band = 分位数带。画在曲线下面，作为背景。
+  const band = spec?.band || null;
+  if (!series.length && !band) {
     host.innerHTML = '<div class="empty empty-sm"><div class="empty-text">这次处理没有返回可绘制的数据</div></div>';
     return host;
   }
@@ -62,14 +64,16 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
   const iw = W - M.l - M.r, ih = H - M.t - M.b;
 
   let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
-  for (const s of series) {
-    for (let i = 0; i < s.x.length; i++) {
-      const x = s.x[i], y = s.y[i];
+  const scan = (xs, ys) => {
+    for (let i = 0; i < xs.length; i++) {
+      const x = xs[i], y = ys[i];
       if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y)) continue;
       if (x < xmin) xmin = x; if (x > xmax) xmax = x;
       if (y < ymin) ymin = y; if (y > ymax) ymax = y;
     }
-  }
+  };
+  for (const s of series) scan(s.x, s.y);
+  if (band) { scan(band.x, band.q1); scan(band.x, band.q3); }
   if (!Number.isFinite(xmin)) { xmin = 0; xmax = 1; ymin = 0; ymax = 1; }
 
   let view = { xmin, xmax };
@@ -106,9 +110,44 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
     }
     svg.appendChild(grid);
 
+    // 分位数带画在最底下，作为背景
+    if (band) {
+      let d = '';
+      const pts = [];
+      for (let i = 0; i < band.x.length; i++) {
+        if (band.q3[i] === null) continue;
+        pts.push([sx(band.x[i]), sy(band.q3[i])]);
+      }
+      for (let i = band.x.length - 1; i >= 0; i--) {
+        if (band.q1[i] === null) continue;
+        pts.push([sx(band.x[i]), sy(band.q1[i])]);
+      }
+      if (pts.length > 2) {
+        d = 'M' + pts.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join('L') + 'Z';
+        svg.appendChild(el('path', { d, fill: seriesColor(0), 'fill-opacity': .16,
+                                     stroke: 'none', 'clip-path': 'url(#plotclip)' }));
+      }
+      let md = '', pen = false;
+      for (let i = 0; i < band.x.length; i++) {
+        if (band.median[i] === null) { pen = false; continue; }
+        md += (pen ? 'L' : 'M') + sx(band.x[i]).toFixed(2) + ' ' +
+              sy(band.median[i]).toFixed(2) + ' ';
+        pen = true;
+      }
+      if (md) {
+        svg.appendChild(el('path', { d: md, fill: 'none', stroke: seriesColor(0),
+                                     'stroke-width': 2.5, 'clip-path': 'url(#plotclip)' }));
+      }
+    }
+
     // 数据
+    const groupIndex = new Map();
+    for (const s of series) {
+      if (s.group && !groupIndex.has(s.group)) groupIndex.set(s.group, groupIndex.size);
+    }
     for (const [i, s] of series.entries()) {
-      const color = seriesColor(i);
+      // 有分组时按组着色（最多 12 组，对齐 matplotlib 规范的 12 色）
+      const color = s.group ? seriesColor(groupIndex.get(s.group)) : seriesColor(i);
       const pts = [];
       let d = '', pen = false;
       for (let k = 0; k < s.x.length; k++) {
@@ -293,16 +332,20 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
 
   draw();
 
-  if (series.length > 1) {
+  const groups = [...new Set(series.map((s) => s.group).filter(Boolean))];
+  if (groups.length > 1 || (series.length > 1 && series.length <= 14 && !groups.length)) {
     const legend = document.createElement('div');
     legend.className = 'chart-legend';
-    series.forEach((s, i) => {
+    const items = groups.length
+      ? groups.map((g, i) => [g, seriesColor(i)])
+      : series.map((s, i) => [s.label, seriesColor(i)]);
+    for (const [label, color] of items) {
       const span = document.createElement('span');
       const swatch = document.createElement('i');
-      swatch.style.background = seriesColor(i);
-      span.append(swatch, document.createTextNode(s.label));
+      swatch.style.background = color;
+      span.append(swatch, document.createTextNode(label));
       legend.appendChild(span);
-    });
+    }
     host.appendChild(legend);
   }
 
@@ -310,3 +353,64 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
   host.toSVG = () => new XMLSerializer().serializeToString(svg);
   return host;
 }
+
+/**
+ * 把 N 条曲线压成一条中位数曲线 + 四分位带。
+ *
+ * 上千条曲线叠一张图是噪声不是图 —— 超过阈值时必须降级，
+ * 而且要在图注里说明降级了，不能偷偷少画。
+ *
+ * 各条曲线的 x 未必对齐，所以先并到一个公共网格上。
+ */
+export function quantileBand(series, { gridPoints = 240 } = {}) {
+  const valid = series.filter((s) => s.x?.length && s.y?.length);
+  if (!valid.length) return null;
+
+  let lo = Infinity, hi = -Infinity;
+  for (const s of valid) {
+    for (const v of s.x) {
+      if (!Number.isFinite(v)) continue;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  }
+  if (!Number.isFinite(lo) || hi <= lo) return null;
+
+  const grid = Array.from({ length: gridPoints },
+    (_, i) => lo + (i / (gridPoints - 1)) * (hi - lo));
+
+  // 每条曲线插值到公共网格
+  const resampled = valid.map((s) => {
+    const out = new Array(gridPoints);
+    let k = 0;
+    for (let i = 0; i < gridPoints; i++) {
+      const x = grid[i];
+      while (k < s.x.length - 2 && s.x[k + 1] < x) k++;
+      const x0 = s.x[k], x1 = s.x[k + 1];
+      const y0 = s.y[k], y1 = s.y[k + 1];
+      if (x < s.x[0] || x > s.x[s.x.length - 1] ||
+          y0 === null || y1 === null || !Number.isFinite(y0) || !Number.isFinite(y1)) {
+        out[i] = null;
+      } else {
+        const w = x1 === x0 ? 0 : (x - x0) / (x1 - x0);
+        out[i] = y0 + (y1 - y0) * w;
+      }
+    }
+    return out;
+  });
+
+  const median = new Array(gridPoints);
+  const q1 = new Array(gridPoints);
+  const q3 = new Array(gridPoints);
+  for (let i = 0; i < gridPoints; i++) {
+    const col = [];
+    for (const r of resampled) if (r[i] !== null) col.push(r[i]);
+    if (!col.length) { median[i] = q1[i] = q3[i] = null; continue; }
+    col.sort((a, b) => a - b);
+    const at = (p) => col[Math.min(col.length - 1, Math.max(0,
+      Math.round(p * (col.length - 1))))];
+    median[i] = at(0.5); q1[i] = at(0.25); q3[i] = at(0.75);
+  }
+  return { x: grid, median, q1, q3, n: valid.length };
+}
+

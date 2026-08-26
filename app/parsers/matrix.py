@@ -169,6 +169,90 @@ def _cache_path(sha256: str) -> Path:
     return config.WORKSPACE / "cache" / "matrix" / f"{sha256}.npz"
 
 
+def cache_dir() -> Path:
+    return config.WORKSPACE / "cache" / "matrix"
+
+
+def cache_stats() -> dict:
+    """缓存占了多少。上千个样品能到几个 GB，得让人看得见。"""
+    d = cache_dir()
+    if not d.is_dir():
+        return {"files": 0, "bytes": 0, "limit_bytes": cache_limit_bytes()}
+    total = 0
+    n = 0
+    for p in d.glob("*.npz"):
+        try:
+            total += p.stat().st_size
+            n += 1
+        except OSError:
+            continue
+    return {"files": n, "bytes": total, "limit_bytes": cache_limit_bytes()}
+
+
+def cache_limit_bytes() -> int:
+    from app.storage import db
+
+    try:
+        gb = float(db.get_setting("cache_limit_gb", 8))
+    except Exception:
+        gb = 8.0
+    return int(max(0.5, gb) * 1024 ** 3)
+
+
+def evict_cache(limit_bytes: int | None = None) -> dict:
+    """按最近访问时间淘汰，直到降到上限以下。
+
+    缓存是内容寻址的，删了只是下次慢一点（约 0.9 秒/个），不会丢数据。
+    用 atime 而不是 mtime —— 我们要淘汰的是「最久没被用过的」，
+    不是「最早生成的」。
+    """
+    limit = limit_bytes if limit_bytes is not None else cache_limit_bytes()
+    d = cache_dir()
+    if not d.is_dir():
+        return {"removed": 0, "freed": 0, "bytes": 0, "limit_bytes": limit}
+
+    entries = []
+    total = 0
+    for p in d.glob("*.npz"):
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        entries.append((st.st_atime, st.st_size, p))
+        total += st.st_size
+
+    if total <= limit:
+        return {"removed": 0, "freed": 0, "bytes": total, "limit_bytes": limit}
+
+    entries.sort()                              # 最久没被访问的排前面
+    removed = freed = 0
+    for _, size, path in entries:
+        if total - freed <= limit:
+            break
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        removed += 1
+        freed += size
+    return {"removed": removed, "freed": freed,
+            "bytes": total - freed, "limit_bytes": limit}
+
+
+def clear_cache() -> dict:
+    d = cache_dir()
+    removed = freed = 0
+    if d.is_dir():
+        for p in d.glob("*.npz"):
+            try:
+                freed += p.stat().st_size
+                p.unlink()
+                removed += 1
+            except OSError:
+                continue
+    return {"removed": removed, "freed": freed}
+
+
 def load_cached(path: str | Path, sha256: str | None = None) -> SpectralMatrix:
     """解析并缓存。同一个文件只会被真正解析一次（270ms → 5ms）。"""
     p = Path(path)
@@ -181,6 +265,10 @@ def load_cached(path: str | Path, sha256: str | None = None) -> SpectralMatrix:
 
     cache = _cache_path(sha256)
     if cache.is_file():
+        try:
+            cache.touch()                       # 更新 atime，LRU 才认得出「刚用过」
+        except OSError:
+            pass
         try:
             z = np.load(cache, allow_pickle=True)
             return SpectralMatrix(
@@ -199,7 +287,25 @@ def load_cached(path: str | Path, sha256: str | None = None) -> SpectralMatrix:
         np.savez(fh, lam=sm.lam, t=sm.t, M=sm.M,
                  meta=np.array(sm.meta, dtype=object), orientation=sm.orientation)
     tmp.replace(cache)                          # 原子替换，避免半截缓存
+
+    # 写完顺手看一眼总量。超了就淘汰最久没用的 —— 上千个样品能堆到几个 GB。
+    _maybe_evict()
     return sm
+
+
+_evict_counter = 0
+
+
+def _maybe_evict() -> None:
+    """每写 25 个缓存检查一次。每次都统计目录会让批处理变慢。"""
+    global _evict_counter
+    _evict_counter += 1
+    if _evict_counter % 25:
+        return
+    try:
+        evict_cache()
+    except Exception:
+        pass                                    # 淘汰失败不该影响正在跑的分析
 
 
 def looks_like_matrix(path: str | Path) -> bool:

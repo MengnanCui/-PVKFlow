@@ -89,6 +89,35 @@ export const api = {
   samples: () => get('/api/samples'),
   storageStats: () => get('/api/storage/stats'),
 
+  // 选择：传的是筛选式，不是 ID 列表
+  selectionQuery: (body) => post('/api/selection/query', body),
+  selectionCount: (filter) => post('/api/selection/count', { filter }),
+  selectionFacets: (body) => post('/api/selection/facets', body),
+  selectionIds: (filter, limit) => post('/api/selection/ids', { filter, limit }),
+  suggestExpansion: (sampleIds, filter) =>
+    post('/api/selection/suggest', { sample_ids: sampleIds, filter }),
+  listSets: () => get('/api/selection/sets'),
+  createSet: (body) => post('/api/selection/sets', body),
+  getSet: (id) => get(`/api/selection/sets/${id}`),
+  freezeSet: (id) => post(`/api/selection/sets/${id}/freeze`),
+  deleteSet: (id) => request(`/api/selection/sets/${id}`, { method: 'DELETE' }),
+
+  // 批处理
+  batchPreview: (filter) => post('/api/batch/preview', { filter }),
+  batchRun: (body) => post('/api/batch/run', body),
+  batchRuns: () => get('/api/batch/runs'),
+  batchDetail: (id) => get(`/api/batch/runs/${id}`),
+  batchCurves: (id, params) => get(`/api/batch/runs/${id}/curves`, params),
+
+  // 后台任务
+  listTasks: () => get('/api/tasks'),
+  getTask: (id) => get(`/api/tasks/${id}`),
+  cancelTask: (id) => post(`/api/tasks/${id}/cancel`),
+
+  // 缓存
+  cacheStatus: () => get('/api/settings/cache'),
+  clearCache: () => post('/api/settings/cache/clear'),
+
   // 光谱矩阵
   spectraSamples: () => get('/api/spectra/samples'),
   spectraMeta: (id) => get(`/api/spectra/${id}/meta`),

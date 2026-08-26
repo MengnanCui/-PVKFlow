@@ -285,7 +285,7 @@ def samples() -> dict:
 
     rows = db.query(
         "SELECT a.artifact_id, a.filename, a.display_path, a.ext, a.size, a.status,"
-        "       a.meta_json, a.sample_id, s.name AS sample_name, s.batch"
+        "       a.meta_json, a.is_matrix, a.sample_id, s.name AS sample_name, s.batch"
         " FROM artifact a JOIN sample s ON s.sample_id = a.sample_id"
         " WHERE a.kind='raw' AND a.ext IN ('.csv','.txt','.dat','.tsv','.asc',"
         "                                  '.xlsx','.xls','.xlsm')"
@@ -299,7 +299,9 @@ def samples() -> dict:
         except ValueError:
             meta = {}
 
-        flag = meta.get("matrix_like")
+        flag = r.get("is_matrix")
+        if flag is None:
+            flag = meta.get("matrix_like")
         if flag is None and r["status"] == "ok":
             flag = _probe_and_remember(r["artifact_id"], meta)
 
@@ -351,6 +353,7 @@ def _probe_and_remember(artifact_id: str, meta: dict) -> bool:
     if cols is not None:
         meta["columns_hint"] = cols
     with db.tx() as c:
-        c.execute("UPDATE artifact SET meta_json=? WHERE artifact_id=?",
-                  (_json.dumps(meta, ensure_ascii=False), artifact_id))
+        # is_matrix 是真列，筛选走它；meta_json 里那份留着给界面看细节
+        c.execute("UPDATE artifact SET meta_json=?, is_matrix=? WHERE artifact_id=?",
+                  (_json.dumps(meta, ensure_ascii=False), 1 if flag else 0, artifact_id))
     return flag

@@ -1,0 +1,359 @@
+"""批处理与后台任务。
+
+最重要的一条：**上千个样品里一定有跑失败的**，失败必须被隔离、被记录、
+不能拖垮整批。
+"""
+import io
+import os
+import subprocess
+import sys
+import time
+import zipfile
+
+import numpy as np
+import pytest
+
+from app import batch, tasks
+from app.storage import db, ingest, selection
+
+
+def _matrix_file(path, n_lam=120, n_t=40, ot=4000.0, seed=0):
+    """写一个光谱矩阵。
+
+    seed 必须让每个文件的内容都不一样 —— 导入是按 sha256 内容去重的，
+    两个字节完全相同的文件会被当成同一份（这是有意设计），
+    夹具里如果偷懒复用内容，第二个样品根本建不出来。
+    """
+    rng = np.random.default_rng(seed)
+    lam = np.linspace(600, 1100, n_lam)
+    t = np.linspace(0, 10, n_t)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("Wavelength(nm)," + ",".join(f"{x:.3f}" for x in t) + "\n")
+        for w in lam:
+            row = 0.6 + 0.2 * np.cos(2 * np.pi * 2 * ot / w * (1 - 0.4 * t / 10))
+            row = row + rng.normal(0, 0.002, row.shape)
+            f.write(f"{w:.3f}," + ",".join(f"{v:.5f}" for v in row) + "\n")
+
+
+@pytest.fixture()
+def imported(workspace, tmp_path):
+    """3 个批次 × 4 个样品，外加一个坏文件。"""
+    src = tmp_path / "in"
+    for bi, b in enumerate(("B20", "B21", "B22")):
+        (src / b).mkdir(parents=True)
+        for i in range(1, 5):
+            _matrix_file(src / b / f"{b}_S{i}_absorbance.csv",
+                         ot=3000 + 500 * i, seed=bi * 10 + i)
+    # 故意放一个坏文件在 B20 里 —— 真实批次里就是会混进这种东西
+    (src / "B20" / "B20_S9_absorbance.csv").write_text(
+        "这不是矩阵\n随便写点什么\n", encoding="utf-8")
+
+    prev = ingest.scan_preview(src)
+    ingest.ingest_paths(prev["files"])
+    with db.tx() as c:
+        c.execute("UPDATE artifact SET is_matrix=1 WHERE kind='raw'")
+    return src
+
+
+def _wait(task_id, timeout=60):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        t = tasks.get(task_id)
+        if t["done"]:
+            return t
+        time.sleep(0.05)
+    raise AssertionError(f"任务超时：{tasks.get(task_id)}")
+
+
+# ---------------------------------------------------------------- 样品身份
+def test_same_sample_name_in_different_batches_stays_separate(imported):
+    """命名规则把 B20_S1 拆成 batch=B20/sample=S1，S1 在每个批次都出现。
+
+    只按名字唯一的话，三个批次的 S1 会被静默合并成一个样品 ——
+    数据没丢但全串了，而且小数据集上根本看不出来。
+    """
+    assert db.scalar("SELECT COUNT(*) FROM sample WHERE name='S1'") == 3
+    batches = {r["batch"] for r in db.query("SELECT batch FROM sample WHERE name='S1'")}
+    assert batches == {"B20", "B21", "B22"}
+
+
+# ---------------------------------------------------------------- 配方
+def test_identical_file_contents_are_deduplicated(workspace, tmp_path):
+    """内容寻址去重：两个字节完全相同的文件只登记一次。
+
+    这是有意的（同一份数据换个名字导入不该存两遍），但要在报告里说出来，
+    不能静默吞掉 —— 否则用户会以为第二个样品建好了。
+    """
+    src = tmp_path / "dup"
+    src.mkdir()
+    (src / "B20_S1_absorbance.csv").write_text("a,b,c\n1,2,3\n", encoding="utf-8")
+    (src / "B21_S1_absorbance.csv").write_text("a,b,c\n1,2,3\n", encoding="utf-8")
+
+    rep = ingest.ingest_paths(ingest.scan_preview(src)["files"]).as_dict()
+    assert rep["counts"]["imported"] == 1
+    assert rep["counts"]["duplicates"] == 1
+    assert rep["duplicates"][0]["existing"]      # 说清楚跟谁重了
+
+
+def test_recipe_rejects_inverted_bands():
+    with pytest.raises(ValueError, match="膜厚窗口"):
+        batch.Recipe.from_dict({"band_min": 1050, "band_max": 780})
+    with pytest.raises(ValueError, match="积分波段"):
+        batch.Recipe.from_dict({"integral_min": 950, "integral_max": 800})
+
+
+def test_recipe_ignores_unknown_keys():
+    r = batch.Recipe.from_dict({"integral_min": 700, "nonsense": 1})
+    assert r.integral_min == 700
+
+
+# ---------------------------------------------------------------- 执行
+def test_batch_runs_and_writes_everything(imported):
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20", "B21"]},
+        "recipe": {"integral_min": 700, "integral_max": 900, "slope_center": 800},
+    })["task_id"])
+
+    assert t["status"] == "ok"
+    res = t["result"]
+    # B20 有 4 个好的 + 1 个坏的，B21 有 4 个好的
+    assert res["n_ok"] == 8 and res["n_failed"] == 1
+    assert res["n_total"] == 9
+
+    detail = batch.batch_detail(res["parent_run_id"])
+    assert len(detail["children"]) == res["n_total"]
+
+    # 每个样品一条子运行，且都挂在父运行下
+    assert db.scalar(
+        "SELECT COUNT(*) FROM analysis_run WHERE parent_run_id=?",
+        (res["parent_run_id"],)) == res["n_total"]
+
+    # 标量进了 key_result —— 构效关系页立刻可用
+    fields = {r["field_name"] for r in db.query(
+        "SELECT DISTINCT field_name FROM key_result")}
+    assert {"integral_initial", "integral_final", "integral_ratio"} <= fields
+
+
+def test_long_table_holds_every_sample(imported):
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20"]}, "recipe": {},
+    })["task_id"])
+    from app.storage import tabular
+
+    tbl = tabular.read_table(t["result"]["table"]["table_id"])
+    assert set(tbl["columns"]) >= {"sample_id", "sample_name", "batch", "t",
+                                   "integral", "slope"}
+    # 一张长表装下所有样品，而不是每个样品一个文件
+    names = {row[tbl["columns"].index("sample_name")] for row in tbl["rows"]}
+    assert len(names) == t["result"]["n_ok"]
+
+
+def test_one_bad_sample_does_not_kill_the_batch(imported, tmp_path):
+    """坏文件必须被隔离：其余样品照常跑完，坏的那个留下可读的错误。"""
+    bad = tmp_path / "bad"
+    bad.mkdir()
+    (bad / "B99_S1_absorbance.csv").write_text("完全不是矩阵\n", encoding="utf-8")
+    ingest.ingest_paths(ingest.scan_preview(bad)["files"])
+    with db.tx() as c:
+        c.execute("UPDATE artifact SET is_matrix=1 WHERE filename LIKE 'B99%'")
+
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20", "B99"]}, "recipe": {},
+    })["task_id"])
+
+    assert t["status"] == "ok"
+    assert t["result"]["n_ok"] == 4          # B20 的 4 个好样品照常跑完
+    assert t["result"]["n_failed"] == 2      # B20_S9（夹具里的坏文件）+ B99_S1
+
+    detail = batch.batch_detail(t["result"]["parent_run_id"])
+    failed = {(c["batch"], c["sample_name"]): c
+              for c in detail["children"] if c["status"] == "failed"}
+    assert set(failed) == {("B20", "S9"), ("B99", "S1")}
+    for c in failed.values():
+        assert c["error"], "失败的样品必须留下能读的原因"
+
+
+def test_out_of_range_band_becomes_a_warning_not_a_crash(imported):
+    """波段落在数据范围外：要警告，不要静默出 NaN，也不要炸。"""
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20"]},
+        "recipe": {"integral_min": 200, "integral_max": 300},
+    })["task_id"])
+    detail = batch.batch_detail(t["result"]["parent_run_id"])
+    warned = [c for c in detail["children"] if c["warnings"]]
+    assert warned, "越界的波段应该产生警告"
+    assert any("之外" in w for c in warned for w in c["warnings"])
+
+
+def test_empty_selection_fails_loudly(imported):
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["不存在的批次"]}, "recipe": {},
+    })["task_id"])
+    assert t["status"] == "failed"
+    assert "没有命中" in t["error"]
+
+
+# ---------------------------------------------------------------- 任务
+def test_task_records_progress_and_result(imported):
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID,
+                           {"filter": {"batch": ["B20"]}, "recipe": {}})["task_id"])
+    assert t["total"] > 0 and t["progress"] == t["total"]
+    assert t["percent"] == 100.0
+    assert t["n_ok"] + t["n_failed"] == t["total"]   # 每个样品都有交代
+    assert t["n_ok"] == 4 and t["n_failed"] == 1
+
+
+def test_unknown_task_kind_is_rejected(workspace):
+    with pytest.raises(KeyError):
+        tasks.submit("nope.not.registered", {})
+
+
+def test_reap_interrupted_clears_stuck_tasks(workspace):
+    """服务重启后，上次没跑完的不能永远显示 running。"""
+    with db.tx() as c:
+        c.execute("INSERT INTO task(task_id,kind,title,status,created_at)"
+                  " VALUES('task_stuck','x','卡住的','running',?)", (db.now(),))
+    assert tasks.reap_interrupted() == 1
+    stuck = tasks.get("task_stuck")
+    assert stuck["status"] == "failed" and "重启" in stuck["error"]
+
+
+def test_cancel_stops_the_batch(imported):
+    """取消是「停在这儿」，不是「当没发生过」—— 已跑完的结果保留。"""
+    task = tasks.submit(batch.BATCH_SKILL_ID,
+                        {"filter": {"has_matrix": True}, "recipe": {}})
+    tasks.cancel(task["task_id"])
+    t = _wait(task["task_id"])
+    assert t["status"] in ("cancelled", "ok")     # 太快跑完也可能来不及取消
+
+
+# ---------------------------------------------------------------- 导出脚本
+def _export(imported_client, run_id, **params):
+    r = imported_client.get(f"/api/batch/runs/{run_id}/export", params=params)
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    assert "attachment" in r.headers["content-disposition"]
+    return zipfile.ZipFile(io.BytesIO(r.content))
+
+
+@pytest.fixture()
+def batch_client(imported):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.skills.registry import registry
+    registry.load_all()
+    with TestClient(app) as c:
+        yield c
+
+
+def test_export_bundles_script_data_and_readme(batch_client, imported):
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20", "B21"]}, "recipe": {},
+    })["task_id"])
+    run_id = t["result"]["parent_run_id"]
+
+    z = _export(batch_client, run_id, column="integral", mode="overlay",
+                group_by="batch")
+    assert set(z.namelist()) == {"plot.py", "data.csv", "README.md"}
+
+    script = z.read("plot.py").decode("utf-8")
+    # 样式必须逐字来自规范，不是"差不多"的版本
+    assert '"#2470a0"' in script and '"xtick.direction": "in"' in script
+    assert '"savefig.dpi": 300' in script
+
+    csv = z.read("data.csv").decode("utf-8-sig")
+    header = csv.splitlines()[0]
+    assert header == "sample_id,sample_name,batch,label,t,integral"
+    # 长表：8 个成功样品的曲线都在里面
+    import csv as csv_mod
+    rows = list(csv_mod.DictReader(io.StringIO(csv)))
+    assert len({r["sample_id"] for r in rows}) == t["result"]["n_ok"]
+
+
+def test_export_slope_column_switches_label_and_data(batch_client, imported):
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID,
+                           {"filter": {"batch": ["B20"]}, "recipe": {}})["task_id"])
+    z = _export(batch_client, t["result"]["parent_run_id"], column="slope",
+                mode="band", group_by="none")
+    script = z.read("plot.py").decode("utf-8")
+    assert "Y_COLUMN = 'slope'" in script
+    assert "CJK_OK" in script                 # 没有中文字体时退回英文标签
+    assert "nanpercentile" in script          # band 模式画分位数带
+    assert z.read("data.csv").decode("utf-8-sig").splitlines()[0].endswith(",slope")
+
+
+def test_export_keeps_same_named_samples_from_different_batches_apart(
+        batch_client, imported):
+    """S1 在每个批次里都有一个 —— 导出必须按 sample_id 分曲线，不能按名字。
+
+    按名字分组会把 B20/S1 和 B21/S1 悄悄合成一条：图少了一条曲线，
+    而且那条合成的曲线里两个样品的时间轴是交错的，完全是假的。
+    """
+    import csv as csv_mod
+
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20", "B21", "B22"]}, "recipe": {},
+    })["task_id"])
+    z = _export(batch_client, t["result"]["parent_run_id"],
+                column="integral", mode="overlay", group_by="none")
+
+    rows = list(csv_mod.DictReader(io.StringIO(z.read("data.csv").decode("utf-8-sig"))))
+    by_name = {r["sample_name"] for r in rows}
+    by_id = {r["sample_id"] for r in rows}
+    assert "S1" in by_name and len(by_id) > len(by_name)   # 名字确实重了
+    assert len(by_id) == t["result"]["n_ok"]
+
+    # 脚本按 sample_id 分组，标签才用带批次的 label
+    script = z.read("plot.py").decode("utf-8")
+    assert 'groupby("sample_id"' in script
+    assert 'groupby("sample_name"' not in script
+
+    # 标题里的样品数是按身份算的，不是按名字
+    assert f"{t['result']['n_ok']} 个样品" in script
+    labels = {r["label"] for r in rows}
+    assert "B20/S1" in labels and "B21/S1" in labels
+
+
+def test_export_rejects_unknown_column(batch_client, imported):
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID,
+                           {"filter": {"batch": ["B20"]}, "recipe": {}})["task_id"])
+    r = batch_client.get(f"/api/batch/runs/{t['result']['parent_run_id']}/export",
+                         params={"column": "rm -rf"})
+    assert r.status_code == 422
+
+
+@pytest.mark.parametrize("mode,group_by", [("overlay", "batch"),
+                                           ("overlay", "none"),
+                                           ("band", "none")])
+def test_exported_script_actually_runs(batch_client, imported, tmp_path, mode, group_by):
+    """真的把导出的 plot.py 跑一遍。
+
+    导出脚本是"论文里那张图"的来源 —— 生成一份跑不起来的脚本比不给还糟。
+    所以这里不检查字符串，直接解压、执行、看有没有出图。
+    """
+    matplotlib = pytest.importorskip("matplotlib", reason="脚本执行验证需要 matplotlib")
+
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID,
+                           {"filter": {"batch": ["B20"]}, "recipe": {}})["task_id"])
+    z = _export(batch_client, t["result"]["parent_run_id"],
+                column="integral", mode=mode, group_by=group_by)
+    out = tmp_path / f"export-{mode}-{group_by}"
+    z.extractall(out)
+
+    env = {**os.environ, "MPLBACKEND": "Agg"}
+    proc = subprocess.run([sys.executable, "plot.py"], cwd=out, env=env,
+                          capture_output=True, text=True, timeout=180)
+    assert proc.returncode == 0, proc.stderr
+
+    # 没有中文字体的机器上必须退回英文标签，而不是画一排豆腐块。
+    # matplotlib 缺字形时只是 warn，图照出，所以只看返回码是发现不了的。
+    assert "missing from font" not in proc.stderr, proc.stderr
+
+    png = out / "figure.png"
+    assert png.is_file() and png.stat().st_size > 5000, "出的图不能是空白占位"
+
+    # 300 dpi：规范里写死的投稿分辨率
+    from PIL import Image
+    with Image.open(png) as im:
+        assert im.info.get("dpi", (0, 0))[0] == pytest.approx(300, abs=1)

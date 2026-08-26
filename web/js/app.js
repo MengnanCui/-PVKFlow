@@ -6,11 +6,12 @@ import { h, mount, $, toast } from './ui.js';
 import * as overview from './pages/overview.js';
 import * as process_ from './pages/process.js';
 import * as sample from './pages/sample.js';
+import * as batchPage from './pages/batch.js';
 import * as storage from './pages/storage.js';
 import * as relation from './pages/relation.js';
 import * as settings from './pages/settings.js';
 
-const PAGES = [overview, process_, sample, storage, relation, settings];
+const PAGES = [overview, process_, sample, batchPage, storage, relation, settings];
 const BY_ID = Object.fromEntries(PAGES.map((p) => [p.meta.id, p]));
 
 // sample 不出现在侧栏 —— 它是从数据处理页下钻进去的

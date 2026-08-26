@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 _EDITABLE = {
     "copy_extensions", "reference_extensions", "unknown_policy",
-    "naming_rules", "thumbnail_max_px", "max_preview_rows",
+    "naming_rules", "thumbnail_max_px", "max_preview_rows", "cache_limit_gb",
     "active_provider", "active_model",
 }
 
@@ -38,6 +38,21 @@ def update_settings(payload: dict = Body(...)) -> dict:
     for k, v in payload.items():
         db.set_setting(k, v)
     return {"settings": db.all_settings()}
+
+
+@router.get("/cache")
+def cache_status() -> dict:
+    """解析缓存占了多少。上千个样品能到几个 GB，得让人看得见、能清掉。"""
+    from app.parsers import matrix
+
+    return matrix.cache_stats()
+
+
+@router.post("/cache/clear")
+def cache_clear() -> dict:
+    from app.parsers import matrix
+
+    return matrix.clear_cache()
 
 
 @router.get("/models")

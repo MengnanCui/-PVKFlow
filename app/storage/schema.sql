@@ -11,6 +11,8 @@
 PRAGMA foreign_keys = ON;
 
 -- ---------------------------------------------------------------- 实验对象
+-- 样品的身份是 (名字, 批次)。命名规则把 B20_S1 拆成 batch=B20/sample=S1，
+-- 所以 S1 这个名字在每个批次里都会出现 —— 只按名字唯一会把它们静默合并。
 CREATE TABLE IF NOT EXISTS sample (
     sample_id   TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
@@ -19,6 +21,10 @@ CREATE TABLE IF NOT EXISTS sample (
     meta_json   TEXT NOT NULL DEFAULT '{}',
     created_at  TEXT NOT NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sample_name_batch
+    ON sample(name, COALESCE(batch, ''));
+CREATE INDEX IF NOT EXISTS idx_sample_batch ON sample(batch);
 
 -- ---------------------------------------------------------------- 一次测量
 CREATE TABLE IF NOT EXISTS measurement (
@@ -53,6 +59,7 @@ CREATE TABLE IF NOT EXISTS artifact (
     mime          TEXT,
     size          INTEGER NOT NULL DEFAULT 0,
     status        TEXT NOT NULL DEFAULT 'ok',   -- ok | missing
+    is_matrix     INTEGER,                      -- NULL=未判定 0/1=判定过（光谱矩阵）
     thumb_path    TEXT,
     meta_json     TEXT NOT NULL DEFAULT '{}',
     sample_id     TEXT REFERENCES sample(sample_id) ON DELETE SET NULL,
@@ -83,6 +90,7 @@ CREATE TABLE IF NOT EXISTS analysis_run (
     warnings_json   TEXT NOT NULL DEFAULT '[]',
     error           TEXT,
     log             TEXT,
+    parent_run_id   TEXT,                        -- 批处理：指向父运行
     started_at      TEXT NOT NULL,
     finished_at     TEXT
 );
@@ -133,3 +141,61 @@ CREATE TABLE IF NOT EXISTS app_setting (
     value_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- ================================================================ 批处理
+-- 一次批处理 = 一条父运行 + 每个样品一条子运行。
+-- 为什么每个样品单独记一条：上千个样品里一定有跑失败的，你必须知道是哪些、
+-- 为什么。一条大记录说不清楚。
+-- parent_run_id 由 db.py 的 _add_missing_columns() 补上 ——
+-- ALTER TABLE 不是幂等的，不能放在每次启动都执行的脚本里。
+CREATE INDEX IF NOT EXISTS idx_run_parent ON analysis_run(parent_run_id);
+
+-- ---------------------------------------------------------------- 样品集
+-- 存的是**筛选式**而不是 ID 列表。在上千个样品的量级上，ID 列表这个模型是坏的：
+-- 放不进 URL、一周后看不出选了什么、新导入的样品永远进不来。
+CREATE TABLE IF NOT EXISTS sample_set (
+    set_id          TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    kind            TEXT NOT NULL DEFAULT 'dynamic',  -- dynamic | pinned
+    filter_json     TEXT NOT NULL DEFAULT '{}',       -- dynamic：随新数据生长
+    pinned_ids_json TEXT NOT NULL DEFAULT '[]',       -- pinned：钉死的快照
+    note            TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sample_set_name ON sample_set(name);
+
+-- ---------------------------------------------------------------- 后台任务
+-- 1000 个样品 × 约 1 秒 = 17 分钟，同步请求必然超时。
+CREATE TABLE IF NOT EXISTS task (
+    task_id     TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL,              -- batch.abs_thickness | ...
+    title       TEXT,
+    params_json TEXT NOT NULL DEFAULT '{}',
+    status      TEXT NOT NULL,              -- queued | running | ok | failed | cancelled
+    progress    INTEGER NOT NULL DEFAULT 0,
+    total       INTEGER NOT NULL DEFAULT 0,
+    n_ok        INTEGER NOT NULL DEFAULT 0,
+    n_failed    INTEGER NOT NULL DEFAULT 0,
+    message     TEXT,                       -- 当前在做什么，给进度条配文字
+    error       TEXT,
+    result_json TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL,
+    started_at  TEXT,
+    finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_status ON task(status);
+CREATE INDEX IF NOT EXISTS idx_task_created ON task(created_at DESC);
+
+-- 关键字段的数值筛选（"PCE 大于 20 的样品"）。
+-- 相关子查询是按 sample_id 关联的，所以 sample_id 必须在索引最前面 ——
+-- 只建 (field_name, value_num) 的话关联那一步用不上索引。
+CREATE INDEX IF NOT EXISTS idx_kr_field_value ON key_result(field_name, value_num);
+CREATE INDEX IF NOT EXISTS idx_kr_sample_field ON key_result(sample_id, field_name, value_num);
+
+-- 分面与筛选用到的相关子查询
+CREATE INDEX IF NOT EXISTS idx_mea_sample_method ON measurement(sample_id, method);
+CREATE INDEX IF NOT EXISTS idx_artifact_matrix ON artifact(sample_id, is_matrix);
+CREATE INDEX IF NOT EXISTS idx_artifact_path ON artifact(display_path);

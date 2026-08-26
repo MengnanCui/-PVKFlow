@@ -167,10 +167,18 @@ class IngestReport:
 
 
 def _ensure_sample(sample_name: str, batch: str) -> str:
-    """样品按名字唯一。已存在就复用，不重复建。"""
+    """样品的身份是 (名字, 批次)，不是只看名字。
+
+    命名规则会把 B20_S1 解析成 batch=B20 / sample=S1，于是 S1 这个名字在
+    每个批次里都会出现一次。只按名字查重的话，12 个批次的 S1 会被静默合并成
+    一个样品 —— 数据没丢，但全串了，而且小数据集上根本看不出来。
+    """
     if not sample_name:
         return ""
-    existing = db.query_one("SELECT sample_id FROM sample WHERE name = ?", (sample_name,))
+    batch = (batch or "").strip()
+    existing = db.query_one(
+        "SELECT sample_id FROM sample WHERE name = ? AND COALESCE(batch,'') = ?",
+        (sample_name, batch))
     if existing:
         return existing["sample_id"]
     sid = db.new_id("smp")
@@ -261,8 +269,8 @@ def ingest_paths(
                 m = naming.parse(display, rules)
                 sample_name, batch_name, method = m.sample, m.batch or batch_name, m.method or method
             sample_id = _ensure_sample(sample_name, batch_name)
-            if sample_id and sample_name not in seen_samples:
-                seen_samples.add(sample_name)
+            if sample_id:
+                seen_samples.add(f"{batch_name}/{sample_name}" if batch_name else sample_name)
 
             stored_path = None
             thumb_path = None

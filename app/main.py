@@ -15,7 +15,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import config
-from app.api import artifacts, assist, files, results, settings, skills, spectra
+from app.api import (artifacts, assist, batch, files, results, selection,
+                     settings, skills, spectra)
 from app.api.common import error_response
 from app.skills.registry import registry
 
@@ -31,9 +32,17 @@ async def lifespan(app: FastAPI):
     db.seed_defaults()
     registry.load_all()
     log.info("已加载 %d 个 skill", len(registry.all()))
+
+    # 上次没跑完的任务不能永远显示 running —— 用户会一直等一个早就死了的东西
+    from app import tasks as task_queue
+    reaped = task_queue.reap_interrupted()
+    if reaped:
+        log.warning("有 %d 个任务因为上次重启被中断，已标记", reaped)
     for err in registry.errors:
         log.warning("skill 加载失败 %s：%s", err["source"], err["error"])
     yield
+    from app import tasks as task_queue
+    task_queue.shutdown()
     db.close()
 
 
@@ -46,7 +55,8 @@ app = FastAPI(
 )
 
 for router in (files.router, skills.router, results.router, artifacts.router,
-               assist.router, settings.router, spectra.router):
+               assist.router, settings.router, spectra.router,
+               selection.router, batch.router, batch.tasks_router):
     app.include_router(router)
 
 

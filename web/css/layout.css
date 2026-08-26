@@ -144,3 +144,23 @@
   .workbench { grid-template-columns: 1fr; }
   .workbench > .panel { height: auto; }
 }
+
+/* 选择页：左分面 + 右列表 */
+.select-layout { display: grid; grid-template-columns: 264px 1fr; gap: var(--s4x);
+                 align-items: start; }
+.select-layout > aside { position: sticky; top: var(--s4x); max-height: calc(100vh - 120px);
+                         overflow: auto; }
+.min0 { min-width: 0; }
+.mb-2 { margin-bottom: var(--s2x); }
+.mb-3 { margin-bottom: var(--s3x); }
+.filter-line { min-width: 0; flex: 1; }
+.recipe-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3x) var(--s4x); }
+.kind-option { display: flex; gap: var(--s2x); align-items: flex-start; cursor: pointer;
+               padding: var(--s3x); border: 1px solid var(--line); border-radius: var(--r); }
+.kind-option:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.kind-option input { margin-top: 3px; accent-color: var(--accent); }
+
+@media (max-width: 1100px) {
+  .select-layout { grid-template-columns: 1fr; }
+  .select-layout > aside { position: static; max-height: none; }
+}

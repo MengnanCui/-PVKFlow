@@ -71,5 +71,9 @@ class Defaults:
     thumbnail_max_px: int = 512
     max_preview_rows: int = 5000
 
+    # 解析缓存的容量上限。上千个样品的 npz 能堆到几个 GB。
+    # 缓存是内容寻址的，超了就淘汰最久没用的，删了只是下次慢约 0.9 秒。
+    cache_limit_gb: float = 8.0
+
 
 DEFAULTS = Defaults()

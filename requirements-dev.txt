@@ -1,2 +1,7 @@
 -r requirements.txt
 pytest==8.3.4
+
+# 平台本身不画 matplotlib 图 —— 它只**导出**一份 plot.py 让你自己跑。
+# 这里装它是为了在测试里真的把导出的脚本执行一遍：
+# 生成一份跑不起来的脚本，比不给还糟。
+matplotlib==3.11.1

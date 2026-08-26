@@ -145,3 +145,70 @@ def preview(paths: Iterable[str], rules: Iterable[str]) -> list[dict]:
             "matched": m.matched,
         })
     return out
+
+
+# ------------------------------------------------------------------ 可枚举段识别
+_NUM_SEG = re.compile(r"\d+")
+
+
+@dataclass(frozen=True)
+class Enumeration:
+    """样品名里一段可枚举的数字。
+
+    B20_S1 … B20_S48 → prefix="B20_S", suffix="", 1..48。
+
+    这东西的用处：**把范围画成控件，而不是让人自己去查范围再回来输**。
+    滑块的两个端点就是数据里的真实 min/max。
+    """
+    prefix: str
+    suffix: str
+    min: int
+    max: int
+    count: int          # 实际出现的不同数字个数
+    width: int          # 零填充宽度，S001 是 3
+    complete: bool      # min..max 中间有没有缺口
+
+    def as_dict(self) -> dict:
+        return {
+            "prefix": self.prefix, "suffix": self.suffix,
+            "min": self.min, "max": self.max, "count": self.count,
+            "width": self.width, "complete": self.complete,
+            "span": self.max - self.min + 1,
+            "label": f"{self.prefix}[{self.min}–{self.max}]{self.suffix}",
+        }
+
+
+def detect_enumerations(names: Iterable[str], min_members: int = 3,
+                        limit: int = 12) -> list[Enumeration]:
+    """从一堆样品名里找出所有「前缀 + 数字 + 后缀」的模式。
+
+    一个名字可能有多段数字（B20_S1 里的 20 和 1），每一段都单独成组。
+    按覆盖的样品数排序 —— 覆盖得多的那个通常就是用户想要的那个。
+    """
+    groups: dict[tuple[str, str], dict] = {}
+
+    for name in names:
+        if not name:
+            continue
+        for m in _NUM_SEG.finditer(name):
+            key = (name[:m.start()], name[m.end():])
+            g = groups.setdefault(key, {"values": set(), "widths": set()})
+            g["values"].add(int(m.group()))
+            g["widths"].add(len(m.group()))
+
+    out: list[Enumeration] = []
+    for (prefix, suffix), g in groups.items():
+        values = g["values"]
+        if len(values) < min_members:
+            continue
+        lo, hi = min(values), max(values)
+        out.append(Enumeration(
+            prefix=prefix, suffix=suffix, min=lo, max=hi,
+            count=len(values),
+            width=max(g["widths"]) if len(g["widths"]) == 1 else 0,
+            complete=len(values) == hi - lo + 1,
+        ))
+
+    # 覆盖的样品多的排前面；同样多时前缀长的更具体，排前面
+    out.sort(key=lambda e: (-e.count, -len(e.prefix)))
+    return out[:limit]
