@@ -13,7 +13,7 @@ import zipfile
 import numpy as np
 import pytest
 
-from app import batch, tasks
+from app import batch, config, tasks
 from app.storage import db, ingest, selection
 
 
@@ -450,3 +450,73 @@ def test_untitled_run_still_gets_a_usable_name(batch_client, imported):
     params = batch.batch_detail(t["result"]["parent_run_id"])["run"]["params"]
     assert params["title"]                      # 不能是空的
     assert "个样品" in params["title"]
+
+
+# ------------------------------------------------------------------ 没有 pyarrow 也要能跑
+#
+# pyarrow 从必装清单里拿掉了：它一个人 131 MB，占整个安装的三成，
+# 而实测一次 40 样品的批处理长表 Parquet 只比 CSV 省 0.58 MB。
+# 于是 tabular.py 里那条「退回 CSV」的分支从**兜底**变成了**默认路径** ——
+# 默认路径必须有测试。
+def _no_parquet(monkeypatch):
+    """让 to_parquet 表现得像 pyarrow 没装。"""
+    import pandas as pd
+
+    def boom(self, *a, **k):
+        raise ImportError("Unable to find a usable engine; pyarrow 没装")
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", boom)
+
+
+def test_long_table_falls_back_to_csv_without_pyarrow(workspace, monkeypatch):
+    """写得进去、登记的路径是 .csv、读得回来，一行不少。"""
+    import numpy as np
+    import pandas as pd
+
+    from app.storage import tabular
+
+    from app.storage import results
+
+    _no_parquet(monkeypatch)
+    run_id = results.start_run(skill_id="t", skill_version="1", skill_name="t",
+                               params={}, inputs=[], source="skill")
+    df = pd.DataFrame({"sample_id": ["a"] * 5 + ["b"] * 5,
+                       "t": np.tile(np.arange(5.0), 2),
+                       "value": np.arange(10.0)})
+    meta = tabular.write_table(run_id, "曲线长表", df)
+
+    assert meta["path"].endswith(".csv"), "没退回 CSV"
+    assert (config.WORKSPACE / meta["path"]).is_file()
+    assert meta["n_rows"] == 10
+
+    back = tabular.read_table(meta["table_id"])
+    assert back["n_rows"] == 10
+    assert back["columns"] == ["sample_id", "t", "value"]
+    assert len(back["rows"]) == 10
+    assert back["rows"][-1][2] == 9.0          # 数值原样读回来
+
+
+def test_whole_batch_run_works_without_pyarrow(imported, monkeypatch):
+    """★ 走完整条批处理链路，别只测 tabular 那一个函数。
+
+    真正会坏的是「写的时候退回了 CSV，读的时候还按 Parquet 读」这种
+    两头对不上 —— 只测写入侧看不出来。
+    """
+    from app.storage import tabular
+
+    _no_parquet(monkeypatch)
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20"]},
+        "recipe": {"integral_min": 700, "integral_max": 900, "slope_center": 800},
+    })["task_id"])
+    assert t["status"] == "ok"
+    res = t["result"]
+    assert res["n_ok"] >= 2
+
+    tables = tabular.tables_for_run(res["parent_run_id"])
+    assert tables, "批处理没落下长表"
+    assert tables[0]["path"].endswith(".csv"), "没退回 CSV"
+
+    back = tabular.read_table(tables[0]["table_id"])
+    assert back["n_rows"] > 0
+    assert len(back["columns"]) >= 3

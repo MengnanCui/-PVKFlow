@@ -1,15 +1,33 @@
 # HTE Studio / PVKFlow —— 刻意收紧的依赖清单
 # 新增依赖前先问：能不能用标准库做？
+#
+# 装完约 220 MB，其中 pandas + numpy 占了六成。这个数字值得盯着：
+# 用户是双击 run.bat 装的，装多久、占多大，全算在「上手成本」里。
 
 fastapi==0.115.6
-uvicorn[standard]==0.34.0
+# 用 uvicorn 而不是 uvicorn[standard]：那个 extra 会额外拖进
+# uvloop(14MB) + httptools + watchfiles + websockets ≈ 19 MB，
+# 而这四个我们一个都没用到 —— 本地单用户、一个浏览器，纯 asyncio 够了。
+uvicorn==0.34.0
 pydantic==2.10.4
 python-multipart==0.0.20
 
 pandas==2.2.3
 numpy==2.2.1
-pyarrow==18.1.0          # Parquet 读写
 openpyxl==3.1.5          # xlsx 解析
 Pillow==11.1.0           # 图像元信息与缩略图
 
 httpx==0.28.1            # OpenAI 兼容模型调用
+
+# ── 装了会更好、不装也不影响的 ─────────────────────────────────────
+# pyarrow：批处理长表用 Parquet 而不是 CSV。
+#
+# 不放进必装清单，是因为它一个人就要 131 MB —— 比其余所有依赖加起来还多，
+# 占整个安装的三成。而实测一次 40 样品的批处理长表：
+#     Parquet 0.05 MB / 写 122ms / 读 78ms
+#     CSV     0.63 MB / 写  42ms / 读 18ms
+# 省 0.58 MB，代价是 131 MB 和更慢的读写 —— 要跑到两百多次批处理，
+# 省下的体积才抵得上它自己的安装体积。
+#
+# tabular.py 本来就有「pyarrow 缺失时退回 CSV」的分支，功能一样不少。
+# 以后真要上 DuckDB 做跨表查询时再装：pip install pyarrow==18.1.0

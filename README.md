@@ -18,9 +18,29 @@
   安装时**务必勾选 "Add python.exe to PATH"**（这一步漏了，双击 `run.bat` 会告诉你）
 - macOS / Linux：一般自带，`python3 --version` 看一眼
 
-其余的依赖（FastAPI、numpy、pandas、pyarrow…）**首次启动时自动装**，你不用管。
+其余的依赖（FastAPI、numpy、pandas…）**首次启动时自动装**，你不用管。
 
 不需要：Node.js、数据库服务、Docker、管理员权限、联网的模型服务。
+
+### 会占多大
+
+| | 大小 | 说明 |
+|---|---|---|
+| `.venv/`（Python 依赖） | **约 220 MB** | 一次性，装完不再长 |
+| `workspace/`（你的数据） | 约原始数据的 **1.4 倍** | 随导入的数据增长 |
+
+那 220 MB 里 **pandas + numpy 就占了 150 MB**。numpy 是所有数值计算的地基，
+没得商量；pandas 用在通用表格解析和 skill 契约的 `ctx.load_table()` 上。
+
+已经砍掉的两项：`pyarrow`（131 MB，批处理长表改用 CSV）和
+`uvicorn[standard]` 的额外组件（19 MB，uvloop / watchfiles / websockets 一个都没用到）。
+砍之前是 372 MB，砍之后 219 MB —— 都是干净安装实测的数字。
+
+> pyarrow 值不值 131 MB，算一笔账就清楚：一次 40 样品的批处理长表，
+> Parquet 0.05 MB / CSV 0.63 MB，省 0.58 MB。要跑两百多次批处理，
+> 省下的体积才抵得上它自己的安装体积 —— 而且这个规模下它读写还更慢。
+> 以后真要上 DuckDB 做跨表查询时再 `pip install pyarrow` 即可，
+> 代码里那条分支一直留着，装了就自动用 Parquet。
 
 ---
 
@@ -119,7 +139,8 @@ workspace/
 ├─ hte.db            SQLite：样品、测量、分析运行、关键结果、AI 对话
 ├─ raw/              复制进来的原始文件（按 sha256 内容寻址，同内容自动去重）
 ├─ derived/          缩略图、skill 产出的图
-├─ tables/           Parquet：批处理的曲线长表（几万行数值走这儿，不进 SQLite）
+├─ tables/           批处理的曲线长表（几万行数值走这儿，不进 SQLite）。
+│                    默认 CSV；装了 pyarrow 就自动改用 Parquet
 ├─ cache/            解析缓存（.npz）。删了只是下次慢约 1 秒
 ├─ config/           providers.json —— 你的模型密钥
 ├─ skills/           你自己丢进来的处理算法
@@ -135,6 +156,9 @@ workspace/
 **大概占多少**：一次导入 3 个样品（每个 `Data.csv` 约 2.2 MB）之后，
 `workspace/` 是 9.3 MB —— 其中 `raw/` 6.7 MB（原始文件）、`cache/` 1.7 MB（解析缓存）。
 所以粗略估：**原始数据体积的 1.4 倍左右**。
+
+数据本身通常不是占地方的大头 —— `.venv` 那 220 MB 才是。
+两者是分开的：删 `workspace/` 清数据，删 `.venv/` 清依赖（下次启动会重装）。
 
 缓存有上限（默认 8 GB），超了自动淘汰最久没用的。「设置 → 工作区」能看到
 当前占用，也能一键清空。
@@ -280,7 +304,7 @@ workspace/           你的全部数据（gitignore）
 
 ```bash
 ./run.sh                                # 起服务
-.venv/bin/python -m pytest -q           # 跑测试（232 个）
+.venv/bin/python -m pytest -q           # 跑测试（247 个）
 ```
 
 前端改完刷新页面即可，没有构建步骤。
