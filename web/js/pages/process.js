@@ -38,7 +38,6 @@ const S = {
   loading: false,
   checked: new Set(),   // 手工勾选的 sample_id
   anchor: null,         // 上次点选的行号，shift 范围选从这儿起
-  suggestions: [],
   sets: [],
   task: null,
   pollTimer: null,
@@ -72,7 +71,6 @@ function consumeAIFilter() {
 export async function view(host, ctx) {
   refs = { host, nav: ctx.nav };
   S.checked = new Set();
-  S.suggestions = [];
   stopPolling();
 
   const shell = h('div');
@@ -140,7 +138,6 @@ function publishScope() {
 function setFilter(next) {
   S.filter = next;
   S.checked = new Set();
-  S.suggestions = [];
   reload();
 }
 
@@ -212,7 +209,6 @@ function drawList() {
           onclick: () => saveSetDialog(),
         }, '存为样品集'))),
 
-    h('div#suggestHost'),
     S.task ? progressBlock() : null,
 
     h('div.panel',
@@ -228,7 +224,6 @@ function drawList() {
                   ? new Set(S.rows.map((r) => r.sample_id)) : new Set();
                 S.anchor = null;
                 syncSelection();
-                refreshSuggestions();
               },
             }),
             h('span.small#selectCount',
@@ -242,8 +237,8 @@ function drawList() {
           h('button.btn.btn-sm#clearSelBtn', {
             disabled: !selectedCount,
             onclick: () => {
-              S.checked = new Set(); S.anchor = null; S.suggestions = [];
-              syncSelection(); drawSuggestions();
+              S.checked = new Set(); S.anchor = null;
+              syncSelection();
             },
           }, '取消选择'),
           h('button.btn.btn-primary.btn-sm#runBatchBtn', {
@@ -253,7 +248,6 @@ function drawList() {
       h('div.panel-body.flush#tableHost')));
 
   drawTable();
-  drawSuggestions();
 }
 
 function batchLabel() {
@@ -315,7 +309,6 @@ function toggleRow(index, evt) {
   }
 
   syncSelection();
-  refreshSuggestions();
 }
 
 /**
@@ -397,40 +390,9 @@ function renderRow(r, index) {
         : null));
 }
 
-// ------------------------------------------------------------------ 选择即示例
-let suggestTimer = null;
-function refreshSuggestions() {
-  clearTimeout(suggestTimer);
-  if (S.checked.size < 2) { S.suggestions = []; drawSuggestions(); return; }
-  suggestTimer = setTimeout(async () => {
-    try {
-      const r = await api.suggestExpansion([...S.checked], S.filter);
-      S.suggestions = r.suggestions;
-      drawSuggestions();          // 只换这一块，别把列表和滚动位置一起重置
-    } catch { /* 提议失败不该打断操作 */ }
-  }, 220);
-}
-
-function drawSuggestions() {
-  const host = refs.listHost?.querySelector('#suggestHost');
-  if (!host) return;
-  if (!S.suggestions.length) { clear(host); return; }
-  mount(host, suggestionBlock());
-}
-
-function suggestionBlock() {
-  return h('div.mb-3',
-    h('div.small.muted.mb-2',
-      `选中的 ${fmtInt(S.checked.size)} 个有共同点 —— 要不要扩展成一条规则？`),
-    h('div.suggestions', ...S.suggestions.map((s) =>
-      h('button.suggestion', {
-        onclick: () => { toast(`已扩展到 ${fmtInt(s.count)} 个样品`, 'ok'); setFilter(s.filter); },
-      },
-        h('div.min0',
-          h('div.small.strong', s.label),
-          h('div.suggestion-why', s.why)),
-        h('span.suggestion-add', `+${fmtInt(s.adds)}`)))));
-}
+// 「选择即示例」那个建议条删掉了：它挂在列表上方向下弹出，一出现就把
+// 下面的样品行推走，正在挑样品的时候根本点不中。后端 /api/selection/suggest
+// 和 selection.suggest_expansion 都留着 —— 以后想要，换个不挡路的位置接回来。
 
 // ------------------------------------------------------------------ 批处理
 async function batchDialog(recipeOverride = null) {

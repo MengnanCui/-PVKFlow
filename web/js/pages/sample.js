@@ -12,6 +12,7 @@ import {
 } from '../ui.js';
 import { xyChart } from '../chart.js';
 import { heatmap } from '../components/heatmap.js';
+import { downloadMenu } from '../download.js';
 import { bandIntegral, wavelengthSlope, spectraAtTimes, windowResolution,
          saturatedHead } from '../spectra.js';
 
@@ -182,32 +183,36 @@ function drawSpectra() {
 
   mount(host,
     h('div.fig-grid-2',
-      h('div.figure',
-        h('div.figure-head',
-          h('div.figure-title', '全波长强度热力图'),
-          h('div.row.gap-2',
-            selectControl('归一化', S.norm, [
-              ['frame', '每帧归一化'], ['wavelength', '每波长归一化'],
-              ['global', '全局'], ['none', '原始值'],
-            ], (v) => { S.norm = v; updateHeatmaps(); }),
-            selectControl('色标', S.cmap, [
-              ['rainbow', '彩虹'], ['ice', 'ice'], ['gray', '灰度'], ['steel', 'steel'],
-            ], (v) => { S.cmap = v; updateHeatmaps(); }))),
-        hm),
+      figure('全波长强度热力图', {
+        head: [
+          selectControl('归一化', S.norm, [
+            ['frame', '每帧归一化'], ['wavelength', '每波长归一化'],
+            ['global', '全局'], ['none', '原始值'],
+          ], (v) => { S.norm = v; updateHeatmaps(); }),
+          selectControl('色标', S.cmap, [
+            ['rainbow', '彩虹'], ['ice', 'ice'], ['gray', '灰度'], ['steel', 'steel'],
+          ], (v) => { S.cmap = v; updateHeatmaps(); }),
+          dlHeatmap(() => api.heatmapUrl(S.artifactId,
+            { axis: 'wavelength', norm: S.norm, cmap: S.cmap }), '强度热力图'),
+        ],
+        // 左边没有块状控件。这一行空着，好让两张图落在同一条线上
+        body: hm,
+      }),
 
-      h('div.figure',
-        h('div.figure-head',
-          h('div.figure-title', '不同时刻的光谱叠加'),
-          h('div.row.gap-2',
-            h('span.small.muted', '条数'),
-            h('input.range', {
-              type: 'range', min: 2, max: 24, value: S.nOverlay,
-              style: { width: '110px' },
-              oninput: (e) => { S.nOverlay = Number(e.target.value); drawOverlay(); },
-            }),
-            h('span.small.mono#nOverlayLabel', String(S.nOverlay)))),
-        timeCtl,
-        overlayHost)));
+      figure('不同时刻的光谱叠加', {
+        head: [
+          h('span.small.muted', '条数'),
+          h('input.range', {
+            type: 'range', min: 2, max: 24, value: S.nOverlay,
+            style: { width: '110px' },
+            oninput: (e) => { S.nOverlay = Number(e.target.value); drawOverlay(); },
+          }),
+          h('span.small.mono#nOverlayLabel', String(S.nOverlay)),
+          dl(() => refs.overlayHost, '时刻叠加谱'),
+        ],
+        ctl: timeCtl,
+        body: overlayHost,
+      })));
 
   refs.heatmapMain = hm;
   refs.overlayHost = overlayHost;
@@ -279,8 +284,10 @@ function drawOverlay() {
     return { ...s, x, y: norm, color: timeShade(n === 1 ? 1 : i / (n - 1)) };
   });
 
+  const spec = { x_label: '波长 (nm)', y_label: '归一化强度', series };
+  refs.overlayHost.__spec = spec;      // 下载菜单从这儿取当前数据
   mount(refs.overlayHost,
-    xyChart({ x_label: '波长 (nm)', y_label: '归一化强度', series }, { height: 340 }),
+    xyChart(spec, { height: 340 }),
     h('div.chart-caption',
       `${n} 条 · ${from.toFixed(2)}–${to.toFixed(2)} s · `,
       `${lo.toFixed(0)}–${hi.toFixed(0)} nm · 颜色由浅到深 = 由早到晚 · `,
@@ -333,30 +340,42 @@ function drawThickness() {
 
   mount(host,
     h('div.fig-grid-4',
-      h('div.figure',
-        h('div.figure-head', h('div.figure-title', `全波段条纹　${L0.toFixed(0)}–${L1.toFixed(0)} nm`)),
-        kFull),
-      h('div.figure',
-        h('div.figure-head', h('div.figure-title', '全波段　光学厚度 vs 时间')),
-        h('div.notice.notice-warn.mb-3',
+      figure(`全波段条纹　${L0.toFixed(0)}–${L1.toFixed(0)} nm`, {
+        head: dlHeatmap(() => api.heatmapUrl(S.artifactId,
+          { axis: 'wavenumber', norm: S.norm, cmap: 'gray' }), '全波段条纹'),
+        body: kFull,
+      }),
+
+      figure('全波段　光学厚度 vs 时间', {
+        head: dl(() => refs.otFullHost, '全波段OT'),
+        body: otFullHost,
+        // 说明放在图**下面**：放上面的话它会把同排的条纹图一起往下推三行
+        note: h('div.notice.notice-warn.mt-3',
           h('div.grow',
             h('div.small.strong', '这一格是对照，不是测量结果'),
             h('p.xsmall.dim.mt-2',
               '全波段跨过了吸收边，还带上了短波端没有信号的区段 —— ',
               '规范要求分析波段必须落在膜的透明区。这里画出来是为了跟下面那格比：',
               '窗口选错时曲线会崩到噪声上，而且是看得见地崩 —— 不是悄悄给个错数。'))),
-        otFullHost),
-      h('div.figure',
-        h('div.figure-head',
-          h('div.figure-title', '指定波段条纹'),
+      }),
+
+      figure('指定波段条纹', {
+        head: [
           bandControl(L0, L1, () => [S.bandMin, S.bandMax],
             (lo, hi) => { S.bandMin = lo; S.bandMax = hi; drawWindowResolution(); },
-            () => { updateBandFigures(); loadThickness('band'); })),
-        resHost,
-        kBand),
-      h('div.figure',
-        h('div.figure-head', h('div.figure-title', '指定波段　光学厚度 vs 时间')),
-        otBandHost)),
+            () => { updateBandFigures(); loadThickness('band'); }),
+          dlHeatmap(() => api.heatmapUrl(S.artifactId, {
+            axis: 'wavenumber', norm: S.norm, cmap: 'gray',
+            lam_min: S.bandMin, lam_max: S.bandMax }), '指定波段条纹'),
+        ],
+        ctl: resHost,
+        body: kBand,
+      }),
+
+      figure('指定波段　光学厚度 vs 时间', {
+        head: dl(() => refs.otBandHost, '指定波段OT'),
+        body: otBandHost,
+      })),
     reportHost);
 
   refs.kFull = kFull;
@@ -411,9 +430,10 @@ function paintThickness(hostEl, d, lo, hi) {
   }
 
   const nBad = d.n_points - d.n_ok;
+  const spec = { x_label: '时间 (s)', y_label: '光学厚度 OT = n·d·cosθ (nm)', series };
+  hostEl.__spec = spec;
   mount(hostEl,
-    xyChart({ x_label: '时间 (s)', y_label: '光学厚度 OT = n·d·cosθ (nm)', series },
-            { height: 300 }),
+    xyChart(spec, { height: 300 }),
     h('div.chart-caption',
       `${fmtInt(d.n_points)} 帧 · `,
       nBad
@@ -433,7 +453,7 @@ function drawOtReport() {
         h('div.figure-title', '完整报告'),
         h('span.xsmall.dim',
           'fringe-optical-thickness 规范 §5 要求块 A–D 一个都不能少')),
-      h('pre.code-block', S.otReport)));
+      h('pre.code-block.is-half', S.otReport)));
 }
 
 function drawWindowResolution() {
@@ -466,23 +486,26 @@ function drawSpecial() {
       '连续跟着变，不需要等后端；停下约 0.3 秒后自动换成全波长分辨率的精确结果。'),
 
     h('div.fig-grid-2.mt-4',
-      h('div.figure',
-        h('div.figure-head',
-          h('div.figure-title', '谱斜率 vs 时间'),
-          h('div.row.gap-3',
-            numberControl('波长', S.slopeCenter, S.meta.lambda_min, S.meta.lambda_max, 1,
-              (v) => { S.slopeCenter = v; drawSlope(); }),
-            numberControl('半宽', S.slopeHalf, 1, 100, 1,
-              (v) => { S.slopeHalf = v; drawSlope(); }))),
-        slopeHost),
+      figure('谱斜率 vs 时间', {
+        head: [
+          numberControl('波长', S.slopeCenter, S.meta.lambda_min, S.meta.lambda_max, 1,
+            (v) => { S.slopeCenter = v; drawSlope(); }),
+          numberControl('半宽', S.slopeHalf, 1, 100, 1,
+            (v) => { S.slopeHalf = v; drawSlope(); }),
+          dl(() => refs.slopeHost, '谱斜率'),
+        ],
+        body: slopeHost,
+      }),
 
-      h('div.figure',
-        h('div.figure-head',
-          h('div.figure-title', '波段积分 vs 时间'),
+      figure('波段积分 vs 时间', {
+        head: [
           bandControl(S.meta.lambda_min, S.meta.lambda_max,
             () => [S.integMin, S.integMax],
-            (lo, hi) => { S.integMin = lo; S.integMax = hi; drawIntegral(); })),
-        integHost)));
+            (lo, hi) => { S.integMin = lo; S.integMax = hi; drawIntegral(); }),
+          dl(() => refs.integHost, '波段积分'),
+        ],
+        body: integHost,
+      })));
 
   refs.slopeHost = slopeHost;
   refs.integHost = integHost;
@@ -529,9 +552,11 @@ function renderCurve(host, y, label, yLabel, serverParams) {
 }
 
 function paint(host, x, y, label, yLabel, exact, nPoints) {
+  const spec = { x_label: '时间 (s)', y_label: yLabel,
+                 series: [{ label, x, y, style: 'line' }] };
+  host.__spec = spec;
   mount(host,
-    xyChart({ x_label: '时间 (s)', y_label: yLabel,
-              series: [{ label, x, y, style: 'line' }] }, { height: 280 }),
+    xyChart(spec, { height: 280 }),
     h('div.chart-caption',
       exact
         ? h('span.status.status-ok.xsmall',
@@ -587,6 +612,47 @@ function updateBandFigures() {
     }),
     yMin: 1 / S.bandMax, yMax: 1 / S.bandMin, ...colorScale(),
   });
+}
+
+/** 给一个图表宿主配下载菜单。取的都是**当前**那一份 —— 图会重画，
+ *  在建按钮时捕获节点的话，重画一次就下载到旧图了。 */
+function dl(hostGetter, name) {
+  return downloadMenu({
+    svg: () => hostGetter()?.querySelector('svg'),
+    spec: () => hostGetter()?.__spec || null,
+    name: `${S.meta?.sample_name || '样品'}_${name}`,
+  });
+}
+
+/** 服务端渲染的热力图：图片直接取那张 PNG，不用在前端重画一遍。 */
+function dlHeatmap(urlGetter, name) {
+  return downloadMenu({
+    svg: () => null,
+    spec: () => null,
+    imageUrl: urlGetter,
+    name: `${S.meta?.sample_name || '样品'}_${name}`,
+  });
+}
+
+// ------------------------------------------------------------------ 图与控件
+
+/**
+ * 一格图。**结构固定成三行**：标题 / 功能模块 / 图。
+ *
+ * 这个约束是整个横排对齐的前提 —— `.fig-grid-*` 用 subgrid 把这三行的高度
+ * 在**整行上**统一，取那一带里最高的。所以左右两格的图必然从同一条线开始，
+ * 哪怕一边有俩滑块、另一边什么都没有（那一格就空着）。
+ *
+ * 说明文字走 `note`，放在图**下面** —— 放上面的话它会把同排的另一张图
+ * 一起往下推，为了几行字浪费一整块竖向空间。
+ */
+function figure(title, { head = null, ctl = null, body = null, note = null } = {}) {
+  return h('div.figure',
+    h('div.figure-head',
+      h('div.figure-title', title),
+      head ? h('div.row.gap-2.wrap', head) : null),
+    h('div.figure-ctl', ctl),
+    h('div.figure-body', body, note));
 }
 
 // ------------------------------------------------------------------ 控件

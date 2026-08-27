@@ -6,7 +6,7 @@
 // 计数是在「去掉自己这一面之后」的筛选式下算的 —— 选了 B20 之后其他批次
 // 的计数还在，所以还能改选。这一条在后端保证（selection.facets）。
 
-import { h, mount, fmtInt } from '../ui.js';
+import { h, mount, fmtInt, modal } from '../ui.js';
 
 /**
  * facetPanel({ facets, filter, onChange })
@@ -39,7 +39,13 @@ export function facetPanel({ facets, filter, onChange }) {
 /**
  * 测量时间区间。
  *
- * 两个输入框的 placeholder 就是数据里的真实首末时刻 —— 跟名称滑块一个道理：
+ * 两条路都给：**手打**（框里能直接敲 `2026-07-29 18:25`）和**弹窗选**
+ * （日历 + 时:分）。手打快，选的人不用记格式。
+ *
+ * 精度到**分钟** —— 你的数据一轮实验里几次测量只差几分钟
+ * （18:25 / 18:33 / 18:35），只到日期的话这一维等于没有。
+ *
+ * 输入框的 placeholder 就是数据里的真实首末时刻，跟名称滑块一个道理：
  * 范围不用先去别处读再回来输，范围本身就写在框里。
  */
 function timeSection(f, facet, onChange) {
@@ -67,16 +73,78 @@ function timeSection(f, facet, onChange) {
   return h('div.facet',
     h('div.facet-head',
       h('span.facet-title', '测量时间'),
-      (cur.from || cur.to)
-        ? h('button.facet-clear', {
-            onclick: () => { const n = { ...f }; delete n.time; onChange(n); },
-          }, '清除')
-        : null),
+      h('div.row.gap-2',
+        h('button.facet-clear', {
+          onclick: () => openTimeDialog(facet, cur, (a, b) => {
+            const next = { ...f };
+            if (a || b) next.time = { from: a, to: b };
+            else delete next.time;
+            onChange(next);
+          }),
+        }, '选择…'),
+        (cur.from || cur.to)
+          ? h('button.facet-clear', {
+              onclick: () => { const n = { ...f }; delete n.time; onChange(n); },
+            }, '清除')
+          : null)),
     h('div.col.gap-2',
       from,
       h('div.row.gap-2', h('span.xsmall.dim', '到'), to)),
     h('div.xsmall.dim.mt-2',
       `数据里是 ${short(facet.min)} — ${short(facet.max)}`));
+}
+
+/**
+ * 时间范围弹窗：日期用原生 date 控件（自带日历），时分用原生 time 控件。
+ *
+ * 用原生的而不是自己画一个日历：原生控件跟着系统语言和地区走，键盘也能操作，
+ * 自己画一个只会更差。缺的只是「日期 + 时分放在一起」，那一步在这儿拼。
+ */
+function openTimeDialog(facet, cur, apply) {
+  const split = (v, fallback) => {
+    const s = String(v || fallback || '');
+    return [s.slice(0, 10), s.slice(11, 16) || '00:00'];
+  };
+  const [d0, t0] = split(cur.from, facet.min);
+  const [d1, t1] = split(cur.to, facet.max);
+
+  // 日期框限制在数据的真实范围内 —— 选一个库里根本没有的日子没有意义
+  const lo = String(facet.min || '').slice(0, 10);
+  const hi = String(facet.max || '').slice(0, 10);
+  const dateIn = (v) => h('input.input.input-sm',
+    { type: 'date', value: v, min: lo || undefined, max: hi || undefined });
+  const timeIn = (v) => h('input.input.input-sm', { type: 'time', value: v, step: 60 });
+
+  const fd = dateIn(d0), ft = timeIn(t0);
+  const td = dateIn(d1), tt = timeIn(t1);
+
+  const row = (label, d, t) => h('div.field-row',
+    h('label.small.muted', label),
+    h('div.row.gap-2', d, t));
+
+  const m = modal({
+    title: '选择时间范围',
+    width: 380,
+    body: h('div.col.gap-3',
+      row('从', fd, ft),
+      row('到', td, tt),
+      h('div.xsmall.dim',
+        `数据里是 ${String(facet.min).slice(0, 16).replace('T', ' ')} — `
+        + `${String(facet.max).slice(0, 16).replace('T', ' ')}`)),
+    foot: h('div.row.gap-2',
+      h('button.btn.btn-sm', {
+        onclick: () => { apply('', ''); m.close(); },
+      }, '不限'),
+      h('button.btn.btn-sm.btn-primary', {
+        onclick: () => {
+          const a = fd.value ? `${fd.value}T${ft.value || '00:00'}` : '';
+          const b = td.value ? `${td.value}T${tt.value || '23:59'}` : '';
+          // 反了就换过来，别让人拿到一个空结果还不知道为什么
+          apply(a && b && a > b ? b : a, a && b && a > b ? a : b);
+          m.close();
+        },
+      }, '应用')),
+  });
 }
 
 

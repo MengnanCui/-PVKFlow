@@ -46,7 +46,9 @@ export function initDrawer(options = {}) {
   if (!refs.root) return;
 
   buildShell();
-  setWidth(readWidth());
+  // 关着的时候第三列必须是 0：--ai-w 不清零的话，抽屉明明没开，
+  // 主区却一直被切掉 380px —— 样品页那两张并排的图会一起缩水。
+  setWidth(0, { persist: false });
 
   $('#aiToggle')?.addEventListener('click', () => toggle());
 

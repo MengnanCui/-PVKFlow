@@ -153,13 +153,56 @@
 /* 选择页：左分面 + 右列表 */
 /* 图并排。样品页要「宽度占满一整页」，一行两张比上下堆着好比对。
    窄屏各自塌成一列 —— 两张挤在 500px 里谁也看不清。 */
+/* 横排的图必须**两两对齐** —— 左右两格的标题一条线、控件一条线、图一条线。
+   难点在于两格的控件高度天然不一样（一边俩滑块、一边一个下拉），
+   各自 auto 布局的话图就错开了。
+
+   subgrid 是唯一不用写死高度的解法：每个 .figure 占 3 行，行高由
+   父网格在**整行**上统一决定，取那一带里最高的那个。没有控件的一格
+   就空着 —— 你要的「总之对齐」。 */
 .fig-grid-2, .fig-grid-4 {
-  display: grid; grid-template-columns: 1fr 1fr;
-  gap: var(--s6x) var(--s5x); align-items: start;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: repeat(3, auto);       /* 标题 / 控件 / 图 */
+  gap: var(--s6x) var(--s5x);
+  align-items: start;
+}
+/* 四宫格是两条 3 行的带：上排自己对齐，下排自己对齐 */
+.fig-grid-4 { grid-template-rows: repeat(6, auto); }
+
+.fig-grid-2 > .figure, .fig-grid-4 > .figure {
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  row-gap: 0;
+  margin-bottom: 0;                          /* 间距交给父网格的 gap */
 }
 .fig-grid-2 > *, .fig-grid-4 > * { min-width: 0; }
+
+/* 行高由那一带里最高的一格决定。矮的那一格默认会被拉伸、内容垂直居中，
+   于是两个标题一高一低 —— 图对齐了，标题反而没对齐。让它们各自贴着
+   自己那一行的顶边就行。 */
+.fig-grid-2 > .figure > *, .fig-grid-4 > .figure > * { align-self: start; }
+
+/* 标题跟控件同处一条 flex 行时会被垂直居中，而控件有高有矮
+   （下拉框一行、波段控件两行），于是两格的标题差几个像素。
+   在并排的图里让整行贴顶：标题永远从这一带的顶边开始。 */
+.fig-grid-2 .figure-head, .fig-grid-4 .figure-head { align-items: flex-start; }
+.fig-grid-2 .figure-title, .fig-grid-4 .figure-title {
+  display: flex; align-items: center; min-height: 26px;
+}
+
+/* subgrid 不可用时退回原来的独立布局：图不齐，但不会错位塌掉 */
+@supports not (grid-template-rows: subgrid) {
+  .fig-grid-2 > .figure, .fig-grid-4 > .figure { display: block; }
+}
+
 @media (max-width: 1100px) {
-  .fig-grid-2, .fig-grid-4 { grid-template-columns: 1fr; }
+  /* 塌成一列之后没有「横向对齐」可言了，退回普通流 */
+  .fig-grid-2, .fig-grid-4 { grid-template-columns: 1fr; grid-template-rows: none; }
+  .fig-grid-2 > .figure, .fig-grid-4 > .figure {
+    display: block; grid-row: auto; margin-bottom: var(--s6x);
+  }
 }
 
 .select-layout { display: grid; grid-template-columns: 264px 1fr; gap: var(--s4x);

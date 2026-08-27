@@ -315,6 +315,10 @@ table.data tr:last-child td { border-bottom: 0; }
 .figure { margin-bottom: var(--s8x); min-width: 0; }
 .figure-head { display: flex; align-items: center; justify-content: space-between;
                gap: var(--s4x); flex-wrap: wrap; margin-bottom: var(--s3x); }
+/* 三行结构里的第二、三行。第二行为空时不留白 —— 但它在 subgrid 里
+   仍然占一行，所以同排另一格的控件照样能把两边一起顶到同一高度。 */
+.figure-ctl:not(:empty) { margin-bottom: var(--s3x); }
+.figure-body { min-width: 0; align-self: start; }
 .figure-title { font-size: var(--t-base); font-weight: 550; color: var(--ink); }
 .chart-caption { font-size: var(--t-xs); color: var(--ink-4); margin-top: 6px;
                  display: flex; align-items: center; flex-wrap: wrap; }
@@ -397,6 +401,10 @@ tr.is-clickable:hover { background: var(--surface-2); }
 tr.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* 代码块：导出的 plot.py 在下载之前先读一眼 */
+/* 报告块单独收一半高度。规范要求块 A–D「禁止简化、禁止省略」——
+   全文一个字没少，只是显示在一个能滚的半高窗口里。 */
+.code-block.is-half { max-height: 28vh; }
+
 .code-block {
   margin: 0; padding: var(--s3x); max-height: 56vh; overflow: auto;
   background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--r);

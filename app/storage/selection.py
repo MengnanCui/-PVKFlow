@@ -223,7 +223,7 @@ def compile_filter(flt: dict) -> Compiled:
             params.append(tw["from"])
         if tw.get("to"):
             parts.append("m.measured_at <= ?")
-            params.append(tw["to"])
+            params.append(_inclusive_to(tw["to"]))
         where.append(
             "EXISTS (SELECT 1 FROM measurement m WHERE m.sample_id = s.sample_id"
             "        AND m.measured_at IS NOT NULL AND " + " AND ".join(parts) + ")")
@@ -256,6 +256,28 @@ def compile_filter(flt: dict) -> Compiled:
 
 
 # ------------------------------------------------------------------ 查询
+
+def _inclusive_to(v: str) -> str:
+    """把上界补成「这一刻的最后一瞬」。
+
+    「到 18:35」在人话里是「18:35 这一分钟也算」，但字符串比较下
+    `"…T18:35:47" <= "…T18:35"` 是假的 —— 那一分钟里的测量会被静默排除。
+    真实数据里同一轮实验的几次测量只差几分钟，少掉一整分钟不是小事。
+
+    所以按用户给的精度补齐：只给到日就补到 23:59:59，给到分就补到 :59。
+    补一个字典序上的最大尾巴（`~` 比所有数字都大），把同一分钟里带小数秒的
+    时间戳也一起收进来。
+    """
+    v = (v or "").strip()
+    if len(v) == 10:                      # 2026-07-29
+        return v + "T23:59:59~"
+    if len(v) == 16:                      # 2026-07-29T18:35
+        return v + ":59~"
+    if len(v) == 19:                      # 2026-07-29T18:35:47
+        return v + "~"
+    return v
+
+
 def count(flt: dict) -> int:
     c = compile_filter(flt)
     return db.scalar(f"SELECT COUNT(*) FROM sample s {c.clause}", tuple(c.params)) or 0

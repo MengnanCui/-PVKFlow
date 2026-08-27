@@ -245,7 +245,47 @@ def test_time_filter_compiles_to_measured_at(workspace):
                                            "to": "2026-07-30T00:00"}})
     assert "measured_at >= ?" in c.where and "measured_at <= ?" in c.where
     assert "datetime(" not in c.where and "strftime(" not in c.where
-    assert c.params == ["2026-07-29T00:00", "2026-07-30T00:00"]
+    # 上界按用户给的精度补到那一刻的末尾 —— 见下面那条测试
+    assert c.params == ["2026-07-29T00:00", "2026-07-30T00:00:59~"]
+
+
+def test_upper_bound_includes_the_whole_minute_the_user_typed(workspace):
+    """★「到 18:35」在人话里包含 18:35 这一分钟。
+
+    字符串比较下 `"…T18:35:47" <= "…T18:35"` 是**假**的，不补齐的话那一分钟里
+    的测量会被静默排除。真实数据里同一轮实验的几次测量只差几分钟
+    （18:25 / 18:33 / 18:35），少掉一整分钟就是少掉一次测量，
+    而且界面上只表现为「怎么少了一个」。
+    """
+    from app.storage import db, selection
+
+    ts = db.now()
+    with db.tx() as conn:
+        for i, at in enumerate(["2026-07-29T18:25:04.01",
+                                "2026-07-29T18:35:47.09",     # 就在上界那一分钟里
+                                "2026-07-29T18:36:00.00"]):
+            conn.execute("INSERT INTO sample (sample_id, name, created_at) VALUES (?,?,?)",
+                         (f"s{i}", f"样品{i}", ts))
+            conn.execute(
+                "INSERT INTO measurement (measurement_id, sample_id, method,"
+                "                         measured_at, created_at) VALUES (?,?,?,?,?)",
+                (f"m{i}", f"s{i}", "absorbance", at, ts))
+
+    got = selection.count({"time": {"from": "2026-07-29T18:30", "to": "2026-07-29T18:35"}})
+    assert got == 1, "18:35:47 那次测量必须落在「到 18:35」里"
+
+    # 只给到日的时候补到当天末尾，整天都算
+    assert selection.count({"time": {"from": "2026-07-29", "to": "2026-07-29"}}) == 3
+
+
+def test_inclusive_upper_bound_handles_each_precision(workspace):
+    from app.storage.selection import _inclusive_to
+
+    assert _inclusive_to("2026-07-29") == "2026-07-29T23:59:59~"
+    assert _inclusive_to("2026-07-29T18:35") == "2026-07-29T18:35:59~"
+    assert _inclusive_to("2026-07-29T18:35:47") == "2026-07-29T18:35:47~"
+    # 已经带小数秒的原样放行 —— 再补尾巴会把下一秒也圈进来
+    assert _inclusive_to("2026-07-29T18:35:47.09") == "2026-07-29T18:35:47.09"
 
 
 def test_time_filter_accepts_one_open_end(workspace):
