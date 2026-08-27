@@ -228,7 +228,7 @@ function drawList() {
             }),
             h('span.small#selectCount',
               selectedCount ? `已选 ${fmtInt(selectedCount)}` : '全选本页')),
-          h('span.xsmall.dim', 'shift+点 选中间一整段'),
+          h('span.xsmall.dim', '点行选中 · 按住拖着刷一片 · shift+点 选中间一整段 · 双击或「打开」进样品'),
           S.total > all
             ? h('span.xsmall.dim',
                 `· 列表载入前 ${fmtInt(all)} 行，「批处理全部」按的是筛选式命中的 ${fmtInt(S.total)} 个`)
@@ -283,32 +283,100 @@ function drawTable() {
   mount(host, header, list);
 }
 
-/**
- * 勾选一行。三种手势：
- *   普通    单独切换，并把锚点挪到这一行
- *   shift   锚点到这一行之间**全选**（按列表当前顺序）
- *   ctrl/⌘  切换单个，不动锚点
- *
- * 「从 xx 到 xx」用鼠标就能划出来，不用先去数行号。
- */
-function toggleRow(index, evt) {
+// ------------------------------------------------------------------ 勾选
+//
+// 挑样品是这一页的主要动作，所以**整行就是勾选热区**，点哪儿都是选。
+// 打开样品要走行尾的「打开」按钮或者双击 —— 之前点行体直接跳走，
+// 挑到一半被弹到详情页，回来滚动和勾选全没了。
+//
+// 三种手势：
+//   点         切换这一行，并把锚点挪过来
+//   按住拖     从按下那一行刷到当前行，按下时是选就一路选、是取消就一路取消
+//   shift+点   锚点到这一行之间**加选**（已经选好的不会被抹掉）
+//
+// 复选框本身设了 pointer-events: none —— 它只是状态的显示，不是独立的按钮。
+// 让它可点会有两套状态在打架：浏览器自己的 checked 和我们的 S.checked。
+
+const drag = { on: false, anchor: null, mode: 'add' };
+
+function selectRange(a, b, mode) {
+  const [lo, hi] = a <= b ? [a, b] : [b, a];
+  for (let i = lo; i <= hi; i++) {
+    const r = S.rows[i];
+    if (!r) continue;
+    if (mode === 'add') S.checked.add(r.sample_id);
+    else S.checked.delete(r.sample_id);
+  }
+}
+
+function beginSelect(index, evt) {
   const row = S.rows[index];
   if (!row) return;
 
-  if (evt?.shiftKey && S.anchor !== null && S.anchor !== index) {
-    const [a, b] = S.anchor < index ? [S.anchor, index] : [index, S.anchor];
-    // shift 是「加选这一段」，不是「只留这一段」—— 已经选好的不该被抹掉
-    for (let i = a; i <= b; i++) S.checked.add(S.rows[i].sample_id);
-  } else if (evt?.metaKey || evt?.ctrlKey) {
-    if (S.checked.has(row.sample_id)) S.checked.delete(row.sample_id);
-    else S.checked.add(row.sample_id);
-  } else {
-    if (S.checked.has(row.sample_id)) S.checked.delete(row.sample_id);
-    else S.checked.add(row.sample_id);
-    S.anchor = index;
+  if (evt.shiftKey && S.anchor !== null && S.anchor !== index) {
+    selectRange(S.anchor, index, 'add');
+    syncSelection();
+    return;                       // shift 是一次性的范围选，不进入拖拽
   }
 
+  // 按下时这一行是「将要被选中」还是「将要被取消」，决定整段刷的方向。
+  // 从一个已选的行开始拖 = 擦掉一片，这跟表格软件里的行为一致。
+  drag.on = true;
+  drag.anchor = index;
+  pointer.x = evt.clientX;
+  pointer.y = evt.clientY;
+  autoScroll();
+  drag.mode = S.checked.has(row.sample_id) ? 'remove' : 'add';
+  S.anchor = index;
+  selectRange(index, index, drag.mode);
   syncSelection();
+}
+
+function extendSelect(index) {
+  if (!drag.on) return;
+  selectRange(drag.anchor, index, drag.mode);
+  syncSelection();
+}
+
+// 松手可能发生在列表外面（拖出了窗口），所以监听在 window 上，只装一次
+window.addEventListener('pointerup', endDrag);
+window.addEventListener('pointercancel', endDrag);
+window.addEventListener('pointermove', (e) => {
+  if (!drag.on) return;
+  pointer.x = e.clientX;
+  pointer.y = e.clientY;
+});
+
+function endDrag() {
+  drag.on = false;
+  if (raf) { cancelAnimationFrame(raf); raf = null; }
+}
+
+// 拖到列表上下边缘就自动滚 —— 没有这个的话一次只能刷视口里那十几行，
+// 四十个样品想全选还是得点点点。
+const pointer = { x: 0, y: 0 };
+const EDGE = 34;          // 离边缘多近开始滚
+let raf = null;
+
+function autoScroll() {
+  raf = requestAnimationFrame(function step() {
+    if (!drag.on) { raf = null; return; }
+    const list = refs.vlist;
+    if (list) {
+      const r = list.getBoundingClientRect();
+      let dy = 0;
+      if (pointer.y < r.top + EDGE) dy = -Math.ceil((r.top + EDGE - pointer.y) / 2);
+      else if (pointer.y > r.bottom - EDGE) dy = Math.ceil((pointer.y - (r.bottom - EDGE)) / 2);
+      if (dy) list.scrollTop += dy;
+
+      // 内容在不动的指针下面滚过去时 pointerenter 不会触发，
+      // 所以每一帧都自己问一次「现在指针底下是哪一行」。
+      const el = document.elementFromPoint(pointer.x, pointer.y);
+      const row = el?.closest?.('.vrow[data-index]');
+      if (row) extendSelect(Number(row.dataset.index));
+    }
+    raf = requestAnimationFrame(step);
+  });
 }
 
 /**
@@ -353,24 +421,22 @@ function renderRow(r, index) {
     if (!r.matrix_id) { toast('这个样品没有光谱矩阵', 'err'); return; }
     refs.nav('sample', { arg: r.matrix_id });
   };
-  return h('div.vrow', {
+  return h('div.vrow.is-pickable', {
     'aria-selected': String(checked),
     dataset: { index: String(index) },
-    onclick: (e) => {
-      if (e.target.closest('button')) return;
-      // 带修饰键点行 = 选，不是打开。不然 shift 划一片会开一堆页面。
-      if (e.shiftKey || e.metaKey || e.ctrlKey) {
-        e.preventDefault();
-        toggleRow(index, e);
-        return;
-      }
-      if (!e.target.closest('input')) open();
+    onpointerdown: (e) => {
+      if (e.button !== 0) return;               // 右键留给浏览器菜单
+      if (e.target.closest('button')) return;   // 「打开」按钮走自己的路
+      e.preventDefault();                       // 拖的时候别让浏览器去选文字
+      beginSelect(index, e);
     },
+    // 拖到这一行上就把这一行也刷进去。pointerenter 不冒泡，正好一行一次。
+    onpointerenter: () => extendSelect(index),
+    ondblclick: (e) => { if (!e.target.closest('button')) open(); },
   },
-    h('input', {
-      type: 'checkbox', checked,
-      onclick: (e) => { e.stopPropagation(); e.preventDefault(); toggleRow(index, e); },
-    }),
+    // 只读的状态显示：真正的开关是整行。让它自己可点的话，浏览器的 checked
+    // 和我们的 S.checked 会各说各话（这正是「选中了却不显示打勾」的成因）。
+    h('input', { type: 'checkbox', checked, tabIndex: -1, 'aria-hidden': 'true' }),
     h('div.min0',
       h('div.name.truncate', r.name),
       r.n_results ? h('div.xsmall.dim', `${fmtInt(r.n_results)} 条结果`) : null),

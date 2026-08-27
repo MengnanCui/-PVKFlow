@@ -440,6 +440,13 @@ tr.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset
              border-bottom: 1px solid var(--line); height: 34px; }
 .vrow-head:hover { background: var(--surface-2); }
 
+/* 整行就是勾选热区。拖着刷一片的时候别顺手把文字也选上 —— 选中的文字
+   会盖在行上，看着像出了什么毛病。 */
+.vrow.is-pickable { user-select: none; }
+/* 复选框只是状态的显示，真正的开关是整行。让它自己可点会有两套状态打架：
+   浏览器的 checked 和 S.checked ——「选中了却不打勾」就是这么来的。 */
+.vrow.is-pickable > input[type="checkbox"] { pointer-events: none; }
+
 /* ---------------------------------------------------------------- 选择即示例 */
 .suggestions { display: flex; flex-direction: column; gap: 6px; }
 .suggestion {
