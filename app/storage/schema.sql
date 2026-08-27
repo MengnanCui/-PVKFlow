@@ -202,3 +202,41 @@ CREATE INDEX IF NOT EXISTS idx_mea_measured_at
 CREATE INDEX IF NOT EXISTS idx_mea_sample_method ON measurement(sample_id, method);
 CREATE INDEX IF NOT EXISTS idx_artifact_matrix ON artifact(sample_id, is_matrix);
 CREATE INDEX IF NOT EXISTS idx_artifact_path ON artifact(display_path);
+
+-- ---------------------------------------------------------------- AI 会话
+-- 「比完就没了、找不到在哪儿」在对比那边靠 analysis_run 解决了，
+-- 对话这边靠这两张表：问过什么、模型答过什么，刷新之后还在。
+
+CREATE TABLE IF NOT EXISTS conversation (
+    conversation_id TEXT PRIMARY KEY,
+    title           TEXT NOT NULL DEFAULT '新对话',
+    -- 这次对话的数据范围。存的是**筛选式**，不是样品 ID 列表 ——
+    -- 跟 sample_set 一个道理：规则可以复算，快照会过期。
+    scope_json      TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS message (
+    message_id      TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversation(conversation_id) ON DELETE CASCADE,
+    role            TEXT NOT NULL,              -- user | assistant | system
+    content         TEXT NOT NULL DEFAULT '',
+    -- 结构化动作卡片、用量、被中断的标记都塞这里，正文保持是纯文本
+    meta_json       TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL
+);
+
+-- 把某条回答钉到某一次对比上。对比页据此显示「AI 分析」。
+CREATE TABLE IF NOT EXISTS ai_pin (
+    pin_id          TEXT PRIMARY KEY,
+    analysis_run_id TEXT NOT NULL,
+    conversation_id TEXT,
+    message_id      TEXT,
+    note            TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_msg_conv ON message(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_conv_updated ON conversation(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pin_run ON ai_pin(analysis_run_id, created_at DESC);

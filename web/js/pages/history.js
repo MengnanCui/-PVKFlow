@@ -18,7 +18,14 @@ export function actions(nav) {
 }
 
 export async function view(host, ctx) {
-  await render(host, () => api.batchRuns(), (d) => {
+  // 两个请求一起发。钉住计数一次查完，不是一行一个查询。
+  await render(host, async () => {
+    const [d, pins] = await Promise.all([
+      api.batchRuns(),
+      api.pinCounts().catch(() => ({ counts: {} })),   // 取不到就当没有，不挡住列表
+    ]);
+    return { ...d, pinCounts: pins.counts || {} };
+  }, (d) => {
     const runs = d.runs || [];
     if (!runs.length) {
       return empty('还没有跑过对比',
@@ -32,12 +39,12 @@ export async function view(host, ctx) {
         h('table.data',
           h('thead', h('tr',
             h('th', '名称'), h('th', '样品'), h('th', '失败'),
-            h('th', '配方'), h('th', '时间'))),
-          h('tbody', ...runs.map((r) => row(r, ctx))))));
+            h('th', 'AI'), h('th', '配方'), h('th', '时间'))),
+          h('tbody', ...runs.map((r) => row(r, ctx, d.pinCounts[r.analysis_run_id] || 0))))));
   });
 }
 
-function row(r, ctx) {
+function row(r, ctx, nPins) {
   const p = parseParams(r.params_json);
   const recipe = p.recipe || {};
   // 波长不加千分位
@@ -53,6 +60,7 @@ function row(r, ctx) {
     h('td', r.n_failed
       ? h('span.status.status-warn', `${fmtInt(r.n_failed)} 个`)
       : h('span.dim', '无')),
+    h('td', nPins ? h('span.tag.tag-accent', `📌 ${fmtInt(nPins)}`) : h('span.dim', '—')),
     h('td.small.muted', band),
     h('td.small.muted', fmtTime(r.started_at)));
 }

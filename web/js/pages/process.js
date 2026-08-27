@@ -11,6 +11,7 @@ import {
 import { openImportDialog, bindDropUpload } from '../components/filepicker.js';
 import { facetPanel, filterSummary } from '../components/facets.js';
 import { virtualList } from '../components/virtual-list.js';
+import { setScope } from '../scope.js';
 
 export const meta = {
   id: 'process',
@@ -49,6 +50,25 @@ export function actions(nav) {
   return [h('button.btn.btn-primary', { onclick: () => openImport() }, '导入数据')];
 }
 
+// AI 抽屉里的筛选式卡片点「应用」时走这条。**只是把筛选式填进来**，
+// 跑不跑仍然要你自己点 —— 模型能写的操作都得先变成你看得见、能改、能拒绝的东西。
+let pendingFromAI = null;
+window.addEventListener('hte:apply-filter', (e) => {
+  pendingFromAI = e.detail;
+  if (refs.listHost) consumeAIFilter();
+});
+
+function consumeAIFilter() {
+  const p = pendingFromAI;
+  if (!p) return;
+  pendingFromAI = null;
+  setFilter(p.filter || {});
+  if (p.openBatch) {
+    // 等这一轮取数回来再开对话框，否则命中数还是上一次的
+    reload().then(() => batchDialog(p.recipe || null));
+  }
+}
+
 export async function view(host, ctx) {
   refs = { host, nav: ctx.nav };
   S.checked = new Set();
@@ -62,6 +82,7 @@ export async function view(host, ctx) {
 
   drawShell();
   await Promise.all([reload(), loadSets()]);
+  consumeAIFilter();
 }
 
 function functionTabs() {
@@ -107,6 +128,13 @@ async function reload() {
   S.loading = false;
   drawFacets();
   drawList();
+  publishScope();
+}
+
+/** 把「当前在看哪批样品」告诉 AI 抽屉。抽屉不该来读这里的私有 S。 */
+function publishScope() {
+  setScope({ filter: S.filter, total: S.total,
+             checked: [...S.checked], page: 'process' });
 }
 
 function setFilter(next) {
@@ -321,6 +349,8 @@ function syncSelection() {
   if (clearBtn) clearBtn.disabled = !n;
   const runBtn = host.querySelector('#runBatchBtn');
   if (runBtn) runBtn.textContent = batchLabel();
+
+  publishScope();
 }
 
 function renderRow(r, index) {
@@ -403,7 +433,7 @@ function suggestionBlock() {
 }
 
 // ------------------------------------------------------------------ 批处理
-async function batchDialog() {
+async function batchDialog(recipeOverride = null) {
   const useChecked = S.checked.size > 0;
   const filter = useChecked ? { ids: [...S.checked] } : S.filter;
 
@@ -417,10 +447,12 @@ async function batchDialog() {
     return;
   }
 
-  // 膜厚窗口默认 775–1120：775 避开吸收边，1120 是光谱仪上限
+  // 膜厚窗口默认 775–1120：775 避开吸收边，1120 是光谱仪上限。
+  // AI 卡片带来的配方只是**预填**，对话框照样要你确认才开跑。
   const recipe = { integral_min: 800, integral_max: 950,
                    slope_center: 950, slope_half_width: 10,
-                   band_min: 775, band_max: 1120 };
+                   band_min: 775, band_max: 1120,
+                   ...(recipeOverride || {}) };
   const stamp = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit',
                                                     hour: '2-digit', minute: '2-digit' });
   let title = `${pv.with_matrix} 个样品 · ${stamp}`;

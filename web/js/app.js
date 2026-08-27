@@ -11,12 +11,18 @@ import * as history from './pages/history.js';
 import * as storage from './pages/storage.js';
 import * as relation from './pages/relation.js';
 import * as settings from './pages/settings.js';
+import { initDrawer } from './components/ai-drawer.js';
 
 const PAGES = [overview, process_, sample, batchPage, history, storage, relation, settings];
 const BY_ID = Object.fromEntries(PAGES.map((p) => [p.meta.id, p]));
 
-// sample 不出现在侧栏 —— 它是从数据处理页下钻进去的
-const MAIN_NAV = ['overview', 'process', 'history', 'storage', 'relation'];
+// sample 不出现在侧栏 —— 它是从数据处理页下钻进去的。
+//
+// 三组是有先后的：「平台」是数据的正向流程（处理 → 存储 → 构效关系），
+// 「分析」是回头看已经跑过的东西。对比历史属于后者，跟前面三个不是一个层级，
+// 所以单独成组排在后面，而不是塞进主线里当第三项。
+const MAIN_NAV = ['overview', 'process', 'storage', 'relation'];
+const ANALYSIS_NAV = ['history'];
 const SYSTEM_NAV = ['settings'];
 
 const viewport = $('#viewport');
@@ -87,6 +93,7 @@ function navigate(id, { push = true, arg = null } = {}) {
 }
 
 buildNav('#navMain', MAIN_NAV, '平台');
+buildNav('#navAnalysis', ANALYSIS_NAV, '分析');
 buildNav('#navSystem', SYSTEM_NAV, '系统');
 
 function fromHash() {
@@ -124,6 +131,9 @@ async function checkHealth() {
 
 checkHealth();
 setInterval(checkHealth, 30000);
+
+// ------------------------------------------------------------------ AI 抽屉
+initDrawer({ nav: navigate, currentPage: () => current });
 
 const initial = fromHash();
 navigate(initial.id, { push: false, arg: initial.arg });

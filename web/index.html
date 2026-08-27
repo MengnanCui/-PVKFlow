@@ -21,6 +21,10 @@
 
     <nav class="nav-group" id="navMain"></nav>
 
+    <!-- 对比历史不属于「处理→存储→构效」那条主线，它是回头看的入口，
+         所以单独一组，排在主线之后。 -->
+    <nav class="nav-group" id="navAnalysis"></nav>
+
     <nav class="nav-group" id="navSystem"></nav>
 
     <div class="sidebar-foot">
@@ -38,10 +42,20 @@
         <h1 id="pageTitle">总览</h1>
         <div class="topbar-desc" id="pageDesc"></div>
       </div>
-      <div class="topbar-actions" id="pageActions"></div>
+      <div class="topbar-actions">
+        <!-- 页面自己的按钮在这个内层 div 里 —— navigate() 每次都会把它清空重建，
+             AI 开关得放在外面，不然一换页就没了。 -->
+        <div class="topbar-actions" id="pageActions"></div>
+        <button class="btn btn-ghost btn-sm" id="aiToggle" title="AI 助手（Ctrl / Cmd + K）">
+          AI 助手
+        </button>
+      </div>
     </header>
     <div class="viewport" id="viewport"></div>
   </main>
+
+  <!-- AI 抽屉。撑开 .shell 的第三列，不盖住主区 —— 边看图边问才用得起来。 -->
+  <aside class="ai-drawer" id="aiDrawer" hidden></aside>
 </div>
 
 <noscript>

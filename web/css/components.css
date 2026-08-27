@@ -451,3 +451,289 @@ tr.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset
                 overflow: hidden; margin: var(--s3x) 0 var(--s2x); }
 .progress-bar > i { display: block; height: 100%; background: var(--accent-solid);
                     border-radius: 3px; transition: width 240ms var(--ease); }
+
+/* ================================================================ AI 抽屉 */
+/* 布局在 layout.css：.shell 的第三列宽度 = --ai-w。这里只管抽屉内部。 */
+
+.ai-drawer {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  position: relative;
+  min-width: 0;
+  background: var(--paper);
+  border-left: 1px solid var(--line);
+  overflow: hidden;
+}
+
+/* 全屏：铺满整个窗口。--ai-w 会同时被置 0，主区不再留位置。 */
+.ai-drawer.is-full {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  border-left: none;
+}
+/* 全屏时一行拉到 1600px 是没法读的，把消息区收进可读行长 */
+.ai-drawer.is-full .ai-body > *,
+.ai-drawer.is-full .ai-foot > * { max-width: 78ch; margin-inline: auto; }
+
+/* 左缘的拖拽条。4px 太细不好抓，用 ::after 把热区放宽到 11px。 */
+.ai-grip {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  z-index: 2;
+}
+.ai-grip::after { content: ''; position: absolute; inset: 0 -7px 0 0; }
+.ai-grip:hover { background: var(--accent-line); }
+.ai-drawer.is-full .ai-grip { display: none; }
+/* 拖动时别让光标在文字上变成 I 形、别选中文本 */
+body.is-resizing { cursor: col-resize; user-select: none; }
+
+.ai-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2x);
+  padding: 0 var(--s3x);
+  height: var(--topbar-h);
+  border-bottom: 1px solid var(--line);
+}
+.ai-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--t-base);
+  font-weight: 550;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 26px; height: 26px;
+  border-radius: var(--r-sm);
+  color: var(--ink-3);
+  font-size: var(--t-md);
+  line-height: 1;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--ink); }
+
+.ai-body {
+  overflow-y: auto;
+  padding: var(--s4x) var(--s4x) var(--s6x);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4x);
+}
+
+/* ---------------------------------------------------------------- 消息 */
+.ai-msg { font-size: var(--t-base); line-height: 1.62; color: var(--ink); min-width: 0; }
+.ai-msg.is-user {
+  align-self: flex-end;
+  max-width: 88%;
+  padding: var(--s2x) var(--s3x);
+  border-radius: var(--r) var(--r) 2px var(--r);
+  background: var(--accent-wash);
+  border: 1px solid var(--accent-line);
+}
+.ai-msg.is-system {
+  align-self: center;
+  font-size: var(--t-xs);
+  color: var(--ink-4);
+  padding: 2px var(--s2x);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.ai-p { margin: 0 0 var(--s2x); }
+.ai-p:last-child { margin-bottom: 0; }
+.ai-code {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  background: var(--surface-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--s2x);
+  overflow-x: auto;          /* 长行自己滚，不许把整个抽屉撑宽 */
+  white-space: pre;
+}
+.ai-cursor { color: var(--ink-4); font-size: var(--t-sm); }
+.ai-cursor::after {
+  content: '▍';
+  animation: ai-blink 1s steps(2) infinite;
+}
+@keyframes ai-blink { 50% { opacity: 0; } }
+
+.ai-err {
+  margin-top: var(--s2x);
+  padding: var(--s2x);
+  border-radius: var(--r-sm);
+  font-size: var(--t-sm);
+  color: var(--danger);
+  background: var(--danger-wash);
+}
+
+.ai-acts { display: flex; gap: var(--s2x); margin-top: var(--s2x); }
+.ai-act {
+  font-size: var(--t-xs);
+  color: var(--ink-4);
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+}
+.ai-act:hover { background: var(--surface-2); color: var(--ink-2); }
+
+/* ---------------------------------------------------------------- 动作卡片 */
+.ai-card {
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r);
+  background: var(--surface);
+  padding: var(--s3x);
+  margin-top: var(--s3x);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2x);
+}
+.ai-card-head { font-size: var(--t-sm); font-weight: 550; color: var(--accent-ink); }
+.ai-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ai-card-foot { display: flex; gap: var(--s2x); flex-wrap: wrap; margin-top: 2px; }
+
+/* ---------------------------------------------------------------- 空态 */
+.ai-empty { padding: var(--s4x) 0; }
+.ai-empty-title { font-size: var(--t-md); font-weight: 550; margin-bottom: var(--s2x); }
+.ai-hints { display: flex; flex-direction: column; gap: var(--s2x); margin-top: var(--s4x); }
+.ai-hint {
+  text-align: left;
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+  padding: var(--s2x) var(--s3x);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+.ai-hint:hover { border-color: var(--accent-line); background: var(--accent-wash); }
+
+.ai-nomodel {
+  margin-top: var(--s3x);
+  padding: var(--s3x);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2x);
+  align-items: flex-start;
+}
+
+/* ---------------------------------------------------------------- 历史 */
+.ai-histhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--s2x);
+  border-bottom: 1px solid var(--line);
+}
+.ai-histrow {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--s2x) var(--s3x);
+  border-radius: var(--r-sm);
+}
+.ai-histrow:hover { background: var(--surface-2); }
+.ai-histrow-title {
+  font-size: var(--t-base);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-pinlist { display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow-y: auto; }
+
+/* ---------------------------------------------------------------- 底部 */
+.ai-foot { border-top: 1px solid var(--line); padding: var(--s3x); background: var(--surface); }
+
+/* 数据范围选择器：只有两档 —— 分析你勾中的，还是分析筛出来的全部 */
+.ai-seg-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 3px;
+  border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+  border: 1px solid var(--line);
+}
+.ai-seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-size: var(--t-sm);
+  color: var(--ink-3);
+}
+.ai-seg.is-on { background: var(--paper); color: var(--ink); font-weight: 550;
+                box-shadow: inset 0 0 0 1px var(--line); }
+.ai-seg:disabled { color: var(--ink-4); cursor: not-allowed; }
+.ai-seg-n { font-variant-numeric: tabular-nums; font-size: var(--t-xs); color: var(--ink-4); }
+.ai-seg.is-on .ai-seg-n { color: var(--accent); }
+.ai-scope-note {
+  margin-top: var(--s2x);
+  font-size: var(--t-xs);
+  color: var(--warn);
+  line-height: 1.5;
+}
+
+.ai-compose { display: flex; gap: var(--s2x); align-items: flex-end; margin-top: var(--s3x); }
+.ai-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  font: inherit;
+  font-size: var(--t-base);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  padding: var(--s2x);
+  max-height: 160px;
+}
+.ai-input:focus { outline: none; border-color: var(--accent); }
+
+/* ---------------------------------------------------------------- 菜单 */
+.ai-menu {
+  position: fixed;
+  z-index: 70;
+  min-width: 170px;
+  padding: 4px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+}
+.ai-menu-item {
+  text-align: left;
+  padding: 6px var(--s2x);
+  border-radius: var(--r-sm);
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+}
+.ai-menu-item:hover { background: var(--surface-2); color: var(--ink); }
+.ai-menu-item.is-danger { color: var(--danger); }
+.ai-menu-item.is-danger:hover { background: var(--danger-wash); }
+
+/* ---------------------------------------------------------------- 钉住的分析 */
+.pin-note {
+  border: 1px solid var(--accent-line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--accent-wash);
+  padding: var(--s3x);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.pin-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2x); }

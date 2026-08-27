@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Iterator
 
 import httpx
 
@@ -189,6 +189,74 @@ class OpenAICompatProvider:
 
         return ChatResult(text=text, model=payload["model"], provider=self.name,
                           usage=data.get("usage") or {}, raw=data)
+
+    def chat_stream(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        timeout: float = DEFAULT_TIMEOUT,
+    ) -> Iterator[str]:
+        """逐块吐字。和 `chat` 走同一个 payload，只是 `stream: True`。
+
+        本地 27B 一次回答动辄十几秒。不流式的话界面只能干转圈，
+        用户不知道它是在想还是已经死了。
+        """
+        if not self.available():
+            raise ProviderUnavailable(f"provider「{self.name}」配置不完整（缺 baseUrl 或 models）")
+
+        payload: dict[str, Any] = {
+            "model": model or self.default_model,
+            "messages": self._normalize(messages),
+            "temperature": temperature,
+            "stream": True,
+        }
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+
+        url = f"{self.base_url}/chat/completions"
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                with client.stream("POST", url, headers=self._headers(),
+                                   json=payload) as resp:
+                    if resp.status_code >= 400:
+                        resp.read()
+                        raise ProviderUnavailable(
+                            f"{self.name} 返回 {resp.status_code}：{resp.text[:400]}")
+                    for piece in _iter_sse_text(resp.iter_lines()):
+                        yield piece
+        except httpx.HTTPError as exc:
+            raise ProviderUnavailable(f"连接 {self.name} 失败：{exc}") from exc
+
+
+def _iter_sse_text(lines: Iterable[str]) -> Iterator[str]:
+    """把 OpenAI 的 SSE 行流切成一段段正文。
+
+    单独成函数是为了能拿假的行流直接测 —— 网关的实现千奇百怪，
+    这里要能扛住的几种：`data:` 后有没有空格、心跳空行、
+    结尾的 `[DONE]`、以及**半截 json**（少见但真的会有，
+    崩在这里的话用户看到的是整个回答消失，而不是少几个字）。
+    """
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith(":"):
+            continue                       # 空行是分隔，`:` 开头是心跳注释
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            return
+        try:
+            obj = json.loads(data)
+        except json.JSONDecodeError:
+            continue                       # 半截 json 就丢这一块，别把整条流带走
+        for choice in obj.get("choices") or []:
+            delta = choice.get("delta") or {}
+            piece = delta.get("content")
+            if piece:
+                yield piece
 
 
 def resolve(provider_name: str | None = None, model: str | None = None):

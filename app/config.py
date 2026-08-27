@@ -32,6 +32,11 @@ BUILTIN_SKILLS_DIR = ROOT / "app" / "skills" / "builtin"
 PROVIDERS_PATH = CONFIG_DIR / "providers.json"
 PROVIDERS_EXAMPLE_PATH = ROOT / "config" / "providers.example.json"
 
+# AI 抽屉一次最多把多少个样品的逐条明细喂给模型。
+# 超过就只给汇总，并要求模型先提一个收窄的筛选式让用户确认 ——
+# 与其让它对着 200 个样品的截断列表编一个「综合来看」，不如多问一轮。
+AI_DETAIL_MAX = int(os.environ.get("HTE_AI_DETAIL_MAX", "40"))
+
 HOST = os.environ.get("HTE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("HTE_PORT", "8765"))
 

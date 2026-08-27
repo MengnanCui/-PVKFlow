@@ -3,7 +3,10 @@
 
 .shell {
   display: grid;
-  grid-template-columns: var(--sidebar-w) 1fr;
+  /* 第三列是 AI 抽屉。--ai-w 默认 0，抽屉关着时这一列不占地方。
+     用 grid 而不是 position:fixed，主区才会真的让位 —— 盖住内容的话
+     你每问一句就得关掉它才能看图。 */
+  grid-template-columns: var(--sidebar-w) 1fr var(--ai-w, 0px);
   height: 100vh;
   overflow: hidden;
 }
@@ -141,6 +144,8 @@
 @media (max-width: 1000px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar { display: none; }
+  /* 窄屏放不下三栏，抽屉改成盖在上面 */
+  .ai-drawer { position: fixed; inset: 0 0 0 auto; width: min(92vw, 420px); z-index: 60; }
   .workbench { grid-template-columns: 1fr; }
   .workbench > .panel { height: auto; }
 }

@@ -22,6 +22,7 @@ const SPAGHETTI_LIMIT = 60;
 
 const S = {
   runId: null, detail: null, error: null,
+  pins: [],          // 钉在这次对比上的 AI 分析
   // 特殊处理的两条曲线一次拉齐，左右并排 —— 对比看的就是它俩
   curves: { integral: null, slope: null },
   mode: 'auto', groupBy: 'batch',
@@ -40,6 +41,7 @@ export async function view(host, ctx) {
   S.runId = ctx.arg;
   S.detail = S.error = null;
   S.curves = { integral: null, slope: null };
+  S.pins = [];
   refs = { host, nav: ctx.nav };
 
   if (!S.runId) {
@@ -64,13 +66,53 @@ export async function view(host, ctx) {
 
   const chartHost = h('div#chartHost');
   const tableHost = h('div#tableHost');
-  mount(host, header(), h('div.section', chartHost), h('div.section', tableHost));
+  const pinHost = h('div#pinHost');
+  mount(host, header(), pinHost, h('div.section', chartHost), h('div.section', tableHost));
   refs.chartHost = chartHost;
   refs.tableHost = tableHost;
+  refs.pinHost = pinHost;
 
   drawChart();
   drawTable();
   loadCurves();
+  loadPins();
+}
+
+// ------------------------------------------------------------------ 钉住的分析
+//
+// 「比完就没了、找不到在哪儿」的最后一环。对比本身靠 analysis_run 留住了，
+// AI 对那次对比说过的话靠这里 —— 钉住的是正文快照，删掉对话也带不走它。
+async function loadPins() {
+  try {
+    S.pins = (await api.pins(S.runId)).pins || [];
+  } catch {
+    S.pins = [];        // 钉住是锦上添花，取不到不该影响看结果
+  }
+  drawPins();
+}
+
+function drawPins() {
+  if (!refs.pinHost) return;
+  if (!S.pins.length) { clear(refs.pinHost); return; }
+  mount(refs.pinHost, h('div.section',
+    h('div.panel',
+      h('div.panel-head',
+        h('div.panel-title', `AI 分析 · ${fmtInt(S.pins.length)} 条`),
+        h('span.xsmall.dim', '从 AI 助手里钉过来的')),
+      h('div.panel-body',
+        ...S.pins.map((p) => h('div.mb-3',
+          h('div.pin-head',
+            h('span.xsmall.dim',
+              `${p.conversation_title || '已删除的对话'} · ${fmtTime(p.created_at)}`),
+            h('button.ai-act', {
+              onclick: async () => {
+                await api.deletePin(p.pin_id);
+                S.pins = S.pins.filter((x) => x.pin_id !== p.pin_id);
+                drawPins();
+                toast('已取消钉住');
+              },
+            }, '取消钉住')),
+          h('div.pin-note', p.note)))))));
 }
 
 function header() {

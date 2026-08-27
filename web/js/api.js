@@ -45,6 +45,18 @@ const get  = (p, q) => request(p + (q ? '?' + new URLSearchParams(
   Object.entries(q).filter(([, v]) => v !== undefined && v !== null && v !== '')) : ''));
 const post = (p, body) => request(p, { method: 'POST', body });
 
+function parseFrame(block) {
+  let event = null;
+  let data = null;
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event: ')) event = line.slice(7).trim();
+    else if (line.startsWith('data: ')) {
+      try { data = JSON.parse(line.slice(6)); } catch { data = null; }
+    }
+  }
+  return event ? { event, data: data || {} } : null;
+}
+
 export const api = {
   health: () => get('/api/health'),
   overview: () => get('/api/overview'),
@@ -134,7 +146,48 @@ export const api = {
   spectraCurve: (id, params) => get(`/api/spectra/${id}/curve`, params),
   spectraThickness: (id, params) => get(`/api/spectra/${id}/thickness`, params),
 
-  // 助手
+  // AI 抽屉：会话、流式、钉住
+  conversations: () => get('/api/chat/conversations'),
+  newConversation: (scope, title) => post('/api/chat/conversations', { scope, title }),
+  conversation: (id) => get(`/api/chat/conversations/${id}`),
+  patchConversation: (id, patch) =>
+    request(`/api/chat/conversations/${id}`, { method: 'PATCH', body: patch }),
+  deleteConversation: (id) => request(`/api/chat/conversations/${id}`, { method: 'DELETE' }),
+  scopePreview: (scope) => post('/api/chat/scope/preview', { scope }),
+  pins: (run) => get('/api/chat/pins', { run }),
+  pinCounts: () => get('/api/chat/pins'),
+  createPin: (body) => post('/api/chat/pins', body),
+  deletePin: (id) => request(`/api/chat/pins/${id}`, { method: 'DELETE' }),
+
+  /**
+   * 发一条消息，逐帧回调。
+   *
+   * `raw: true` 拿到的是原始 Response —— api.js 里那条路本来就是为这个留的。
+   * 注意顺序：**先用普通请求探一次 501**，再开流。raw 模式下 kind 被写死成
+   * 'http'，「没配模型」的 no_model 会在那儿丢掉，界面就没法给出「去设置」
+   * 这个恰当的出口了。
+   */
+  sendMessage: async (id, body, { signal, onFrame } = {}) => {
+    const res = await request(`/api/chat/conversations/${id}/messages`,
+                              { method: 'POST', body, signal, raw: true });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // SSE 以空行分帧。最后一段可能是半截，留在缓冲里等下一块。
+      const blocks = buf.split('\n\n');
+      buf = blocks.pop();
+      for (const block of blocks) {
+        const frame = parseFrame(block);
+        if (frame) onFrame?.(frame.event, frame.data);
+      }
+    }
+  },
+
+  // 助手（单文件页里那个规则引擎面板，跟抽屉是两回事）
   assistStatus: () => get('/api/assist/status'),
   inspect: (artifactIds) => post('/api/assist/inspect', { artifact_ids: artifactIds }),
   ask: (question, artifactIds, resultContext) =>
