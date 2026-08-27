@@ -41,15 +41,40 @@ class Sniffed:
         }
 
 
-def read_text(path: Path, max_bytes: int = 256_000) -> tuple[str, str]:
-    """按候选编码依次尝试，返回 (文本, 编码)。"""
-    raw = Path(path).open("rb").read(max_bytes)
+def decode_bytes(raw: bytes) -> tuple[str, str]:
+    """字节 → (文本, 编码)。
+
+    UTF-16 必须**先**认出来，而且不能靠「试着解一下看报不报错」：
+    latin-1 对任何字节序列都不报错，所以候选列表里只要有它，
+    UTF-16 文件就会被「成功」解成每个字符后面跟一个 NUL 的乱码 ——
+    不崩、不报错，只是后面所有的字符串比较都对不上。
+    Windows 上的仪器软件（.NET / LabVIEW）写 UTF-16LE 很常见。
+    """
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        # 截断读取可能切在半个码元上，砍成偶数长度再解
+        try:
+            return raw[: len(raw) // 2 * 2].decode("utf-16"), "utf-16"
+        except UnicodeDecodeError:
+            pass
+    probe = raw[:4096]
+    if probe and probe.count(0) > len(probe) // 4:      # 一半字节是 NUL = 十有八九是 UTF-16
+        body = raw[: len(raw) // 2 * 2]
+        for enc in ("utf-16-le", "utf-16-be"):
+            try:
+                return body.decode(enc), enc
+            except UnicodeDecodeError:
+                continue
     for enc in _ENCODINGS:
         try:
             return raw.decode(enc), enc
         except UnicodeDecodeError:
             continue
     return raw.decode("latin-1", errors="replace"), "latin-1"
+
+
+def read_text(path: Path, max_bytes: int = 256_000) -> tuple[str, str]:
+    """按候选编码依次尝试，返回 (文本, 编码)。"""
+    return decode_bytes(Path(path).open("rb").read(max_bytes))
 
 
 def _guess_delimiter(lines: list[str]) -> str:

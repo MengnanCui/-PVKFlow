@@ -10,7 +10,7 @@ from app.parsers import insitu_csv as ic
 
 
 def write_data_csv(path, *, n_lam=40, n_t=12, absorption=True, origin=True,
-                   time_row=True, ot=5000.0):
+                   time_row=True, clock_row=True, ot=5000.0):
     """造一个最小但结构完整的 Data.csv。
 
     两个块的波长网格**故意不同** —— 真文件就是这样（Origin 从 322 起，
@@ -22,8 +22,9 @@ def write_data_csv(path, *, n_lam=40, n_t=12, absorption=True, origin=True,
     pad = "\t" * n_t
 
     def block(name, lam):
-        out = [f"{name} Wavelength\t" + "\t".join(guids),
-               "采集时间\t" + "\t".join(clocks)]
+        out = [f"{name} Wavelength\t" + "\t".join(guids)]
+        if clock_row:
+            out.append("采集时间\t" + "\t".join(clocks))
         if time_row:
             out.append("相对第一帧时间(s)\t" + "\t".join(f"{v:g}" for v in t))
         for w in lam:
@@ -109,9 +110,28 @@ def test_missing_absorption_block_fails_loudly(tmp_path):
         ic.parse(p)
 
 
-def test_missing_time_row_fails_loudly(tmp_path):
+def test_time_axis_can_be_derived_from_the_clock_row(tmp_path):
+    """没有「相对第一帧时间」时，从「采集时间」推 —— 那是文件里真有的信息。
+
+    不同固件版本不一定写相对时间行。为这个报错等于把能用的数据挡在门外，
+    但**推出来的必须说出来**，别让人以为是仪器直接给的。
+    """
     p = write_data_csv(tmp_path / "Data.csv", time_row=False)
-    with pytest.raises(ic.InsituFormatError, match="相对第一帧时间"):
+    sm = ic.parse(p)
+    assert sm.t.size >= 2
+    assert sm.t[0] == 0.0                      # 相对第一帧
+    assert np.all(np.diff(sm.t) > 0)           # 单调递增
+    assert "采集时间" in sm.meta["_time_axis"]  # 来路写在元信息里
+
+
+def test_no_time_information_at_all_fails_loudly(tmp_path):
+    """★ 两样都没有时就必须报错，不能拿帧序号编一条充数。
+
+    下游那张图的横轴写着「时间 (s)」。编出来的轴不会让任何东西崩掉，
+    只会让每一张膜厚曲线都在撒谎。
+    """
+    p = write_data_csv(tmp_path / "Data.csv", time_row=False, clock_row=False)
+    with pytest.raises(ic.InsituFormatError, match="找不到时间轴"):
         ic.parse(p)
 
 
@@ -165,3 +185,76 @@ def test_matrix_parse_routes_to_the_insitu_parser(data_csv):
 
 def test_block_names(data_csv):
     assert ic.block_names(data_csv) == ["Origin", "Absorption"]
+
+
+# ---------------------------------------------------------------- 格式变体
+#
+# 「不像光谱矩阵：只有 9 行 × 2 列」就是这一类问题的症状：判定失败 → 退回
+# 普通宽表 → pandas 拿 2 格的抬头当表头、把几百格的数据行当坏行丢光 →
+# 剩下的正好是那 9 行抬头。
+#
+# 根因不是某一条判断写错了，而是判定**认名字不认结构**。下面每一条都是
+# 「真实文件可能长这样、而我手上这份样本恰好不是」的情况。
+def _variant(tmp_path, name, transform, encoding="utf-8"):
+    src = tmp_path / "src.csv"
+    write_data_csv(src)
+    d = tmp_path / name
+    d.mkdir()
+    p = d / "Data.csv"
+    p.write_bytes(transform(src.read_text(encoding="utf-8")).encode(encoding))
+    return p
+
+
+VARIANTS = [
+    ("utf16", lambda t: t, "utf-16"),
+    ("utf8bom", lambda t: t, "utf-8-sig"),
+    ("crlf", lambda t: t.replace("\n", "\r\n"), "utf-8"),
+    # 块名被分隔符切成两格：首格只剩 "Absorption"
+    ("split_name", lambda t: t.replace("Absorption Wavelength\t", "Absorption\tWavelength\t")
+                              .replace("Origin Wavelength\t", "Origin\tWavelength\t"), "utf-8"),
+    ("lowercase", lambda t: t.replace("Absorption Wavelength", "absorption wavelength"), "utf-8"),
+    ("fullwidth_paren", lambda t: t.replace("相对第一帧时间(s)", "相对第一帧时间（s）"), "utf-8"),
+    ("english_rows", lambda t: t.replace("相对第一帧时间(s)", "Relative Time (s)")
+                                .replace("采集时间", "Timestamp"), "utf-8"),
+    ("comma", lambda t: t.replace("\t", ","), "utf-8"),
+    ("semicolon", lambda t: t.replace("\t", ";"), "utf-8"),
+    ("extra_header", lambda t: "FirmwareVersion\t3.2\nOperator\t张三\n" + t, "utf-8"),
+]
+
+
+@pytest.mark.parametrize("name,transform,encoding", VARIANTS)
+def test_format_variants_are_still_recognised(tmp_path, name, transform, encoding):
+    from app.parsers import matrix
+
+    p = _variant(tmp_path, name, transform, encoding)
+    assert ic.looks_like_insitu(p), f"{name}：判定就没认出来"
+
+    sm = matrix.parse(p)                      # 走完整条链路，不只是 insitu.parse
+    assert sm.M.shape[0] > 4 and sm.M.shape[1] > 4
+    assert sm.meta["block"].lower() == "absorption"
+    assert sm.lam[0] > 300 and sm.lam[-1] < 1300
+
+
+def test_failure_carries_the_file_outline(tmp_path):
+    """★ 解析不了的时候，报错必须带上文件结构。
+
+    只说「不像光谱矩阵」的话，用户没法自查，我这边也无从判断到底是
+    分隔符、编码，还是块名对不上 —— 错误信息本身就是排查通道。
+    """
+    from app.parsers import matrix
+
+    p = tmp_path / "Data.csv"
+    p.write_text("键\t值\n另一个\t2\n又一个\t3\n还有\t4\n第五个\t5\n", encoding="utf-8")
+    with pytest.raises(ValueError) as e:
+        matrix.parse(p)
+    msg = str(e.value)
+    assert "分隔符看起来是" in msg      # 说了它认为的分隔符
+    assert "格  首格=" in msg           # 逐行列出了首格和格数
+
+
+def test_outline_reads_the_real_shape(tmp_path):
+    p = write_data_csv(tmp_path / "Data.csv")
+    txt = ic.outline(p, max_lines=12)
+    assert "分隔符看起来是 TAB" in txt
+    assert "'Mode'" in txt
+    assert "2 格" in txt                # 抬头是 2 格

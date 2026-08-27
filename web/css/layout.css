@@ -74,7 +74,13 @@
 }
 
 /* ---------------------------------------------------------------- 主区 */
-.main { display: grid; grid-template-rows: var(--topbar-h) 1fr; min-width: 0; }
+/* ★ minmax(0, 1fr) 不能写成 1fr。
+   `1fr` 的完整含义是 `minmax(auto, 1fr)` —— 行的**最小**高度是内容高度。
+   于是 .viewport 被内容撑到 2000 多像素，它的 overflow:auto 永远不触发，
+   再被 .shell 的 overflow:hidden 一剪，首屏以下的东西就彻底够不着了。
+   总览页刚好装得下一屏，所以这个 bug 藏了很久。 */
+.main { display: grid; grid-template-rows: var(--topbar-h) minmax(0, 1fr);
+        min-width: 0; min-height: 0; }
 
 .topbar {
   display: flex;
@@ -89,7 +95,7 @@
 .topbar-desc { font-size: var(--t-sm); color: var(--ink-3); margin-top: 1px; }
 .topbar-actions { display: flex; align-items: center; gap: var(--s2x); flex-shrink: 0; }
 
-.viewport { overflow: auto; background: var(--surface); }
+.viewport { overflow: auto; min-height: 0; background: var(--surface); }
 .page { display: none; padding: var(--s6x) var(--s6x) var(--s12x); max-width: 1240px; }
 .page.is-active { display: block; }
 /* 工作台需要全宽：三栏本来就挤 */

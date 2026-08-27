@@ -129,6 +129,18 @@ def parse(path: str | Path) -> SpectralMatrix:
                          encoding=s.encoding, on_bad_lines="skip")
 
     if df.shape[1] < 4 or df.shape[0] < 4:
+        # 走到这儿而且文件名叫 Data.csv 的话，八成是原位格式没被认出来 ——
+        # 上面那个嗅探判假之后，pandas 用抬头的 key/value 行当表头（2 列），
+        # 底下几百列的数据行全被 on_bad_lines="skip" 丢掉，于是「9 行 × 2 列」。
+        # 那句报错对排查毫无帮助，所以这里改成：**硬着头皮按原位格式再解一次**，
+        # 失败就把原位解析器的报错（含文件结构速写）抛出去。
+        if p.suffix.lower() in {".csv", ".txt", ".tsv", ".dat"}:
+            try:
+                return insitu_csv.parse(p)
+            except insitu_csv.InsituFormatError as exc:
+                raise ValueError(
+                    f"不像光谱矩阵：按普通宽表读只有 {df.shape[0]} 行 × {df.shape[1]} 列；"
+                    f"按原位 Data.csv 读也不成 ——\n{exc}") from exc
         raise ValueError(f"不像光谱矩阵：只有 {df.shape[0]} 行 × {df.shape[1]} 列")
 
     first_col = pd.to_numeric(df.iloc[:, 0], errors="coerce").to_numpy(np.float64)
