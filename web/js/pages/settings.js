@@ -1,7 +1,8 @@
 // 设置：导入策略、命名规则（带实时预览）、模型配置。
 
 import { api } from '../api.js';
-import { h, mount, render, toast, busy, errorBox, empty, skeletonRows } from '../ui.js';
+import { h, mount, render, toast, busy, errorBox, empty, skeletonRows,
+         fmtBytes, fmtInt } from '../ui.js';
 
 export const meta = {
   id: 'settings',
@@ -135,14 +136,13 @@ function namingSection(s) {
 }
 
 // ------------------------------------------------------------------ 模型
+//
+// 两条路：**表单**给日常用（三个框填完就能用），**粘 JSON** 给需要多个
+// provider、多个模型的时候。表单在上面，因为九成情况下够了 ——
+// 让人为了填一个地址先去读一段 JSON 结构，是把内部实现当成了使用说明。
 function modelSection(models) {
-  const editor = h('textarea.textarea.mono', {
-    placeholder: '把 providers 配置粘贴到这里',
-    style: { minHeight: '200px', fontSize: '12px' },
-  });
-  const status = h('div.mt-3');
-
   const providers = models.providers || [];
+  const status = h('div.mt-3');
 
   return section('模型', 'OpenAI 兼容协议。没配也没关系 —— 识别、推荐、数据检查全部走规则引擎',
     h('div.panel.panel-body',
@@ -151,45 +151,116 @@ function modelSection(models) {
           h('div.small.strong', '密钥存在哪'),
           h('p.xsmall.dim.mt-2',
             '保存后写入 ', h('span.mono', 'workspace/config/providers.json'),
-            '。这个目录在 .gitignore 里，密钥不会被提交进仓库。'))),
+            '。这个目录在 .gitignore 里，密钥不会被提交进仓库，也不会随任何',
+            '接口原样返回（界面上只看得到打码后的前后几位）。'))),
 
       providers.length
         ? h('div.mt-4',
             h('div.small.strong', '已配置'),
             h('div.panel.panel-body.flush.mt-2', providerTable(providers, status)))
-        : h('p.small.muted.mt-4', '还没有配置任何 provider。'),
+        : h('p.small.muted.mt-4', '还没有配置任何 provider。填下面三个框就能用。'),
 
       status,
-
-      h('div.mt-4.field',
-        h('label.field-label', providers.length ? '替换配置' : '粘贴配置'),
-        editor,
-        h('div.field-help',
-          '结构：', h('span.mono', '{ "providers": { "名字": { "baseUrl", "apiKey", "models": [...] } } }')),
-        h('div.row.gap-2.mt-3',
-          h('button.btn.btn-primary', {
-            onclick: async (e) => {
-              if (!editor.value.trim()) { toast('先粘贴配置内容', 'err'); return; }
-              busy(e.target, true);
-              try {
-                await api.saveModels(editor.value);
-                toast('模型配置已保存', 'ok');
-                setTimeout(() => window.dispatchEvent(new CustomEvent('hte:nav', { detail: 'settings' })), 500);
-              } catch (err) { toast(err.message, 'err', 6000); }
-              busy(e.target, false);
-            },
-          }, '保存配置'),
-          h('button.btn', {
-            onclick: async () => {
-              const { example } = await api.modelExample();
-              editor.value = example;
-              toast('已填入模板，把 baseUrl 和 apiKey 换成你的', 'info');
-            },
-          }, '填入模板')))));
+      simpleForm(providers),
+      advancedJson(providers)));
 }
 
+/** 三个框：接口地址、密钥、模型名。填完就能用。 */
+function simpleForm(providers) {
+  const first = providers[0] || {};
+  const firstModel = (first.models || [])[0] || {};
 
-/** provider / model 表格。单独拆出来，免得 modelSection 嵌套到没法读。 */
+  const url = h('input.input', {
+    type: 'text', placeholder: 'https://你的网关/v1',
+    value: first.base_url || '', style: { width: '100%' } });
+  const key = h('input.input', {
+    // type=password 免得在会议室投屏时把密钥直接投出去
+    type: 'password', placeholder: 'sk-…',
+    autocomplete: 'off', style: { width: '100%' } });
+  const model = h('input.input', {
+    type: 'text', placeholder: 'Qwen3.6-27B',
+    value: firstModel.id || '', style: { width: '100%' } });
+  const name = h('input.input', {
+    type: 'text', placeholder: '默认叫「我的模型」',
+    value: providers.length ? first.name : '', style: { width: '100%' } });
+
+  const field = (label, node, help) => h('div.field',
+    h('label.field-label', label), node,
+    help ? h('div.field-help', help) : null);
+
+  return h('div.mt-4',
+    h('div.small.strong.mb-2', providers.length ? '改一个 / 加一个' : '填这三个就能用'),
+    h('div.col.gap-3',
+      field('接口地址（baseUrl）', url,
+        ['结尾要带 ', h('span.mono', '/v1'), '。OpenAI 兼容网关、vLLM、本地模型都行。']),
+      field('密钥（apiKey）', key,
+        providers.length && first.has_key
+          ? '留空 = 不改，继续用已经存着的那个密钥'
+          : '直接粘贴，不用加引号'),
+      field('模型名（model id）', model, '网关文档里那个 id，区分大小写'),
+      field('给它起个名字（可选）', name, '只是界面上显示用，随便叫')),
+    h('div.row.gap-2.mt-3',
+      h('button.btn.btn-primary', {
+        onclick: async (e) => {
+          const u = url.value.trim(), m = model.value.trim();
+          if (!u || !m) { toast('接口地址和模型名都要填', 'err'); return; }
+          const k = key.value.trim();
+          if (!k && !(providers.length && first.has_key)) {
+            toast('还没有存过密钥，这次要填', 'err'); return;
+          }
+          busy(e.target, true);
+          try {
+            await api.saveSimpleModel({
+              name: name.value.trim() || first.name || '我的模型',
+              base_url: u, api_key: k, model_id: m,
+            });
+            toast('已保存。右上角「AI 助手」就能用了', 'ok');
+            setTimeout(() => window.dispatchEvent(
+              new CustomEvent('hte:nav', { detail: 'settings' })), 500);
+          } catch (err) { toast(err.message, 'err', 6000); }
+          busy(e.target, false);
+        },
+      }, '保存并启用')));
+}
+
+/** 需要多个 provider / 多个模型时走这条。默认折叠，别让它挡住上面那三个框。 */
+function advancedJson(providers) {
+  const editor = h('textarea.textarea.mono', {
+    placeholder: '把 providers 配置粘贴到这里',
+    style: { minHeight: '200px', fontSize: '12px' },
+  });
+
+  return h('details.mt-5',
+    h('summary.small.muted', { style: { cursor: 'pointer' } },
+      '高级：直接粘 JSON（要配多个 provider 或多个模型时用）'),
+    h('div.mt-3.field',
+      editor,
+      h('div.field-help',
+        '结构：', h('span.mono', '{ "providers": { "名字": { "baseUrl", "apiKey", "models": [...] } } }'),
+        '　⚠️ 保存会**整体替换**现有配置，不是追加。'),
+      h('div.row.gap-2.mt-3',
+        h('button.btn.btn-primary', {
+          onclick: async (e) => {
+            if (!editor.value.trim()) { toast('先粘贴配置内容', 'err'); return; }
+            busy(e.target, true);
+            try {
+              await api.saveModels(editor.value);
+              toast('模型配置已保存', 'ok');
+              setTimeout(() => window.dispatchEvent(
+                new CustomEvent('hte:nav', { detail: 'settings' })), 500);
+            } catch (err) { toast(err.message, 'err', 6000); }
+            busy(e.target, false);
+          },
+        }, '保存配置'),
+        h('button.btn', {
+          onclick: async () => {
+            const { example } = await api.modelExample();
+            editor.value = example;
+            toast('已填入模板，把 baseUrl 和 apiKey 换成你的', 'info');
+          },
+        }, '填入模板'))));
+}
+
 function providerTable(providers, status) {
   const rows = [];
   for (const p of providers) {
@@ -273,12 +344,50 @@ function skillTable(skills) {
 }
 
 function workspaceSection(cfg) {
+  const cacheHost = h('div.mt-4');
+
+  // 缓存占用异步取：它要遍历目录，不该拖慢整个设置页
+  (async () => {
+    let c;
+    try { c = await api.cacheStatus(); } catch { return; }
+    const used = c.bytes || 0;
+    const limit = c.limit_bytes || 0;
+    mount(cacheHost,
+      h('div.row-between',
+        h('div',
+          h('div.small.strong', '解析缓存'),
+          h('div.xsmall.dim.mt-1',
+            `${fmtInt(c.files || 0)} 个文件 · ${fmtBytes(used)}`,
+            limit ? ` / 上限 ${fmtBytes(limit)}` : '',
+            '　—— 删了只是下次解析慢一点，原始数据不受影响')),
+        h('button.btn.btn-sm', {
+          disabled: !c.files,
+          onclick: async (e) => {
+            busy(e.target, true);
+            try {
+              const r = await api.clearCache();
+              toast(`已清空，腾出 ${fmtBytes(r.freed_bytes ?? used)}`, 'ok');
+              window.dispatchEvent(new CustomEvent('hte:nav', { detail: 'settings' }));
+            } catch (err) { toast(err.message, 'err'); }
+            busy(e.target, false);
+          },
+        }, '清空缓存')),
+      limit ? h('div.bar.mt-2',
+        h('i', { style: { width: `${Math.min(100, (used / limit) * 100)}%` } })) : null);
+  })();
+
   return section('工作区', '所有持久化状态都在这一个目录里，整个拷走就能换机器',
     h('div.panel.panel-body',
       h('div.col.gap-3',
         kv('工作区目录', cfg.workspace),
         kv('模型配置文件', cfg.providers_path),
-        kv('版本', cfg.version))));
+        kv('版本', cfg.version)),
+      h('p.xsmall.dim.mt-3',
+        '备份就是把这个目录整个复制走 —— 没有别的地方藏东西。',
+        '不可再生的是 ', h('span.mono', 'hte.db'), ' 和 ', h('span.mono', 'raw/'), '；',
+        h('span.mono', 'cache/'), '、', h('span.mono', 'derived/'), '、',
+        h('span.mono', 'tables/'), ' 都能重算。'),
+      cacheHost));
 }
 
 const kv = (k, v) => h('div.row.gap-3',

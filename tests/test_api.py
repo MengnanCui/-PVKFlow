@@ -264,3 +264,65 @@ def test_non_matrix_file_gives_a_readable_error(matrix_client):
     assert r.status_code == 400
     assert r.json()["error"]["kind"] in ("not_a_matrix", "parse_failed")
     assert "不像光谱矩阵" in r.json()["error"]["message"]
+
+
+# ------------------------------------------------------------------ 一键配模型
+def test_simple_model_form_saves_a_usable_provider(client, tmp_path, monkeypatch):
+    """三个框存一个 provider —— 绝大多数人只有一个网关一个模型。"""
+    r = client.post("/api/settings/models/simple", json={
+        "name": "公司网关", "base_url": "https://gw.example.com/v1",
+        "api_key": "sk-test-not-a-real-key", "model_id": "Qwen3.6-27B"})
+    assert r.status_code == 200
+
+    st = client.get("/api/assist/status").json()
+    assert st["model_configured"] is True
+    assert st["active"] == {"provider": "公司网关", "model": "Qwen3.6-27B"}
+
+
+def test_simple_model_form_never_returns_the_key(client):
+    """密钥只能打码回传。设置页和任何接口都不该看到原文。"""
+    r = client.post("/api/settings/models/simple", json={
+        "name": "g", "base_url": "https://gw.example.com/v1",
+        "api_key": "sk-secret-value-1234", "model_id": "m"})
+    assert "sk-secret-value-1234" not in r.text
+    assert "sk-secret-value-1234" not in client.get("/api/settings/models").text
+
+
+def test_blank_key_keeps_the_stored_one(client):
+    """★ 改地址不该被迫把密钥再贴一遍。
+
+    界面上只显示打码后的密钥，用户手里也未必还有原文 —— 留空必须是
+    「不改」，而不是「清空」。清空的话下一次问模型会莫名其妙 401。
+    """
+    from app.ai import openai_compat
+
+    client.post("/api/settings/models/simple", json={
+        "name": "g", "base_url": "https://old.example.com/v1",
+        "api_key": "sk-keep-me-1234", "model_id": "m1"})
+    # 只改地址和模型名，密钥留空
+    client.post("/api/settings/models/simple", json={
+        "name": "g", "base_url": "https://new.example.com/v1",
+        "api_key": "", "model_id": "m2"})
+
+    cfg = openai_compat.load_config()["providers"]["g"]
+    assert cfg["apiKey"] == "sk-keep-me-1234"
+    assert cfg["baseUrl"] == "https://new.example.com/v1"
+    assert cfg["models"][0]["id"] == "m2"
+
+
+def test_first_time_without_a_key_is_refused(client):
+    r = client.post("/api/settings/models/simple", json={
+        "name": "全新的", "base_url": "https://x.example.com/v1",
+        "api_key": "", "model_id": "m"})
+    assert r.status_code == 400
+    assert "密钥" in r.json()["error"]["message"]
+
+
+def test_simple_model_form_rejects_junk(client):
+    bad = [
+        {"base_url": "", "model_id": "m", "api_key": "k"},
+        {"base_url": "https://x/v1", "model_id": "", "api_key": "k"},
+        {"base_url": "不是个网址", "model_id": "m", "api_key": "k"},
+    ]
+    for body in bad:
+        assert client.post("/api/settings/models/simple", json=body).status_code == 400

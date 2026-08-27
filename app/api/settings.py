@@ -7,6 +7,7 @@ from fastapi import APIRouter, Body
 
 from app import config
 from app.ai import openai_compat
+from app.ai.provider import ProviderUnavailable
 from app.api.common import ApiError
 from app.storage import db
 
@@ -83,6 +84,58 @@ def save_models(payload: dict = Body(...)) -> dict:
 
     config.ensure_dirs()
     openai_compat.save_config(raw)
+    return openai_compat.describe_config()
+
+
+@router.post("/models/simple")
+def save_simple_model(payload: dict = Body(...)) -> dict:
+    """三个框存一个 provider：地址 + 密钥 + 模型名。
+
+    绝大多数人只有一个网关一个模型，让他们为了填一个地址先去读一段 JSON
+    结构，是把内部实现当成了使用说明。JSON 那条路留着（/models），
+    需要多 provider 时才用得上。
+
+    **密钥留空 = 不改。** 改地址、换模型名的时候不该被迫把密钥再贴一遍 ——
+    界面上只显示打码后的密钥，用户手里也未必还有原文。
+    """
+    name = (payload.get("name") or "我的模型").strip()[:60]
+    base_url = (payload.get("base_url") or "").strip().rstrip("/")
+    model_id = (payload.get("model_id") or "").strip()
+    api_key = (payload.get("api_key") or "").strip()
+
+    if not base_url:
+        raise ApiError("请填接口地址（baseUrl）", 400)
+    if not model_id:
+        raise ApiError("请填模型名（model id）", 400)
+    if not base_url.startswith(("http://", "https://")):
+        raise ApiError("接口地址要以 http:// 或 https:// 开头", 400)
+
+    try:
+        current = openai_compat.load_config()
+    except ProviderUnavailable:
+        current = {"providers": {}}       # 现有文件坏了也要能救回来
+    providers = dict(current.get("providers") or {})
+
+    if not api_key:
+        # 沿用已经存着的那个。先按名字找，找不到就按地址找 —— 用户可能改了名字
+        old = providers.get(name) or next(
+            (p for p in providers.values()
+             if (p.get("baseUrl") or "").rstrip("/") == base_url), None)
+        api_key = (old or {}).get("apiKey") or ""
+        if not api_key:
+            raise ApiError("这是第一次配置，密钥不能留空", 400)
+
+    providers[name] = {
+        "baseUrl": base_url,
+        "api": "openai-completions",
+        "apiKey": api_key,
+        # 大多数自建网关不认 developer 角色，默认按不支持处理，降级成 system
+        "compat": {"supportsDeveloperRole": False, "supportsReasoningEffort": False},
+        "models": [{"id": model_id, "name": model_id, "input": ["text"]}],
+    }
+
+    config.ensure_dirs()
+    openai_compat.save_config({"providers": providers})
     return openai_compat.describe_config()
 
 

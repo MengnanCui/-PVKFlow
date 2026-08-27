@@ -69,23 +69,50 @@ export async function openImportDialog({ onDone } = {}) {
                     h('div.grow', h('div.name.muted', f.name)),
                     h('span.xsmall.dim', fmtBytes(f.size)))))
             : empty('这个目录是空的')),
+        // 导入模式。真实仪器数据是「一个子文件夹一次测量」，这条放前面。
+        //
+        // 为什么不能靠命名规则自动搞定：默认规则里的 {sample} 会把每个
+        // Data.csv 都命名成「Data」，所有测量挤成同一个样品。所以必须
+        // 在这里明确选一次。
+        h('div.mt-3.field',
+          h('label.field-label', '这个目录怎么导'),
+          h('div.col.gap-2',
+            h('label.check',
+              h('input#modeFolders', { type: 'radio', name: 'scanMode', checked: true }),
+              h('div.min0',
+                h('span.small', '按子文件夹 —— 每个子文件夹算一次测量'),
+                h('div.xsmall.dim',
+                  '认 ', h('span.mono', 'ZG0013_2026…/Data.csv'), ' 这种结构。',
+                  '样品名取完整文件夹名，样品号和测量时间从名字里拆出来。'))),
+            h('label.check',
+              h('input#modeFiles', { type: 'radio', name: 'scanMode' }),
+              h('div.min0',
+                h('span.small', '按文件名 —— 每个文件算一个样品'),
+                h('div.xsmall.dim', '走「设置 → 命名规则」里那几条规则。'))))),
+
         h('div.row-between.mt-3',
           h('label.check',
             h('input#recursive', { type: 'checkbox', checked: true }),
-            h('span.small', '包含所有子目录')),
+            h('span.small', '包含所有子目录（只对「按文件名」有效）')),
           h('button.btn.btn-primary', {
-            onclick: (e) => scanAndPreview(cursor, body.querySelector('#recursive').checked, e.target),
+            onclick: (e) => scanAndPreview(
+              cursor,
+              body.querySelector('#modeFolders').checked ? 'folders' : 'files',
+              body.querySelector('#recursive').checked,
+              e.target),
           }, '扫描这个目录')));
     } catch (err) {
       mount(body, errorBox(err, () => showDir(path)));
     }
   }
 
-  async function scanAndPreview(path, recursive, button) {
+  async function scanAndPreview(path, mode, recursive, button) {
     busy(button, true);
     let result;
     try {
-      result = await api.scan(path, recursive);
+      // api.scan 的第二个参数是**选项对象**。以前这里直接传了个布尔，
+      // 展开之后什么都没剩下 —— 那个「包含所有子目录」的勾一直是摆设。
+      result = await api.scan(path, { mode, recursive });
     } catch (err) {
       busy(button, false);
       mount(body, errorBox(err, showRoots));
@@ -96,9 +123,25 @@ export async function openImportDialog({ onDone } = {}) {
   }
 
   function renderPreview(result) {
+    // 跳过的子文件夹要说出来。静默少几个的话，你只会在很久以后
+    // 发现「怎么少了一次测量」，那时候已经想不起来是哪一步丢的。
+    const skipped = result.skipped || [];
+    const skipNote = skipped.length
+      ? h('div.notice.notice-warn.mt-3',
+          h('div.grow',
+            h('div.small.strong', `跳过了 ${skipped.length} 个子文件夹`),
+            h('div.xsmall.dim.mt-2',
+              skipped.slice(0, 8).map((s) => `${s.folder}（${s.reason}）`).join('　·　')
+              + (skipped.length > 8 ? `　…还有 ${skipped.length - 8} 个` : ''))))
+      : null;
+
     if (!result.count) {
-      mount(body, empty('这个目录里没有可导入的文件',
-        h('button.btn', { onclick: showRoots }, '换一个目录')));
+      mount(body, empty(
+        result.mode === 'folders'
+          ? '这个目录下没有含 Data.csv 的子文件夹'
+          : '这个目录里没有可导入的文件',
+        h('button.btn', { onclick: showRoots }, '换一个目录')),
+        skipNote);
       return;
     }
 
@@ -126,11 +169,14 @@ export async function openImportDialog({ onDone } = {}) {
     mount(body,
       h('div.row-between',
         h('div',
-          h('div.strong', `扫描到 ${result.count} 个文件`),
+          h('div.strong', result.mode === 'folders'
+            ? `扫描到 ${result.count} 个子文件夹，每个算一个样品`
+            : `扫描到 ${result.count} 个文件`),
           h('div.small.muted',
             `${result.to_copy} 个会复制进工作区 · ${result.to_reference} 个保持原位引用` +
             (unmatched ? ` · ${unmatched} 个没解析出样品名` : ''))),
         h('button.btn.btn-sm', { onclick: showRoots }, '换一个目录')),
+      skipNote,
       unmatched
         ? h('div.notice.mt-3',
             h('div.grow',

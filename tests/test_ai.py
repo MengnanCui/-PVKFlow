@@ -142,3 +142,53 @@ def test_extract_json_survives_model_chatter(raw):
 def test_extract_json_gives_up_loudly():
     with pytest.raises(ValueError):
         extract_json("完全没有 JSON")
+
+
+def test_a_non_json_reply_says_what_probably_happened(monkeypatch, tmp_path):
+    """★ 公司网络上最常见的失败：代理/SSO 回了个登录页，状态码还是 200。
+
+    不处理的话用户看到的是「Expecting value: line 1 column 1」——
+    这句话没有告诉他任何可以行动的东西。
+    """
+    import httpx
+    from app.ai import openai_compat
+    from app.ai.provider import ChatMessage, ProviderUnavailable
+
+    class FakeResp:
+        status_code = 200
+        text = "<html><body>请先登录公司网络</body></html>"
+        def json(self):
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, *a, **k): return FakeResp()
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    prov = openai_compat.OpenAICompatProvider(
+        "网关", {"baseUrl": "https://x/v1", "apiKey": "k", "models": [{"id": "m"}]})
+
+    with pytest.raises(ProviderUnavailable) as e:
+        prov.chat([ChatMessage("user", "hi")])
+    msg = str(e.value)
+    assert "不是 JSON" in msg
+    assert "登录页" in msg          # 提示了最可能的原因
+    assert "请先登录公司网络" in msg  # 也把网关原话带上了
+
+
+def test_connection_test_never_raises(monkeypatch, workspace):
+    """「测试连接」是排查连不上的唯一工具，它自己不能崩。"""
+    from app.ai import openai_compat
+
+    def boom(*a, **k):
+        raise RuntimeError("什么奇怪的错误")
+
+    openai_compat.save_config({"providers": {"g": {
+        "baseUrl": "https://x/v1", "apiKey": "k", "models": [{"id": "m"}]}}})
+    monkeypatch.setattr(openai_compat.OpenAICompatProvider, "chat", boom)
+
+    r = openai_compat.test_connection()
+    assert r["ok"] is False
+    assert "什么奇怪的错误" in r["error"]

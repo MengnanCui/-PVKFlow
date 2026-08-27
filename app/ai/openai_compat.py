@@ -181,7 +181,17 @@ class OpenAICompatProvider:
                 f"{self.name} 返回 {resp.status_code}：{resp.text[:400]}"
             )
 
-        data = resp.json()
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            # 网关返回的不是 JSON。公司网络上这几乎总是同一件事：
+            # 代理/SSO 把请求截下来，回了一个登录页或错误页，状态码还是 200。
+            # 直接把 JSONDecodeError 抛上去的话，用户看到的是
+            # 「Expecting value: line 1 column 1」—— 什么信息都没有。
+            body = resp.text.strip()[:200].replace("\n", " ")
+            raise ProviderUnavailable(
+                f"{self.name} 返回的不是 JSON（可能是代理或登录页拦截了请求）："
+                f"{body or '空响应'}") from exc
         try:
             text = data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as exc:
@@ -308,6 +318,11 @@ def test_connection(provider_name: str | None = None, model: str | None = None) 
         )
     except ProviderUnavailable as exc:
         return {"ok": False, "provider": provider.name, "model": model_id, "error": str(exc)}
+    except Exception as exc:              # noqa: BLE001
+        # 这个函数对界面的承诺是「失败也不抛」。它是用户排查连不上的**唯一**
+        # 工具，自己 500 掉的话就什么都问不出来了。
+        return {"ok": False, "provider": provider.name, "model": model_id,
+                "error": f"{type(exc).__name__}: {exc}"}
     return {
         "ok": True, "provider": provider.name, "model": model_id,
         "latency_ms": round((time.perf_counter() - t0) * 1000),

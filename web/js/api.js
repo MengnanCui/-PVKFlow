@@ -198,6 +198,7 @@ export const api = {
   saveSettings: (patch) => post('/api/settings', patch),
   models: () => get('/api/settings/models'),
   saveModels: (config) => post('/api/settings/models', { config }),
+  saveSimpleModel: (body) => post('/api/settings/models/simple', body),
   testModel: (provider, model) => post('/api/settings/models/test', { provider, model }),
   modelExample: () => get('/api/settings/models/example'),
 };
