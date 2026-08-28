@@ -328,3 +328,74 @@ def test_connection(provider_name: str | None = None, model: str | None = None) 
         "latency_ms": round((time.perf_counter() - t0) * 1000),
         "reply": r.text.strip()[:100],
     }
+
+
+# ---------------------------------------------------------------- 模型发现
+# 公共服务商的地址预设。**这里只放公开地址** —— 内网网关的地址和密钥一样，
+# 属于用户自己的配置，只存在 workspace/config/providers.json（已 gitignore）。
+# 界面上填过一次之后会一直回填，不需要写进仓库。
+PRESETS = [
+    {"name": "OpenAI", "base_url": "https://api.openai.com/v1"},
+    {"name": "DeepSeek", "base_url": "https://api.deepseek.com/v1"},
+    {"name": "智谱 GLM", "base_url": "https://open.bigmodel.cn/api/paas/v4"},
+    {"name": "月之暗面 Kimi", "base_url": "https://api.moonshot.cn/v1"},
+    {"name": "本地 vLLM", "base_url": "http://127.0.0.1:8000/v1"},
+    {"name": "本地 Ollama", "base_url": "http://127.0.0.1:11434/v1"},
+]
+
+
+def list_remote_models(base_url: str, api_key: str = "",
+                       timeout: float = 20.0) -> list[dict]:
+    """`GET {base_url}/models` —— OpenAI 兼容协议的标准发现接口。
+
+    有了它就不用手打模型名了。但**不是每个网关都实现它**，所以调用方必须
+    保留「手动填」那条路：拉不到是常见情况，不是故障。
+
+    返回 `[{"id": ..., "owned_by": ...}]`，按 id 排序。
+    """
+    base = (base_url or "").rstrip("/")
+    if not base.startswith(("http://", "https://")):
+        raise ProviderUnavailable("接口地址要以 http:// 或 https:// 开头")
+
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.get(f"{base}/models", headers=headers)
+    except httpx.HTTPError as exc:
+        raise ProviderUnavailable(f"连不上 {base}：{exc}") from exc
+
+    if resp.status_code == 404:
+        raise ProviderUnavailable(
+            f"{base}/models 返回 404 —— 这个网关没有提供模型列表接口。"
+            "手动填模型名一样能用。")
+    if resp.status_code in (401, 403):
+        raise ProviderUnavailable(
+            f"密钥被拒（HTTP {resp.status_code}）。检查一下 apiKey 是不是填错了。")
+    if resp.status_code >= 400:
+        raise ProviderUnavailable(f"{base}/models 返回 {resp.status_code}："
+                                  f"{resp.text[:300]}")
+
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        # 和 chat() 里同一件事：公司网络上代理/SSO 把请求截下来回了个登录页，
+        # 状态码还是 200。不说清楚的话用户看到的就是「Expecting value」。
+        body = resp.text.strip()[:200].replace("\n", " ")
+        raise ProviderUnavailable(
+            f"{base}/models 返回的不是 JSON（可能是代理或登录页拦截了请求）："
+            f"{body or '空响应'}") from exc
+
+    items = data.get("data") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        raise ProviderUnavailable(f"返回结构不认识：{str(data)[:200]}")
+
+    out = []
+    for m in items:
+        mid = (m.get("id") if isinstance(m, dict) else str(m)) or ""
+        if mid:
+            out.append({"id": mid, "owned_by": (m.get("owned_by") or "")
+                        if isinstance(m, dict) else ""})
+    return sorted(out, key=lambda x: x["id"])

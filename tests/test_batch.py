@@ -520,3 +520,112 @@ def test_whole_batch_run_works_without_pyarrow(imported, monkeypatch):
     back = tabular.read_table(tables[0]["table_id"])
     assert back["n_rows"] > 0
     assert len(back["columns"]) >= 3
+
+
+# ---------------------------------------------------------------- 膜厚与时刻切片
+def test_batch_thickness_matches_the_single_sample_page(batch_client, imported):
+    """批处理里的膜厚必须和单样品页**逐点相同**。
+
+    两处各写一份 FFT 的话，同一个样品在两个页面上会给出不同的膜厚，
+    而且没有任何提示说该信哪个。所以批处理走的是同一个
+    `fringe_ot.extract_series`，这条测试就是钉住「没人抄第二遍」。
+    """
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20"]},
+        # 夹具的合成谱只到 1100 nm，窗口必须落在里面
+        "recipe": {"band_min": 775, "band_max": 1100},
+    })["task_id"])
+    run_id = t["result"]["parent_run_id"]
+
+    curves = batch_client.get(f"/api/batch/runs/{run_id}/curves?column=ot").json()
+    assert curves["series"], "批处理没留下膜厚曲线"
+
+    # 拿其中一个样品，走单样品页那条路再算一次
+    row = db.query_one(
+        "SELECT a.artifact_id, s.name FROM artifact a"
+        "  JOIN sample s ON s.sample_id = a.sample_id"
+        " WHERE s.name = ?", (curves["series"][0]["label"].split("/")[-1],))
+    single = batch_client.get(
+        f"/api/spectra/{row['artifact_id']}/thickness"
+        "?lam_min=775&lam_max=1100").json()
+
+    got = curves["series"][0]["y"]
+    assert len(got) == len(single["y"])
+    for a, b in zip(got, single["y"]):
+        assert abs(a - b) < 0.01, "批处理和单样品页的膜厚对不上"
+
+
+def test_slices_average_every_frame_and_report_how_many_were_trustworthy(
+        batch_client, imported):
+    """窗口内**全部帧**参与平均，可信比例单独给。
+
+    不可信的帧会把均值拉偏。只给一个漂亮的数字、不说其中几帧靠谱，
+    等于把「这个数能不能用」这个问题藏起来了。
+    """
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20"]},
+        # 夹具的合成谱只到 1100 nm，窗口必须落在里面
+        "recipe": {"band_min": 775, "band_max": 1100},
+    })["task_id"])
+    run_id = t["result"]["parent_run_id"]
+
+    r = batch_client.get(
+        f"/api/batch/runs/{run_id}/slices?windows=0:1,2:3").json()
+    assert [(w["from"], w["to"]) for w in r["windows"]] == [(0.0, 1.0), (2.0, 3.0)]
+    assert r["rows"]
+
+    v = r["rows"][0]["values"][0]
+    assert v["n_frames"] > 0
+    assert v["mean"] is not None
+    assert 0.0 <= v["ok_ratio"] <= 1.0
+    assert v["n_ok"] <= v["n_frames"]
+
+
+def test_a_window_past_the_end_says_so_instead_of_reusing_the_last_frame(
+        batch_client, imported):
+    """样品只测到 T 秒，问 T+100 秒时必须返回空并说明原因。
+
+    拿最近的一帧顶替的话，「这批数据根本没测到那个时刻」这个事实就消失了 ——
+    而它恰恰是你需要知道的。这类静默替换在小数据集上完全看不出来。
+    """
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20"]},
+        # 夹具的合成谱只到 1100 nm，窗口必须落在里面
+        "recipe": {"band_min": 775, "band_max": 1100},
+    })["task_id"])
+    run_id = t["result"]["parent_run_id"]
+
+    r = batch_client.get(
+        f"/api/batch/runs/{run_id}/slices?windows=0:1,9000:9001").json()
+    for row in r["rows"]:
+        assert row["values"][0]["mean"] is not None      # 窗口内有帧
+        far = row["values"][1]
+        assert far["mean"] is None
+        assert far["n_frames"] == 0
+        assert "超出" in far["note"] and str(int(row["t_max"])) in far["note"]
+
+
+def test_a_broken_time_window_is_explained_not_ignored(batch_client, imported):
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20"]}, "recipe": {},
+    })["task_id"])
+    run_id = t["result"]["parent_run_id"]
+
+    r = batch_client.get(f"/api/batch/runs/{run_id}/slices?windows=abc")
+    assert r.status_code == 400
+    assert "abc" in r.json()["error"]["message"]         # 说清楚是哪一段看不懂
+
+    r = batch_client.get(f"/api/batch/runs/{run_id}/slices?windows=1:2:3")
+    assert r.status_code == 400
+
+
+def test_a_run_without_thickness_says_to_rerun_instead_of_500(batch_client, workspace):
+    """老的对比跑在加膜厚之前，没有那张表。要给出下一步，不是一个 404 空壳。"""
+    from app.storage import results
+
+    run_id = results.start_run(skill_id="x", skill_version="1", skill_name="x",
+                               params={}, inputs=[], source="skill")
+    results.finish_run(run_id, "ok")
+    r = batch_client.get(f"/api/batch/runs/{run_id}/slices?windows=0:1")
+    assert r.status_code == 404
+    assert "重跑" in r.json()["error"]["message"]

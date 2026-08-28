@@ -77,6 +77,15 @@ class SampleOutcome:
     t: np.ndarray | None = None
     integral: np.ndarray | None = None
     slope: np.ndarray | None = None
+    # 光学厚度：每帧一个值 + 每帧一个判级。判级要跟着一起存 ——
+    # 「1s 内的平均膜厚」光有均值没法判断可不可信，那个数就没法用。
+    #
+    # 自带一条时间轴：膜厚拿的是**全部帧**，而 integral / slope 可能被
+    # max_time_points 抽稀过。硬塞进同一张表就得二选一：要么给膜厚抽稀
+    # （上一轮刚说过不行），要么给另外两条插值（凭空造数）。所以分两张表。
+    ot_t: np.ndarray | None = None
+    ot: np.ndarray | None = None
+    ot_status: list[str] = field(default_factory=list)
     metrics: dict[str, float] = field(default_factory=dict)
 
 
@@ -115,6 +124,40 @@ def _process_one(row: dict, recipe: Recipe) -> SampleOutcome:
             diag = fringe_ot.diagnostics_for(recipe.band_min, recipe.band_max)
             out.metrics["ot_floor"] = diag["ot_floor_nm"]
             out.metrics["fringe_bin"] = diag["bin_f_nm"]
+
+            # 逐帧光学厚度。走的是单样品页那条**同一个** extract_series ——
+            # 批处理里另写一份 FFT 的话，两个页面对同一个样品会给出不同的膜厚，
+            # 而且没人知道该信哪个。
+            #
+            # 注意用的是**未抽样**的 lam / sm.M：膜厚必须拿完整光谱算，
+            # 上面那个 max_time_points 只影响 integral / slope 的显示密度。
+            try:
+                res = fringe_ot.extract_series(
+                    sm.lam, sm.t, sm.M,
+                    target_times_s="all",
+                    window_nm=[recipe.band_min, recipe.band_max],
+                    accurate_cycles=fringe_ot.PLATFORM_ACCURATE_CYCLES,
+                    input_is_absorbance=bool(sm.meta.get("input_is_absorbance", False)),
+                )
+                pts = res["points"]
+                out.ot_t = np.array([q["t"] for q in pts], dtype=np.float32)
+                out.ot = np.array([q["ot_nm"] for q in pts], dtype=np.float32)
+                out.ot_status = [q["status"] for q in pts]
+                n_ok = sum(1 for q in pts if q["status"] == "OK")
+                out.metrics["ot_ok_frames"] = float(n_ok)
+                out.metrics["ot_frames"] = float(len(pts))
+                if n_ok:
+                    ok_vals = [q["ot_nm"] for q in pts if q["status"] == "OK"]
+                    out.metrics["ot_first_ok"] = float(ok_vals[0])
+                    out.metrics["ot_last_ok"] = float(ok_vals[-1])
+                else:
+                    out.warnings.append(
+                        f"膜厚：{len(pts)} 帧里没有一帧达到「可信」"
+                        f"（窗口 {recipe.band_min:g}–{recipe.band_max:g} nm 下条纹数不足）")
+            except Exception as exc:            # noqa: BLE001
+                # 膜厚算不出来不该把整个样品判成失败 —— integral / slope 还是好的。
+                # 记一条 warning，界面上那一列显示空白而不是假数。
+                out.warnings.append(f"膜厚算不出来：{exc}")
         else:
             out.warnings.append(
                 f"膜厚窗口 {recipe.band_min:g}–{recipe.band_max:g} nm 超出数据范围")
@@ -195,6 +238,7 @@ def run_batch(ctx: tasks.TaskContext) -> dict:
     ctx.tally(n_ok, n_failed)
 
     table_meta = _write_long_table(parent_id, outcomes) if n_ok else None
+    ot_meta = _write_thickness_table(parent_id, outcomes) if n_ok else None
     results.finish_run(
         parent_id, "cancelled" if cancelled else ("ok" if n_ok else "failed"),
         warnings=[f"{n_failed} 个样品失败"] if n_failed else [],
@@ -207,6 +251,7 @@ def run_batch(ctx: tasks.TaskContext) -> dict:
         "parent_run_id": parent_id,
         "n_total": total, "n_ok": n_ok, "n_failed": n_failed,
         "table": table_meta,
+        "thickness_table": ot_meta,
         "recipe": recipe.as_dict(),
         "filter": flt,
     }
@@ -273,6 +318,28 @@ def _write_long_table(parent_id: str, outcomes: list[SampleOutcome]) -> dict:
         return {}
     df = pd.concat(frames, ignore_index=True)
     return tabular.write_table(parent_id, "batch_curves", df)
+
+
+def _write_thickness_table(parent_id: str, outcomes: list[SampleOutcome]) -> dict:
+    """膜厚长表。和 batch_curves 分开存 —— 时间轴不是同一条，见 SampleOutcome.ot_t。"""
+    import pandas as pd
+
+    frames = []
+    for o in outcomes:
+        if not o.ok or o.ot is None or o.ot_t is None:
+            continue
+        frames.append(pd.DataFrame({
+            "sample_id": o.sample_id,
+            "sample_name": o.sample_name,
+            "batch": o.batch or "",
+            "t": o.ot_t,
+            "ot": o.ot,
+            "status": o.ot_status,
+        }))
+    if not frames:
+        return {}
+    df = pd.concat(frames, ignore_index=True)
+    return tabular.write_table(parent_id, "batch_thickness", df)
 
 
 # ------------------------------------------------------------------ 读取结果

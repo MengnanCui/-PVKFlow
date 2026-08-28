@@ -781,6 +781,43 @@ body.is-resizing { cursor: col-resize; user-select: none; }
 .btn-xs { padding: 1px 6px; font-size: var(--t-xs); }
 .danger { color: var(--danger); }
 
+/* 贴着 ⓘ 的小浮层。**没有遮罩** —— 查一个词的时候你多半想一边看图一边看
+   定义，全屏弹窗把图盖住了就是逼你二选一。
+   position:fixed + JS 定位：锚点在滚动容器里，纯 CSS 定位跟不住。 */
+.info-pop {
+  position: fixed; z-index: 70;
+  width: min(420px, 92vw);
+  max-height: min(70vh, 560px);
+  display: flex; flex-direction: column;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: var(--r-lg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .16), 0 2px 6px rgba(0, 0, 0, .08);
+  overflow: hidden;
+}
+@media (prefers-color-scheme: dark) {
+  .info-pop { box-shadow: 0 10px 34px rgba(0, 0, 0, .55); }
+}
+.info-pop-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s3x);
+  padding: var(--s2x) var(--s2x) var(--s2x) var(--s4x);
+  border-bottom: 1px solid var(--line); flex: none;
+}
+.info-pop-title { font-weight: 600; font-size: var(--t-base); }
+.info-pop-body {
+  padding: var(--s3x) var(--s4x) var(--s4x);
+  overflow-y: auto; min-height: 0;
+  display: flex; flex-direction: column; gap: var(--s3x);
+}
+
+/* 跟着当前数据走的附加段（比如「这张图上出现过的判级」） */
+.info-extra { display: flex; flex-direction: column; gap: var(--s2x); }
+.info-extra-title { font-size: var(--t-xs); color: var(--ink-4); }
+.info-extra-row { display: flex; gap: var(--s2x); align-items: baseline; }
+.info-extra-key { font-size: var(--t-xs); color: var(--ink-4);
+                  min-width: 104px; flex: none; }
+.info-extra-text { font-size: var(--t-sm); line-height: 1.55; min-width: 0; }
+
 .info-wrap { display: flex; flex-direction: column; gap: var(--s4x); }
 
 /* 上半截：固定定义。深底一块，跟下面的对话区分开 —— 这一段不受模型影响，
@@ -800,7 +837,7 @@ body.is-resizing { cursor: col-resize; user-select: none; }
 
 .info-thread {
   display: flex; flex-direction: column; gap: var(--s3x);
-  max-height: 40vh; overflow-y: auto; min-height: 0;
+  max-height: 34vh; overflow-y: auto; min-height: 0;
 }
 .info-hint { display: flex; align-items: center; gap: var(--s2x);
              font-size: var(--t-sm); padding: var(--s2x) 0; }
@@ -826,3 +863,30 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   padding: 6px 10px; font: inherit; font-size: var(--t-sm); line-height: 1.5;
 }
 .info-input:focus { outline: none; border-color: var(--accent); }
+
+/* 对比页的时刻切片、配方面板用到的几个小工具类 */
+.items-center { align-items: center; }
+.items-end    { align-items: flex-end; }
+.mt-6         { margin-top: var(--s6x); }
+/* 竖分隔：把配方面板里「膜厚窗口」和后面几组参数分开 */
+.sep-v { width: 1px; align-self: stretch; min-height: 20px; background: var(--line); }
+/* 可信比例过低时的警示文字。用 --warn 而不是 --danger：
+   这个数**算出来了**，只是不该拿去做定量比较 —— 不是错误。 */
+.warn-text { color: var(--warn); }
+
+/* 设置页的模型多选。拉回来的列表可能有几十个，网格排能一眼扫完 */
+.model-pick { min-height: 20px; }
+.model-grid { display: grid; gap: 4px 12px; max-height: 210px; overflow-y: auto;
+              grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+              border: 1px solid var(--line); border-radius: var(--r-sm);
+              padding: var(--s2x) var(--s3x); background: var(--surface-2); }
+.model-opt { display: flex; align-items: center; gap: 6px; cursor: pointer;
+             min-width: 0; }
+.model-opt span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-opt input { flex: none; }
+
+/* 对话界面顶部的模型切换。做得很小 —— 它是个开关，不是主角 */
+.model-switch { font-size: var(--t-xs); color: var(--ink-3);
+                border: 1px solid var(--line); border-radius: var(--r-sm);
+                background: var(--surface); padding: 2px 6px; max-width: 190px; }
+.model-switch:hover { color: var(--ink); border-color: var(--line-strong); }

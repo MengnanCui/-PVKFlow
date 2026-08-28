@@ -4,12 +4,12 @@
 // 并在图注里写明降级了。不偷偷少画。
 
 import { api } from '../api.js';
-import { infoDot } from '../components/info.js';
+import { infoDot, withInfo } from '../components/info.js';
 import {
   h, mount, clear, toast, empty, skeletonRows, errorBox, busy,
   fmtInt, fmtNum, fmtTime, modal, sampleLabel,
 } from '../ui.js';
-import { xyChart, quantileBand, seriesColor } from '../chart.js';
+import { xyChart, quantileBand, seriesColor, barChart } from '../chart.js';
 
 export const meta = {
   id: 'batch',
@@ -21,12 +21,23 @@ export const meta = {
 // 超过这么多条就降级成分位数带。可以手动切回去。
 const SPAGHETTI_LIMIT = 60;
 
+// 时刻切片的默认窗口。你举的两个例子：「1s 内」= 0–1 s，「28s」= 27.5–28.5 s。
+// 超出样品时间范围的窗口不会被悄悄丢掉 —— 它会显示「超出范围」，
+// 而「这批数据根本没测到 28 秒」本身就是你需要知道的信息。
+const DEFAULT_WINDOWS = [[0, 1], [27.5, 28.5]];
+
+// 柱状图超过这么多个样品就没法读了，换成排序表格。照旧：降级要说出来。
+const BAR_LIMIT = 24;
+
 const S = {
-  runId: null, detail: null, error: null,
+  runId: null, taskId: null, detail: null, error: null,
   pins: [],          // 钉在这次对比上的 AI 分析
-  // 特殊处理的两条曲线一次拉齐，左右并排 —— 对比看的就是它俩
-  curves: { integral: null, slope: null },
+  // 特殊处理的两条曲线 + 膜厚曲线
+  curves: { integral: null, slope: null, ot: null },
   mode: 'auto', groupBy: 'batch',
+  // 时刻切片：窗口是**查询参数**，改一下不用重跑（膜厚曲线整条都存着了）
+  windows: DEFAULT_WINDOWS.map((w) => [...w]),
+  slices: null, sliceErr: null, sliceBusy: false,
 };
 
 let refs = {};
@@ -39,16 +50,31 @@ export function actions(nav) {
 }
 
 export async function view(host, ctx) {
-  S.runId = ctx.arg;
   S.detail = S.error = null;
-  S.curves = { integral: null, slope: null };
+  S.curves = { integral: null, slope: null, ot: null };
+  S.slices = S.sliceErr = null;
+  S.windows = DEFAULT_WINDOWS.map((w) => [...w]);
   S.pins = [];
   refs = { host, nav: ctx.nav };
 
-  if (!S.runId) {
+  const arg = ctx.arg;
+  if (!arg) {
     mount(host, empty('没有指定批处理', h('button.btn.btn-sm',
       { onclick: () => ctx.nav('process') }, '回到样品列表')));
     return;
+  }
+
+  // 参数可以是 task_… 也可以是 run_…。
+  // 「选中几个样品 → 直接进对比页」那条路上，提交的一刻还没有 run_id ——
+  // 让用户对着「正在跳转…」干等是没必要的，进来先看进度就是了。
+  if (String(arg).startsWith('task_')) {
+    S.taskId = arg;
+    const done = await waitForTask(host, arg, ctx);
+    if (!done) return;
+    S.runId = done;
+  } else {
+    S.taskId = null;
+    S.runId = arg;
   }
 
   mount(host, skeletonRows(8));
@@ -68,15 +94,61 @@ export async function view(host, ctx) {
   const chartHost = h('div#chartHost');
   const tableHost = h('div#tableHost');
   const pinHost = h('div#pinHost');
-  mount(host, header(), pinHost, h('div.section', chartHost), h('div.section', tableHost));
+  const sliceHost = h('div#sliceHost');
+  mount(host, header(), pinHost,
+        h('div.section', sliceHost),
+        h('div.section', chartHost), h('div.section', tableHost));
   refs.chartHost = chartHost;
   refs.tableHost = tableHost;
   refs.pinHost = pinHost;
+  refs.sliceHost = sliceHost;
 
   drawChart();
   drawTable();
   loadCurves();
+  loadSlices();
   loadPins();
+}
+
+/**
+ * 等这次批处理跑完，边等边显示进度。
+ *
+ * @returns parent_run_id；失败或取消时返回 null（错误已经画在页面上了）
+ */
+async function waitForTask(host, taskId, ctx) {
+  const bar = h('i');
+  const msg = h('div.small.muted.mt-2', '正在排队…');
+  mount(host, h('div.section',
+    h('div.panel.panel-body',
+      h('div.strong', '正在对比'),
+      h('div.progress-bar.mt-3', bar),
+      msg,
+      h('div.mt-3', h('button.btn.btn-sm', {
+        onclick: async () => { await api.cancelTask(taskId).catch(() => {});
+                               ctx.nav('process'); },
+      }, '取消')))));
+
+  for (;;) {
+    let t;
+    try {
+      t = await api.getTask(taskId);
+    } catch (err) {
+      mount(host, errorBox(err, () => view(host, ctx)));
+      return null;
+    }
+    const pct = t.total ? Math.round((t.progress / t.total) * 100) : 0;
+    bar.style.width = `${pct}%`;
+    msg.textContent = t.message || `${t.progress} / ${t.total}`;
+
+    if (t.status === 'ok') return t.result?.parent_run_id || null;
+    if (t.status === 'failed' || t.status === 'cancelled') {
+      mount(host, errorBox(
+        { message: t.error || '这次对比没跑成', detail: t.message },
+        () => ctx.nav('process')));
+      return null;
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  }
 }
 
 // ------------------------------------------------------------------ 钉住的分析
@@ -118,19 +190,68 @@ function drawPins() {
 
 function header() {
   const d = S.detail;
-  const params = d.run.params || {};
-  const recipe = params.recipe || {};
   return h('div.section',
     h('div.metrics.metrics-4',
       metric('样品', d.children.length, '本次处理'),
       metric('成功', d.n_ok, d.n_ok === d.children.length ? '全部通过' : ''),
       metric('失败', d.n_failed, d.n_failed ? '见下表' : '无'),
       metric('曲线表', d.tables.length ? d.tables[0].n_rows : 0, '长表行数')),
-    h('div.mt-4.row.wrap.gap-3',
-      h('span.small.muted', '配方：'),
-      ...Object.entries(recipe).filter(([, v]) => v !== null && v !== 0)
-        // 波长不加千分位 —— 「1,120 nm」读起来像个计数，不像一个波长
-        .map(([k, v]) => h('span.tag', `${RECIPE_LABELS[k] || k} ${Number(v)}`))));
+    recipePanel());
+}
+
+/**
+ * 配方面板。**进来先用默认值比出结果，参数摆在这儿随时改。**
+ *
+ * 原来是进对比之前先弹一个对话框填六个数 —— 可你在填的时候还没看到任何东西，
+ * 六个数该填什么根本无从判断。现在反过来：先看到结果，觉得窗口不对再改。
+ *
+ * 改完是**新的一次对比**，旧的那次留在对比历史里。参数一改结果就变，
+ * 原地覆盖的话你就没法说「上次那个窗口下是什么样」了。
+ */
+function recipePanel() {
+  const recipe = { ...(S.detail.run.params || {}).recipe };
+  const busyRef = {};
+
+  const num = (key) => h('label.inline-field',
+    h('span.small.muted', RECIPE_LABELS[key] || key),
+    h('input.input.input-sm', {
+      type: 'number', step: 'any', value: recipe[key] ?? '',
+      style: { width: '84px' },
+      oninput: (e) => { recipe[key] = Number(e.target.value); },
+    }));
+
+  const rerun = h('button.btn.btn-sm.btn-primary', {
+    onclick: async (e) => {
+      busy(e.target, true);
+      try {
+        const r = await api.batchRun({
+          filter: (S.detail.run.params || {}).filter || {},
+          recipe,
+          title: `${S.detail.n_ok} 个样品 · ${recipe.band_min}–${recipe.band_max} nm`,
+        });
+        // 跳到新的一次 —— 旧的那次原样留在对比历史里
+        refs.nav('batch', { arg: r.task.task_id });
+      } catch (err) {
+        toast(err.message, 'danger');
+        busy(e.target, false);
+      }
+    },
+  }, '按新参数重跑');
+  busyRef.btn = rerun;
+
+  return h('div.figure-ctl.mt-4', { style: { display: 'block' } },
+    h('div.row.gap-3.wrap.items-end',
+      h('span.small.strong', '参数'),
+      num('band_min'), num('band_max'),
+      infoDot('band'),
+      h('span.sep-v'),
+      num('integral_min'), num('integral_max'),
+      num('slope_center'), num('slope_half_width'),
+      h('span.grow'),
+      rerun),
+    h('div.xsmall.dim.mt-2',
+      '改膜厚窗口会重算光学厚度，所以要重跑一次。',
+      '下面「不同时刻的平均膜厚」里加减时间窗**不用**重跑 —— 整条膜厚曲线已经存下来了。'));
 }
 
 const RECIPE_LABELS = {
@@ -144,16 +265,168 @@ const metric = (label, value, note) => h('div.metric',
   h('div.metric-value' + (value ? '' : '.is-zero'), fmtInt(value)),
   note ? h('div.metric-note', note) : null);
 
+// ------------------------------------------------------------------ 时刻切片对比
+//
+// 「不同样品在 1 秒内的平均膜厚」「在 28 秒的平均膜厚」—— 这是横向比样品，
+// 跟上面那些「一个样品随时间怎么变」的曲线是两种问题。
+//
+// 时间窗是**查询参数**，不是配方：整条膜厚曲线在批处理时就算好存下了，
+// 这里只是按窗口切一刀求平均。所以加一个「再看看 15 秒」是即时的，不用重跑。
+async function loadSlices() {
+  if (!refs.sliceHost) return;
+  S.sliceBusy = true;
+  S.sliceErr = null;
+  drawSlices();
+  try {
+    S.slices = await api.batchSlices(S.runId, S.windows);
+  } catch (err) {
+    S.sliceErr = err;
+    S.slices = null;
+  }
+  S.sliceBusy = false;
+  drawSlices();
+}
+
+const fmtWin = ([a, b]) => (a === b ? `${a} s` : `${a}–${b} s`);
+
+function drawSlices() {
+  const host = refs.sliceHost;
+  if (!host) return;
+
+  const head = h('div.section-head',
+    h('div.section-title', '不同时刻的平均膜厚'),
+    h('span.xsmall.dim', '加减时间窗不用重跑'));
+
+  if (S.sliceErr) {
+    mount(host, head, errorBox(S.sliceErr, loadSlices));
+    return;
+  }
+
+  mount(host, head, windowEditor(),
+    S.sliceBusy && !S.slices ? skeletonRows(3)
+      : S.slices ? sliceBody(S.slices) : null);
+}
+
+/** 时间窗编辑器。每个窗两个数字框，能加能删。 */
+function windowEditor() {
+  const row = ([lo, hi], i) => h('div.row.gap-1.items-center',
+    h('input.input.input-sm', {
+      type: 'number', step: 'any', value: lo, style: { width: '68px' },
+      onchange: (e) => { S.windows[i][0] = Number(e.target.value); loadSlices(); },
+    }),
+    h('span.small.dim', '–'),
+    h('input.input.input-sm', {
+      type: 'number', step: 'any', value: hi, style: { width: '68px' },
+      onchange: (e) => { S.windows[i][1] = Number(e.target.value); loadSlices(); },
+    }),
+    h('span.small.dim', 's'),
+    S.windows.length > 1
+      ? h('button.btn.btn-ghost.btn-xs', {
+          title: '删掉这个时间窗',
+          onclick: () => { S.windows.splice(i, 1); loadSlices(); },
+        }, '✕')
+      : null);
+
+  return h('div.figure-ctl', { style: { display: 'block' } },
+    h('div.row.gap-4.wrap.items-center',
+      h('span.small.muted', '时间窗'),
+      ...S.windows.map(row),
+      h('button.btn.btn-sm', {
+        disabled: S.windows.length >= 12,
+        onclick: () => {
+          // 新窗口接着最后一个往后排，省得每次都要从头改两个数
+          const last = S.windows[S.windows.length - 1] || [0, 1];
+          const span = Math.max(1, last[1] - last[0]);
+          S.windows.push([last[1], last[1] + span]);
+          loadSlices();
+        },
+      }, '+ 加一个时刻'),
+      S.sliceBusy ? h('span.xsmall.dim', '算…') : null));
+}
+
+function sliceBody(d) {
+  const labels = d.windows.map((w) => fmtWin([w.from, w.to]));
+  const n = d.rows.length;
+
+  // 每个窗口里「有几个样品根本没数据」—— 这句必须显眼。
+  // 你的数据只测到 21 秒，问 28 秒时整列是空的，而那正是要告诉你的事。
+  const missing = d.windows.map((_, si) =>
+    d.rows.filter((r) => r.values[si]?.mean === null).length);
+
+  const chart = n <= BAR_LIMIT
+    ? barChart({
+        groups: d.rows.map((r) => ({
+          label: r.label,
+          values: r.values.map((v) => ({
+            value: v.mean, ratio: v.ok_ratio, note: v.note,
+            n_frames: v.n_frames, n_ok: v.n_ok })),
+        })),
+        seriesLabels: labels,
+        yLabel: '平均光学厚度 (nm)', unit: 'nm',
+      }, { height: 340 })
+    : h('div.notice',
+        h('div.grow',
+          h('div.small', `${fmtInt(n)} 个样品，柱状图挤不下（超过 ${BAR_LIMIT} 个就没法读了）`),
+          h('p.xsmall.dim.mt-2', '下面的表格按第一个时间窗排序，一样能比。')));
+
+  return h('div',
+    chart,
+    h('div.chart-caption',
+      `${fmtInt(n)} 个样品 × ${d.windows.length} 个时间窗　窗口内`,
+      h('span.strong', '全部帧'),
+      '都参与平均，深色那截是其中可信的比例',
+      infoDot('ot_status')),
+    ...missing.map((m, si) => (m
+      ? h('div.chart-caption.dim',
+          `${labels[si]}：${fmtInt(m)} 个样品在这个窗口里没有数据`,
+          m === n ? '（整批都没测到这个时刻 —— 不是算不出来，是数据里就没有）' : '')
+      : null)),
+    sliceTable(d, labels));
+}
+
+function sliceTable(d, labels) {
+  // 按第一个窗口的均值排序：横向比的时候，谁高谁低应该一眼看得出来
+  const rows = [...d.rows].sort((a, b) =>
+    (b.values[0]?.mean ?? -Infinity) - (a.values[0]?.mean ?? -Infinity));
+
+  return h('div.panel.panel-body.flush.mt-4',
+    h('table.table',
+      h('thead', h('tr',
+        h('th', '样品'),
+        ...labels.map((l) => h('th', l)),
+        h('th', '测到'))),
+      h('tbody', ...rows.map((r) => h('tr',
+        h('td.strong', r.label),
+        ...r.values.map((v) => cell(v)),
+        h('td.mono.xsmall.dim', `${r.t_min}–${r.t_max} s`))))));
+}
+
+function cell(v) {
+  if (v.mean === null) {
+    return h('td', h('span.dim', '—'),
+      v.note ? h('div.xsmall.dim', v.note) : null);
+  }
+  const pct = Math.round((v.ok_ratio ?? 0) * 100);
+  return h('td',
+    h('span.mono', `${fmtNum(v.mean, 0)} nm`),
+    // 可信比例低的时候必须显眼 —— 均值本身看不出它是被噪声帧拉出来的
+    h('div.xsmall' + (pct < 50 ? '.warn-text' : '.dim'),
+      `${v.n_ok}/${v.n_frames} 帧可信${pct < 50 ? '　这个数不可靠' : ''}`));
+}
+
 // ------------------------------------------------------------------ 特殊处理对比
 //
 // 左右并排两张：谱斜率 vs 时间 | 波段积分 vs 时间。
 // 对比看的就是这两条 —— 一次全画出来，不用先选一个再切另一个。
 async function loadCurves() {
-  await Promise.all(['integral', 'slope'].map(async (col) => {
+  await Promise.all(['integral', 'slope', 'ot'].map(async (col) => {
     try {
       S.curves[col] = await api.batchCurves(S.runId, { column: col, max_series: 1200 });
     } catch (err) {
-      S.error = err;
+      // 膜厚可能整个缺席（老的对比跑在加膜厚之前）。那不该把另外两张图也拖垮 ——
+      // 缺的那一张自己显示原因就行。
+      if (col === 'ot') S.curves.ot = { error: err };
+      else S.error = err;
     }
     drawChart();
   }));
@@ -183,21 +456,33 @@ function drawChart() {
         select('着色', S.groupBy, [['batch', '按样品号'], ['none', '逐条']],
           (v) => { S.groupBy = v; drawChart(); }))),
     h('div.fig-grid-2',
-      curveFigure('slope', '谱斜率 vs 时间'),
-      curveFigure('integral', '波段积分 vs 时间')));
+      curveFigure('ot', '光学厚度 vs 时间'),
+      curveFigure('slope', '谱斜率 vs 时间')),
+    h('div.fig-grid-2.mt-6',
+      curveFigure('integral', '波段积分 vs 时间'),
+      h('div.figure')));
 }
 
+// 和样品页一样的三行结构：标题 / 功能 / 图。没有功能的那一格第二行空着，
+// 但仍然占着 subgrid 的那一行 —— 左右两张图才会从同一条线开始。
 function curveFigure(col, title) {
   const data = S.curves[col];
-  const body = data ? paintCurve(col, data) : skeletonRows(4);
+  const body = data?.error
+    ? h('div.notice.notice-warn',
+        h('div.grow',
+          h('div.small', data.error.message),
+          h('p.xsmall.dim.mt-2', '用上面的参数重跑一次就有了。')))
+    : data ? paintCurve(col, data) : skeletonRows(4);
   return h('div.figure',
-    h('div.figure-head',
-      h('div.figure-title', title),
-      data
-        ? h('button.btn.btn-sm', { onclick: () => exportDialog(col) }, '导出脚本')
-        : null),
-    body);
+    h('div.figure-head', h('div.figure-title', COL_INFO[col]
+      ? withInfo(title, COL_INFO[col]) : title)),
+    h('div.figure-ctl', data && !data.error
+      ? h('button.btn.btn-sm', { onclick: () => exportDialog(col) }, '导出脚本')
+      : null),
+    h('div.figure-body', body));
 }
+
+const COL_INFO = { ot: 'ot', slope: 'slope', integral: 'integral' };
 
 function paintCurve(col, data) {
   const all = data.series;
@@ -234,7 +519,8 @@ function paintCurve(col, data) {
   return h('div', chart, h('div.chart-caption', caption));
 }
 
-const Y_LABEL = { integral: '积分强度 (a.u.·nm)', slope: 'dI/dλ (a.u./nm)' };
+const Y_LABEL = { integral: '积分强度 (a.u.·nm)', slope: 'dI/dλ (a.u./nm)',
+                  ot: '光学厚度 OT = n·d·cosθ (nm)' };
 
 function select(label, value, options, onChange) {
   return h('label.inline-field',

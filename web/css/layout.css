@@ -196,6 +196,14 @@
 .fig-grid-2 .figure-title, .fig-grid-4 .figure-title {
   display: flex; align-items: center; min-height: 26px;
 }
+/* 功能块要**填满**它那一行，不能只贴顶。
+   这是上一版没修干净的地方：subgrid 把行高在整行上统一了（比如 92px），
+   但三个子块都 align-self:start，于是**盒子自己**缩到内容高度 ——
+   左格控件多、盒子 92px，右格控件少、盒子 43px，底下空 49px。
+   图是齐的，两个带边框的面板一高一低 —— 那就是「功能区不一致」。
+   标题行和图行仍然贴顶（上面那条规则），只有这一行拉伸。 */
+.fig-grid-2 .figure-ctl, .fig-grid-4 .figure-ctl { align-self: stretch; }
+
 /* 功能块：有内容时给个浅底和内边距，让「这一块是控件」一眼看得出来；
    空的时候什么都不画，但**仍然占着 subgrid 的那一行** —— 这正是
    「没有功能模块就空着，总之对齐」。 */

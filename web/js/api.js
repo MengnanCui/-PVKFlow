@@ -120,6 +120,10 @@ export const api = {
   batchRuns: () => get('/api/batch/runs'),
   batchDetail: (id) => get(`/api/batch/runs/${id}`),
   batchCurves: (id, params) => get(`/api/batch/runs/${id}/curves`, params),
+  // 时刻切片：窗口写成 `0:1,27.5:28.5`。这是查询不是配方 —— 改窗口不用重跑
+  batchSlices: (id, windows) =>
+    get(`/api/batch/runs/${id}/slices`,
+        { windows: windows.map(([a, b]) => `${a}:${b}`).join(',') }),
   batchExportUrl: (id, params) =>
     `/api/batch/runs/${id}/export?` + new URLSearchParams(params).toString(),
   batchExportPreview: (id, params) => get(`/api/batch/runs/${id}/export/preview`, params),
@@ -200,6 +204,8 @@ export const api = {
   saveModels: (config) => post('/api/settings/models', { config }),
   saveSimpleModel: (body) => post('/api/settings/models/simple', body),
   testModel: (provider, model) => post('/api/settings/models/test', { provider, model }),
+  // 按地址拉一份可用模型。密钥留空 = 沿用已经存着的那个（返回里绝不带密钥）
+  discoverModels: (body) => post('/api/settings/models/discover', body),
   modelExample: () => get('/api/settings/models/example'),
 };
 

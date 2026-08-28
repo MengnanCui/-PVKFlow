@@ -2,7 +2,7 @@
 
 import { api } from '../api.js';
 import { infoDot } from '../components/info.js';
-import { h, mount, render, toast, busy, errorBox, empty, skeletonRows,
+import { h, mount, clear, render, toast, busy, errorBox, empty, skeletonRows,
          fmtBytes, fmtInt } from '../ui.js';
 
 export const meta = {
@@ -165,49 +165,165 @@ function modelSection(models) {
         : h('p.small.muted.mt-4', '还没有配置任何 provider。填下面三个框就能用。'),
 
       status,
-      simpleForm(providers),
+      simpleForm(providers, models.presets),
       advancedJson(providers)));
 }
 
-/** 三个框：接口地址、密钥、模型名。填完就能用。 */
-function simpleForm(providers) {
+/**
+ * 填地址 → 填密钥 → **点一下拉出可用模型** → 勾几个 → 测一下 → 保存。
+ *
+ * 原来模型名要手打：网关文档里那个 id 区分大小写，打错了要到发第一条消息
+ * 才报错，而且报的是网关的原话。现在按 OpenAI 兼容协议的 /models 拉一份回来选。
+ *
+ * 拉不到是**常见情况**（不少网关没实现 /models），所以手填那条路留着，
+ * 不是把它藏起来。
+ */
+function simpleForm(providers, presets) {
   const first = providers[0] || {};
-  const firstModel = (first.models || [])[0] || {};
+  const saved = (first.models || []).map((m) => m.id);
+
+  // 本地状态：拉回来的候选、勾中的、以及手填的那些
+  const F = { found: [], chosen: new Set(saved), manual: saved.join(', ') };
 
   const url = h('input.input', {
     type: 'text', placeholder: 'https://你的网关/v1',
+    // 填过一次就一直回填 —— 你的网关地址存在本机配置里，不在仓库里
     value: first.base_url || '', style: { width: '100%' } });
   const key = h('input.input', {
     // type=password 免得在会议室投屏时把密钥直接投出去
     type: 'password', placeholder: 'sk-…',
     autocomplete: 'off', style: { width: '100%' } });
-  const model = h('input.input', {
-    type: 'text', placeholder: 'Qwen3.6-27B',
-    value: firstModel.id || '', style: { width: '100%' } });
   const name = h('input.input', {
     type: 'text', placeholder: '默认叫「我的模型」',
     value: providers.length ? first.name : '', style: { width: '100%' } });
+  const manual = h('input.input', {
+    type: 'text', placeholder: 'Qwen3.6-27B', value: F.manual,
+    style: { width: '100%' },
+    oninput: (e) => { F.manual = e.target.value; } });
 
+  const modelBox = h('div.model-pick');
   const field = (label, node, help) => h('div.field',
     h('label.field-label', label), node,
     help ? h('div.field-help', help) : null);
 
+  // 预设只是**填进地址栏**，不锁死 —— 填完照样能改
+  const presetPick = h('select.select', {
+    onchange: (e) => {
+      if (!e.target.value) return;
+      url.value = e.target.value;
+      e.target.value = '';
+      drawModels();
+    },
+  },
+    h('option', { value: '' }, '常见地址…'),
+    ...(presets || []).map((p) => h('option', { value: p.base_url },
+      `${p.name} — ${p.base_url}`)));
+
+  function drawModels() {
+    if (!F.found.length) {
+      mount(modelBox,
+        h('div.xsmall.dim',
+          '还没拉过列表。填好上面两项后点「获取可用模型」，'
+          + '或者直接在下面手填模型名。'));
+      return;
+    }
+    mount(modelBox,
+      h('div.xsmall.dim.mb-2', `拉到 ${F.found.length} 个，勾选要用的：`),
+      h('div.model-grid', ...F.found.map((m) => {
+        const cb = h('input', {
+          type: 'checkbox', checked: F.chosen.has(m.id),
+          onchange: () => {
+            if (cb.checked) F.chosen.add(m.id); else F.chosen.delete(m.id);
+            manual.value = F.manual = [...F.chosen].join(', ');
+          },
+        });
+        return h('label.model-opt', cb, h('span.mono.xsmall', m.id),
+          m.owned_by ? h('span.xsmall.dim', m.owned_by) : null);
+      })));
+  }
+
+  const status = h('div.mt-3');
+  const chosenIds = () => {
+    const fromBox = [...F.chosen];
+    const typed = F.manual.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean);
+    return [...new Set([...fromBox, ...typed])];
+  };
+
+  const discoverBtn = h('button.btn', {
+    onclick: async (e) => {
+      const u = url.value.trim();
+      if (!u) { toast('先填接口地址', 'err'); return; }
+      busy(e.target, true);
+      clear(status);
+      try {
+        const r = await api.discoverModels({ base_url: u, api_key: key.value.trim() });
+        F.found = r.models || [];
+        drawModels();
+        mount(status, h('div.notice.notice-ok',
+          h('div.grow', h('div.small',
+            `拉到 ${r.count} 个模型` + (r.used_saved_key ? '（用的是已经存着的密钥）' : '')))));
+      } catch (err) {
+        F.found = [];
+        drawModels();
+        // 拉不到不是死路。把「手填一样能用」摆在错误旁边。
+        mount(status, h('div.notice.notice-warn',
+          h('div.grow',
+            h('div.small', err.message),
+            h('p.xsmall.dim.mt-2',
+              '不少网关没有提供模型列表接口。下面手填模型名一样能用。'))));
+      }
+      busy(e.target, false);
+    },
+  }, '获取可用模型');
+
+  const testBtn = h('button.btn', {
+    onclick: async (e) => {
+      busy(e.target, true);
+      try {
+        const r = await api.testModel(name.value.trim() || first.name || undefined,
+                                      chosenIds()[0]);
+        mount(status, r.ok
+          ? h('div.notice.notice-ok', h('div.grow',
+              h('div.small', `连通 · ${r.model} · ${r.latency_ms} ms`),
+              h('div.xsmall.dim.mt-1', `它回了：${r.reply}`)))
+          : h('div.notice.notice-danger', h('div.grow',
+              h('div.small', r.error))));
+      } catch (err) { toast(err.message, 'err', 6000); }
+      busy(e.target, false);
+    },
+  }, '连接测试');
+
+  drawModels();
+
   return h('div.mt-4',
-    h('div.small.strong.mb-2', providers.length ? '改一个 / 加一个' : '填这三个就能用'),
+    h('div.small.strong.mb-2', providers.length ? '改一个 / 加一个' : '填完就能用'),
     h('div.col.gap-3',
-      field('接口地址（baseUrl）', url,
-        ['结尾要带 ', h('span.mono', '/v1'), '。OpenAI 兼容网关、vLLM、本地模型都行。']),
+      field('接口地址（baseUrl）',
+        h('div.row.gap-2', h('div.grow', url), presetPick),
+        ['结尾要带 ', h('span.mono', '/v1'), '。',
+         '你自己的网关地址填过一次就会一直留在这儿 —— 它存在本机的 ',
+         h('span.mono', 'workspace/config/providers.json'), '，不会进仓库。']),
       field('密钥（apiKey）', key,
         providers.length && first.has_key
-          ? '留空 = 不改，继续用已经存着的那个密钥'
+          ? '留空 = 不改，继续用已经存着的那个密钥（拉模型列表也会用它）'
           : '直接粘贴，不用加引号'),
-      field('模型名（model id）', model, '网关文档里那个 id，区分大小写'),
+      h('div.field',
+        h('label.field-label', '模型'),
+        h('div.row.gap-2.mb-2', discoverBtn, testBtn),
+        modelBox,
+        status,
+        h('div.mt-3', manual),
+        h('div.field-help',
+          '上面勾的会同步到这一栏。也可以直接手打，多个用逗号分开 —— ',
+          '存下来的模型在右侧 AI 助手里可以随时切换。')),
       field('给它起个名字（可选）', name, '只是界面上显示用，随便叫')),
     h('div.row.gap-2.mt-3',
       h('button.btn.btn-primary', {
         onclick: async (e) => {
-          const u = url.value.trim(), m = model.value.trim();
-          if (!u || !m) { toast('接口地址和模型名都要填', 'err'); return; }
+          const u = url.value.trim();
+          const ids = chosenIds();
+          if (!u) { toast('接口地址要填', 'err'); return; }
+          if (!ids.length) { toast('至少选或填一个模型', 'err'); return; }
           const k = key.value.trim();
           if (!k && !(providers.length && first.has_key)) {
             toast('还没有存过密钥，这次要填', 'err'); return;
@@ -216,9 +332,9 @@ function simpleForm(providers) {
           try {
             await api.saveSimpleModel({
               name: name.value.trim() || first.name || '我的模型',
-              base_url: u, api_key: k, model_id: m,
+              base_url: u, api_key: k, model_ids: ids,
             });
-            toast('已保存。右上角「AI 助手」就能用了', 'ok');
+            toast(`已保存 ${ids.length} 个模型。右上角「AI 助手」就能用了`, 'ok');
             setTimeout(() => window.dispatchEvent(
               new CustomEvent('hte:nav', { detail: 'settings' })), 500);
           } catch (err) { toast(err.message, 'err', 6000); }

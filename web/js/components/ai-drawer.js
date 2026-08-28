@@ -34,6 +34,8 @@ const D = {
   detailMax: 40,
   streaming: false,
   abort: null,
+  models: [],          // 设置里配好的全部模型，头部那个下拉从这儿来
+  model: null,         // {provider, model}；null = 用设置里的默认
   modelReady: null,    // null = 还没探过
 };
 
@@ -77,6 +79,9 @@ function toggle(force) {
   $('#aiToggle')?.setAttribute('aria-expanded', String(D.open));
   if (D.open) {
     if (D.modelReady === null) probeModel();
+    // 每次打开都重新拉一遍模型列表：抽屉是在启动时建的，那会儿多半还没配模型。
+    // 只在建的时候拉一次的话，你去设置页配好回来，下拉还是空的。
+    drawModelSwitch();
     refreshScope();
     if (!D.conv) startConversation();
     refs.input?.focus();
@@ -98,6 +103,8 @@ function buildShell() {
     },
   });
   refs.scopeBar = h('div.ai-scope');
+  refs.modelBar = h('span');
+  drawModelSwitch();
   // 一个 handler 按状态分发。h() 用的是 addEventListener，后面再赋 .onclick
   // 只会**再加**一个监听器而不是替换掉 —— 那样点「停止」会既停又重发一遍。
   refs.sendBtn = h('button.btn.btn-primary.btn-sm',
@@ -108,10 +115,71 @@ function buildShell() {
     h('div.ai-head',
       h('button.icon-btn', { title: '菜单', onclick: (e) => openMenu(e) }, '⋯'),
       refs.title,
+      refs.modelBar,
       h('button.icon-btn', { title: '全屏', onclick: () => setFull(!D.full) }, '⤢'),
       h('button.icon-btn', { title: '关闭', onclick: () => toggle(false) }, '✕')),
     refs.body,
     h('div.ai-foot', refs.scopeBar, h('div.ai-compose', refs.input, refs.sendBtn)));
+}
+
+/**
+ * 头部那个模型切换器。
+ *
+ * 后端早就收 `{provider, model}` 了（chat.py 的 post_message），
+ * 缺的只是一个能选的地方。选中的存 localStorage —— 这是「我这台机器上
+ * 习惯用哪个」，不是平台设置，不该写进数据库让别人也跟着变。
+ */
+const MODEL_KEY = 'hte.ai.model';
+
+function readModel() {
+  try {
+    const raw = localStorage.getItem(MODEL_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function writeModel(v) {
+  try {
+    if (v) localStorage.setItem(MODEL_KEY, JSON.stringify(v));
+    else localStorage.removeItem(MODEL_KEY);
+  } catch { /* 隐私模式下写不进去，不影响这一次会话 */ }
+}
+
+async function drawModelSwitch() {
+  if (!refs.modelBar) return;
+  let list = [];
+  try {
+    const cfg = await api.models();
+    for (const p of cfg.providers || []) {
+      for (const m of p.models || []) list.push({ provider: p.name, model: m.id });
+    }
+  } catch { list = []; }
+
+  D.models = list;
+  // 只有一个模型时不画 —— 一个没有选择余地的下拉只是噪声
+  if (list.length < 2) { mount(refs.modelBar); return; }
+
+  const cur = readModel();
+  const val = (x) => `${x.provider}\u0000${x.model}`;
+  const sel = h('select.model-switch', {
+    title: '这次对话用哪个模型',
+    onchange: (e) => {
+      const [provider, model] = e.target.value.split('\u0000');
+      writeModel({ provider, model });
+      D.model = { provider, model };
+      // 在对话流里插一行 —— 回头看历史时才分得清哪句是谁答的
+      if (D.messages.length) {
+        D.messages.push({ role: 'system', content: `已切换到 ${model}`, meta: {} });
+        paint();
+      }
+    },
+  }, ...list.map((x) => h('option', {
+    value: val(x), selected: cur && cur.model === x.model && cur.provider === x.provider,
+  }, x.model)));
+
+  D.model = cur && list.some((x) => x.model === cur.model && x.provider === cur.provider)
+    ? cur : null;
+  mount(refs.modelBar, sel);
 }
 
 function autoGrow() {
@@ -358,7 +426,10 @@ async function send() {
   refs.sendBtn.classList.remove('btn-primary');
 
   try {
-    await api.sendMessage(D.conv, { content: text, scope: scopeFilter(D.scopeMode) }, {
+    await api.sendMessage(D.conv, {
+      content: text, scope: scopeFilter(D.scopeMode),
+      ...(D.model || {}),          // 没选就不带，后端按设置里的默认走
+    }, {
       signal: D.abort.signal,
       onFrame: (event, data) => {
         if (event === 'meta') assistant.meta.message_id = data.message_id;

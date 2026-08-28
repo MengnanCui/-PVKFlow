@@ -58,8 +58,50 @@ def cache_clear() -> dict:
 
 @router.get("/models")
 def models() -> dict:
-    """模型配置概览。密钥在这里被打码，绝不原样回传前端。"""
-    return openai_compat.describe_config()
+    """模型配置概览。密钥在这里被打码，绝不原样回传前端。
+
+    `presets` 是几个**公共**服务商的地址，给第一次打开设置页的人用。
+    你自己的网关地址不在这里 —— 它和密钥一样属于本机配置，
+    填过一次就存在 workspace/config/providers.json（已 gitignore）并一直回填。
+    """
+    out = openai_compat.describe_config()
+    out["presets"] = openai_compat.PRESETS
+    return out
+
+
+@router.post("/models/discover")
+def discover_models(payload: dict = Body(...)) -> dict:
+    """按地址拉一份可用模型列表，省得手打模型名。
+
+    **密钥留空 = 沿用已经存着的那个**（和 /models/simple 同一条规则）：
+    界面上只显示打码后的密钥，用户手里未必还有原文，不该为了拉个列表
+    被迫重新贴一遍。
+
+    拉不到不是故障 —— 有的网关根本没实现 /models。界面上要保留手填那条路。
+    """
+    base_url = (payload.get("base_url") or "").strip().rstrip("/")
+    api_key = (payload.get("api_key") or "").strip()
+    if not base_url:
+        raise ApiError("请先填接口地址", 400)
+
+    if not api_key:
+        try:
+            providers = (openai_compat.load_config().get("providers") or {})
+        except ProviderUnavailable:
+            providers = {}
+        old = next((p for p in providers.values()
+                    if (p.get("baseUrl") or "").rstrip("/") == base_url), None)
+        api_key = (old or {}).get("apiKey") or ""
+
+    try:
+        found = openai_compat.list_remote_models(base_url, api_key)
+    except ProviderUnavailable as exc:
+        raise ApiError(str(exc), 502, "discover_failed") from exc
+
+    # 返回里**没有** api_key，一个字段都不带。这条由 test_api_key_is_never_returned
+    # 那一族测试盯着。
+    return {"base_url": base_url, "models": found, "count": len(found),
+            "used_saved_key": not (payload.get("api_key") or "").strip() and bool(api_key)}
 
 
 @router.post("/models")
@@ -100,13 +142,21 @@ def save_simple_model(payload: dict = Body(...)) -> dict:
     """
     name = (payload.get("name") or "我的模型").strip()[:60]
     base_url = (payload.get("base_url") or "").strip().rstrip("/")
-    model_id = (payload.get("model_id") or "").strip()
     api_key = (payload.get("api_key") or "").strip()
+
+    # 一次可以存多个模型：从 /models/discover 那个列表里勾几个，
+    # 之后在设置页和对话界面都能切。单个的老写法（model_id）继续认。
+    raw_ids = payload.get("model_ids")
+    if isinstance(raw_ids, list):
+        model_ids = [str(m).strip() for m in raw_ids if str(m).strip()]
+    else:
+        model_ids = [(payload.get("model_id") or "").strip()]
+    model_ids = [m for m in dict.fromkeys(model_ids) if m]     # 去重且保序
 
     if not base_url:
         raise ApiError("请填接口地址（baseUrl）", 400)
-    if not model_id:
-        raise ApiError("请填模型名（model id）", 400)
+    if not model_ids:
+        raise ApiError("请至少选一个模型", 400)
     if not base_url.startswith(("http://", "https://")):
         raise ApiError("接口地址要以 http:// 或 https:// 开头", 400)
 
@@ -131,7 +181,7 @@ def save_simple_model(payload: dict = Body(...)) -> dict:
         "apiKey": api_key,
         # 大多数自建网关不认 developer 角色，默认按不支持处理，降级成 system
         "compat": {"supportsDeveloperRole": False, "supportsReasoningEffort": False},
-        "models": [{"id": model_id, "name": model_id, "input": ["text"]}],
+        "models": [{"id": m, "name": m, "input": ["text"]} for m in model_ids],
     }
 
     config.ensure_dirs()

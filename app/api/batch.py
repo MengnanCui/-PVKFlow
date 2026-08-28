@@ -1,6 +1,7 @@
 """批处理与后台任务。"""
 from __future__ import annotations
 
+import numpy as np
 from fastapi import APIRouter, Body, Query
 from fastapi.responses import Response
 
@@ -72,10 +73,21 @@ def detail(parent_run_id: str) -> dict:
     return guard(batch_mod.batch_detail, parent_run_id)
 
 
+# 膜厚在**另一张**表里：它的时间轴是全部帧，integral / slope 那张可能被
+# max_time_points 抽稀过。见 app/batch.py 里 SampleOutcome.ot_t 的注释。
+_TABLE_OF = {"integral": "batch_curves", "slope": "batch_curves",
+             "ot": "batch_thickness"}
+
+
 def _load_curves(parent_run_id: str, column: str):
-    """读出这次批处理的长表。curves 和 export 走的是同一份数据。"""
+    """读出这次批处理的长表。curves、slices 和 export 走的是同一份数据。"""
     detail_ = guard(batch_mod.batch_detail, parent_run_id)
-    tables = [t for t in detail_["tables"] if t["name"] == "batch_curves"]
+    want = _TABLE_OF.get(column, "batch_curves")
+    tables = [t for t in detail_["tables"] if t["name"] == want]
+    if not tables and want == "batch_thickness":
+        raise ApiError(
+            "这次对比没有膜厚数据。多半是它跑在加膜厚之前 —— 用上面的参数重跑一次就有了。",
+            404, "no_thickness")
     if not tables:
         raise ApiError("这次批处理没有留下曲线表", 404, "no_curves")
 
@@ -94,7 +106,7 @@ def _load_curves(parent_run_id: str, column: str):
 
 @router.get("/runs/{parent_run_id}/curves")
 def curves(parent_run_id: str,
-           column: str = Query("integral", pattern="^(integral|slope)$"),
+           column: str = Query("integral", pattern="^(integral|slope|ot)$"),
            max_series: int = Query(400, ge=1, le=5000)) -> dict:
     """批处理的曲线，按样品分组返回。
 
@@ -122,17 +134,110 @@ def curves(parent_run_id: str,
             "table_id": table["table_id"]}
 
 
+@router.get("/runs/{parent_run_id}/slices")
+def slices(parent_run_id: str,
+           windows: str = Query("0:1", description="逗号分隔的 起:止，单位秒")) -> dict:
+    """不同样品在若干个时间窗内的平均膜厚。
+
+    **这是查询，不是配方。** 膜厚曲线在批处理时就整条算好存下了，
+    这里只是按时间窗切一刀求平均 —— 所以加一个「再看看 15 秒」是即时的，
+    不用重跑。只有改膜厚的波长窗口才要重跑（OT 本来就依赖那个窗口）。
+
+    平均口径：**窗口内全部帧都参与**，另外给一个 ok_ratio 说明其中多少帧可信。
+    这是用户定的口径 —— 不可信的帧会把均值拉偏，所以那个比例必须一起显示，
+    不能只给一个漂亮的数。
+
+    窗口里一帧都没有（比如样品只测到 21 s，你问 28 s）时 mean 返回 null
+    并说明原因。**绝不拿最近的一帧顶替** —— 那会让「这批数据根本没测到 28 s」
+    这个事实消失，而它恰恰是你需要知道的。
+    """
+    wins = _parse_windows(windows)
+    _detail, table, df = _load_curves(parent_run_id, "ot")
+
+    rows = []
+    for sid, g in df.groupby("sample_id", sort=False):
+        t = g["t"].to_numpy()
+        ot = g["ot"].to_numpy()
+        status = g["status"].astype(str).to_numpy()
+        t_lo, t_hi = (float(t.min()), float(t.max())) if len(t) else (0.0, 0.0)
+
+        values = []
+        for lo, hi in wins:
+            sel = (t >= lo) & (t <= hi)
+            vals = ot[sel]
+            finite = vals[np.isfinite(vals)]
+            if not finite.size:
+                values.append({
+                    "mean": None, "n_frames": 0, "n_ok": 0, "ok_ratio": None,
+                    "note": (f"超出该样品的时间范围（{t_lo:g}–{t_hi:g} s）"
+                             if lo > t_hi or hi < t_lo else "这个窗口里没有有效帧"),
+                })
+                continue
+            st = status[sel][np.isfinite(vals)]
+            n_ok = int((st == "OK").sum())
+            values.append({
+                "mean": round(float(finite.mean()), 2),
+                "std": round(float(finite.std()), 2),
+                "n_frames": int(finite.size),
+                "n_ok": n_ok,
+                "ok_ratio": round(n_ok / finite.size, 3),
+                "note": "",
+            })
+
+        rows.append({
+            "sample_id": sid,
+            "label": (f"{g['batch'].iloc[0]}/{g['sample_name'].iloc[0]}"
+                      if g["batch"].iloc[0] else str(g["sample_name"].iloc[0])),
+            "group": str(g["batch"].iloc[0] or ""),
+            "t_min": round(t_lo, 3), "t_max": round(t_hi, 3),
+            "values": values,
+        })
+
+    return {
+        "windows": [{"from": lo, "to": hi} for lo, hi in wins],
+        "rows": rows,
+        "n_samples": len(rows),
+        "unit": "nm",
+        "table_id": table["table_id"],
+    }
+
+
+def _parse_windows(raw: str) -> list[tuple[float, float]]:
+    """`0:1,27.5:28.5` → [(0,1), (27.5,28.5)]。看不懂就说清楚哪一段看不懂。"""
+    out: list[tuple[float, float]] = []
+    for chunk in (raw or "").split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        part = chunk.split(":")
+        if len(part) != 2:
+            raise ApiError(f"时间窗要写成「起:止」，看不懂这个：{chunk}", 400, "bad_window")
+        try:
+            lo, hi = float(part[0]), float(part[1])
+        except ValueError:
+            raise ApiError(f"时间窗里不是数字：{chunk}", 400, "bad_window") from None
+        if hi < lo:
+            lo, hi = hi, lo
+        out.append((lo, hi))
+    if not out:
+        raise ApiError("至少要给一个时间窗", 400, "bad_window")
+    if len(out) > 12:
+        raise ApiError(f"一次最多 12 个时间窗，给了 {len(out)} 个", 400, "too_many")
+    return out
+
+
 # 每个标签配一份英文：导出的脚本会被拷到别的机器上跑，那台机器不一定
 # 装了中文字体。脚本里自己判断，装了用中文，没装退回英文。
 _Y_LABELS = {
     "integral": ("积分强度 (a.u.·nm)", "Band integral (a.u.·nm)"),
     "slope": ("dI/dλ (a.u./nm)", "dI/dλ (a.u./nm)"),
+    "ot": ("光学厚度 OT = n·d·cosθ (nm)", "Optical thickness OT (nm)"),
 }
 
 
 @router.get("/runs/{parent_run_id}/export")
 def export_script(parent_run_id: str,
-                  column: str = Query("integral", pattern="^(integral|slope)$"),
+                  column: str = Query("integral", pattern="^(integral|slope|ot)$"),
                   mode: str = Query("overlay", pattern="^(overlay|band)$"),
                   group_by: str = Query("batch", pattern="^(batch|none)$"),
                   max_series: int = Query(1200, ge=1, le=5000)) -> Response:
@@ -182,7 +287,7 @@ def export_script(parent_run_id: str,
 
 @router.get("/runs/{parent_run_id}/export/preview")
 def export_preview(parent_run_id: str,
-                   column: str = Query("integral", pattern="^(integral|slope)$"),
+                   column: str = Query("integral", pattern="^(integral|slope|ot)$"),
                    mode: str = Query("overlay", pattern="^(overlay|band)$"),
                    group_by: str = Query("batch", pattern="^(batch|none)$")) -> dict:
     """先读脚本，再决定要不要下载。

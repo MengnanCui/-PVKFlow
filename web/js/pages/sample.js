@@ -426,6 +426,9 @@ function drawThickness() {
       }),
 
       figure(withInfo('指定波段条纹', 'band'), {
+        // 功能块里**只放控件**。窗口分辨率那段是说明，不是控件 ——
+        // 放进来会把这一格撑到 166px，同排另一格只有 43px，
+        // subgrid 把行拉到 166px，右边那格就空出一大块。说明走 note，放图下面。
         head: [
           bandControl(L0, L1, () => [S.bandMin, S.bandMax],
             (lo, hi) => { S.bandMin = lo; S.bandMax = hi; drawWindowResolution(); },
@@ -434,8 +437,8 @@ function drawThickness() {
             axis: 'wavenumber', norm: FRINGE_NORM, cmap: 'gray',
             lam_min: S.bandMin, lam_max: S.bandMax }), '指定波段条纹'),
         ],
-        ctl: resHost,
         body: kBand,
+        note: resHost,
       }),
 
       figure(withInfo('指定波段　光学厚度 vs 时间', 'ot'), {
@@ -519,22 +522,21 @@ function paintThickness(hostEl, d, lo, hi) {
       nDeg ? h('span.status.status-warn', `　${fmtInt(nDeg)} 帧可用但精度下降`) : null,
       '　', withInfo(`可测下限 ${fmtNum(d.diagnostics.ot_floor_nm, 0)} nm`, 'ot_floor'),
       '　', withInfo(`量化格距 ${fmtNum(d.diagnostics.ot_quantum_nm, 0)} nm`, 'ot_quantum'),
-      infoDot('ot_status')),
-    statusLegend(d.status_text));
+      // 判级的逐条解释收进这个 ⓘ 里。原来摊在图注下面占三行，
+      // 而那三行绝大多数时候你并不需要看 —— 图上的绿色/琥珀/灰已经把
+      // 「哪段能用」说清楚了，要追究定义时才点开。
+      infoDot('ot_status', { extra: statusExtra(d) })));
 }
 
-/** 这张图里出现过的判级，各自一行人话。文案来自后端，两边不各写一份。 */
-function statusLegend(text) {
-  const seen = Object.entries(text || {});
-  if (!seen.length) return null;
-  return h('div.chart-caption.col.gap-1.mt-2',
-    ...seen.map(([key, v]) => h('div.row.gap-2',
-      // flex:none + 左对齐：只给 minWidth 的话这一列会被压扁，
-      // 三个状态码各缩到各自的宽度，看着就不是一列了
-      h('span.mono.xsmall.dim',
-        { style: { minWidth: '104px', flex: 'none', textAlign: 'left' } }, key),
-      h('span.xsmall', h('span.strong', v.label), '　', v.short),
-      infoDot(`status:${key}`))));
+/** 这张图里出现过的判级，喂给 ⓘ 的附加段。文案来自后端，两边不各写一份。 */
+function statusExtra(d) {
+  const text = d.status_text || {};
+  const counts = {};
+  for (const st of d.status || []) counts[st] = (counts[st] || 0) + 1;
+  const items = Object.entries(text).map(([key, v]) => ({
+    key, label: v.label, note: v.detail || v.short, count: counts[key] ?? null,
+  }));
+  return items.length ? { title: '这张图上出现过的判级', items } : null;
 }
 
 /** 规范 §5 的块 A–D。写死了「禁止简化、禁止省略」，所以整段摊开，不折叠。 */
@@ -558,7 +560,7 @@ function drawWindowResolution() {
   // 这几个数是纯几何量（Δk 决定能分辨的最小光程差），不依赖具体数据。
   // 先看一眼可以避免选一个根本测不出来的窗口。
   mount(refs.resHost,
-    h('div.notice.mb-3',
+    h('div.notice.mt-3',
       h('div.grow',
         h('div.small',
           `窗口 ${S.bandMin.toFixed(0)}–${S.bandMax.toFixed(0)} nm　`,
@@ -788,35 +790,94 @@ function bandControl(min, max, get, onLive, onCommit, opts = {}) {
   const minSpan = opts.minSpan ?? 5;
   const round = (v) => (step >= 1 ? Math.round(v) : Number(v.toFixed(3)));
 
+  // 边界取整。`<input type=range>` 的合法值是 **min + n×step** —— 光谱仪给的
+  // lambda_min 是 330.276，step=1，于是 value=775 被浏览器吸附到 775.276：
+  // 数字框写着 775，滑块停在 775.276，一碰就跳成 776.276。
+  // 数字框和滑块必须用同一套边界，775 才是 775。
+  const lo0Bound = step >= 1 ? Math.ceil(min) : min;
+  const hi0Bound = step >= 1 ? Math.floor(max) : max;
+
   const [lo0, hi0] = get();
-  const numAttrs = { type: 'number', min, max, step, style: { width: '76px' } };
+  const numAttrs = { type: 'number', min: lo0Bound, max: hi0Bound, step,
+                     style: { width: '76px' } };
   const loNum = h('input.input.input-sm', { ...numAttrs, value: lo0 });
   const hiNum = h('input.input.input-sm', { ...numAttrs, value: hi0 });
-  const loRange = h('input.range', { type: 'range', value: lo0, min, max, step });
-  const hiRange = h('input.range', { type: 'range', value: hi0, min, max, step });
+  const rangeAttrs = { type: 'range', min: lo0Bound, max: hi0Bound, step };
+  const loRange = h('input.range', { ...rangeAttrs, value: lo0 });
+  const hiRange = h('input.range', { ...rangeAttrs, value: hi0 });
 
-  const apply = (lo, hi) => {
-    // 保证 lo < hi 且窗口不至于窄到没有意义
-    lo = Math.max(min, Math.min(max - minSpan, lo));
-    hi = Math.min(max, Math.max(lo + minSpan, hi));
-    loNum.value = loRange.value = round(lo);
-    hiNum.value = hiRange.value = round(hi);
-    onLive(Number(loNum.value), Number(hiNum.value));
+  const clamp = (lo, hi) => {
+    lo = Math.max(lo0Bound, Math.min(hi0Bound - minSpan, lo));
+    hi = Math.min(hi0Bound, Math.max(lo + minSpan, hi));
+    return [round(lo), round(hi)];
   };
-  const readLo = (v) => apply(Number(v), Number(hiNum.value));
-  const readHi = (v) => apply(Number(loNum.value), Number(v));
 
-  loNum.oninput = (e) => readLo(e.target.value);
-  hiNum.oninput = (e) => readHi(e.target.value);
-  loRange.oninput = (e) => readLo(e.target.value);
-  hiRange.oninput = (e) => readHi(e.target.value);
+  /** 四个控件全部对齐到同一对值，并把结果送出去。 */
+  const settle = (lo, hi, { skip = null } = {}) => {
+    const [a, b] = clamp(lo, hi);
+    // 正在打字的那个框不回写 —— 回写就是「敲一个字重排一次」，多位数永远输不完
+    if (skip !== loNum) loNum.value = a;
+    if (skip !== hiNum) hiNum.value = b;
+    loRange.value = a;
+    hiRange.value = b;
+    onLive(a, b);
+    return [a, b];
+  };
+
+  // ── 数字框：打字期间只解析，**绝不回写自己**。
+  //
+  // 上一版在 oninput 里直接 clamp 并回写：想输 800，敲下第一个 `8` 的瞬间
+  // 就被钳成 330 —— 于是「波段无法打字只能滑动」。
+  // 半途中的非法值（空串、只敲了一个 8、比另一头还大）不往下传，
+  // 图保持上一次的样子，不闪也不报错；松开焦点时才归一。
+  let committed = clamp(lo0, hi0);
+  const typing = (el, other, isLo) => {
+    el.oninput = () => {
+      const v = Number(el.value);
+      if (el.value === '' || !Number.isFinite(v)) return;
+      const o = Number(other.value);
+      if (!Number.isFinite(o)) return;
+      const [lo, hi] = isLo ? [v, o] : [o, v];
+      if (v < lo0Bound || v > hi0Bound || hi - lo < minSpan) return;  // 还没输完
+      settle(lo, hi, { skip: el });
+    };
+    // 归一放在 change/blur：这时候才知道你输完了。
+    // 每一头各自兜底到滑块上的当前值 —— 只清空了一个框时，另一头不该变成 NaN。
+    const finish = () => {
+      const v = Number(el.value);
+      const o = Number(other.value);
+      const mine = Number.isFinite(v) ? v : Number(isLo ? loRange.value : hiRange.value);
+      const theirs = Number.isFinite(o) ? o : Number(isLo ? hiRange.value : loRange.value);
+      const [a, b] = settle(...(isLo ? [mine, theirs] : [theirs, mine]));
+      // change 和 blur 会接连触发。值没变就别再打一次后端 ——
+      // 一次输入换来两个请求，图会闪两下。
+      if (a !== committed[0] || b !== committed[1]) {
+        committed = [a, b];
+        onCommit?.();
+      }
+    };
+    el.onchange = finish;
+    el.onblur = finish;
+  };
+  typing(loNum, hiNum, true);
+  typing(hiNum, loNum, false);
+
+  loRange.oninput = () => settle(Number(loRange.value), Number(hiNum.value));
+  hiRange.oninput = () => settle(Number(loNum.value), Number(hiRange.value));
   if (onCommit) {
     // 打后端的操作等松手，别在拖动过程中发几十个请求
-    loRange.onchange = onCommit;
-    hiRange.onchange = onCommit;
-    loNum.onchange = onCommit;
-    hiNum.onchange = onCommit;
+    const slid = () => {
+      committed = [Number(loRange.value), Number(hiRange.value)];
+      onCommit();
+    };
+    loRange.onchange = slid;
+    hiRange.onchange = slid;
   }
+
+  // 初值也过一遍 clamp，保证一上来滑块和数字框就是同一个数
+  const [a, b] = clamp(lo0, hi0);
+  loNum.value = loRange.value = a;
+  hiNum.value = hiRange.value = b;
 
   return h('div.band-control',
     h('div.row.gap-2', h('span.small.muted', opts.label ?? '波段'), loNum,

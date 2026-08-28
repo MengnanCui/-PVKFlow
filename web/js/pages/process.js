@@ -246,7 +246,11 @@ function drawList() {
           }, '取消选择'),
           h('button.btn.btn-primary.btn-sm#runBatchBtn', {
             disabled: !S.facets?.total,
-            onclick: () => batchDialog(),
+            // 直接跑，用默认配方，直接落到对比页。
+            // 原来先弹一个填六个数的对话框 —— 可那时候你还没看到任何结果，
+            // 六个数该填什么根本无从判断。参数现在摆在对比页上，
+            // 先看到东西再改，改完重跑就是新的一次对比。
+            onclick: (e) => startCompare(e.target),
           }, batchLabel()))),
       h('div.panel-body.flush#tableHost')));
 
@@ -464,6 +468,45 @@ function renderRow(r, index) {
 // 和 selection.suggest_expansion 都留着 —— 以后想要，换个不挡路的位置接回来。
 
 // ------------------------------------------------------------------ 批处理
+// 对比的默认配方。和单样品页的默认窗口一致 ——
+// 775 避开吸收边、1120 是光谱仪上限。进去之后在对比页上随便改。
+const DEFAULT_RECIPE = {
+  band_min: 775, band_max: 1120,
+  integral_min: 800, integral_max: 950,
+  slope_center: 950, slope_half_width: 10,
+};
+
+/** 选中几个 → 直接开跑 → 直接落到对比页（页面上自己显示进度）。 */
+async function startCompare(btn) {
+  const useChecked = S.checked.size > 0;
+  const filter = useChecked ? { ids: [...S.checked] } : S.filter;
+
+  busy(btn, true);
+  try {
+    const pv = await api.batchPreview(filter);
+    if (!pv.with_matrix) {
+      toast('选中的样品里没有光谱矩阵，没法对比', 'err');
+      return;
+    }
+    if (pv.without_matrix) {
+      // 跳过了一些样品要说出来，别让人以为全都比了
+      toast(`${pv.without_matrix} 个样品没有光谱矩阵，这次跳过`, 'warn');
+    }
+    const stamp = new Date().toLocaleString('zh-CN', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const r = await api.batchRun({
+      filter, recipe: DEFAULT_RECIPE,
+      title: `${pv.with_matrix} 个样品 · ${stamp}`,
+    });
+    // 传 task_id：这一刻还没有 parent_run_id，对比页会自己等
+    refs.nav('batch', { arg: r.task.task_id });
+  } catch (err) {
+    toast(err.message, 'err');
+  } finally {
+    busy(btn, false);
+  }
+}
+
 async function batchDialog(recipeOverride = null) {
   const useChecked = S.checked.size > 0;
   const filter = useChecked ? { ids: [...S.checked] } : S.filter;

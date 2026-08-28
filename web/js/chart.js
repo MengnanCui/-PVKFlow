@@ -424,3 +424,146 @@ export function quantileBand(series, { gridPoints = 240 } = {}) {
   return { x: grid, median, q1, q3, n: valid.length };
 }
 
+
+/**
+ * 分组柱状图。一组 = 一个样品，一根柱 = 一个时间窗。
+ *
+ * 为什么另写一个而不是拿 xyChart 凑：横轴是**类别**不是数轴。用散点图冒充的话
+ * 样品名放不下、也没法把同一个样品的两根柱挨在一起 —— 而「挨在一起」正是
+ * 「这个样品 1 秒和 28 秒差多少」这件事唯一好读的画法。
+ *
+ * `groups`: `[{ label, values: [{ value, ratio, note }] }]`
+ *   - `value` 为 null 时那根柱不画，位置留白 + 一个小小的「—」，
+ *     不画成 0：0 nm 和「没测到」是两回事
+ *   - `ratio` 是可信比例，画成柱子上的实心部分。整根淡、可信那截深 ——
+ *     一眼看得出这个数有多少是靠得住的
+ * `seriesLabels`: 每根柱的名字（时间窗），进图例
+ */
+export function barChart({ groups = [], seriesLabels = [], yLabel = '', unit = '' },
+                         { height = 320 } = {}) {
+  const host = document.createElement('div');
+  host.className = 'chart-host';
+  if (!groups.length || !seriesLabels.length) {
+    host.innerHTML = '<div class="empty empty-sm"><div class="empty-text">'
+      + '没有可对比的数据</div></div>';
+    return host;
+  }
+
+  const W = 760, H = height;
+  const M = { t: 14, r: 16, b: 64, l: 68 };
+  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+
+  const all = groups.flatMap((g) => g.values.map((v) => v?.value))
+    .filter((v) => Number.isFinite(v));
+  const ymax = all.length ? Math.max(...all) : 1;
+  const gy = niceTicks(0, ymax, 5);
+  const top = Math.max(gy.hi, ymax) || 1;
+  const sy = (v) => M.t + ih - (v / top) * ih;
+
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
+                          preserveAspectRatio: 'xMidYMid meet' });
+
+  // 横向网格线。柱状图比折线更需要它 —— 比高度全靠这几条线
+  const grid = el('g', { stroke: 'var(--line)', 'stroke-width': 1 });
+  for (const t of gy.ticks) {
+    grid.appendChild(el('line', { x1: M.l, x2: M.l + iw, y1: sy(t), y2: sy(t) }));
+  }
+  svg.appendChild(grid);
+
+  const nS = seriesLabels.length;
+  const gw = iw / groups.length;
+  const pad = Math.min(14, gw * 0.16);
+  const bw = Math.max(3, (gw - pad * 2) / nS - 3);
+
+  groups.forEach((g, gi) => {
+    const x0 = M.l + gi * gw + pad;
+    g.values.forEach((v, si) => {
+      const x = x0 + si * (bw + 3);
+      if (!Number.isFinite(v?.value)) {
+        // 没有数据的位置：一个淡淡的「—」。画成 0 高的柱子会被读成「测出来是 0」
+        const dash = Object.assign(
+          el('text', { x: x + bw / 2, y: M.t + ih - 6, 'text-anchor': 'middle',
+                       fill: 'var(--ink-4)', 'font-size': 13 }),
+          { textContent: '—' });
+        dash.appendChild(Object.assign(el('title'), {
+          textContent: `${g.label} · ${seriesLabels[si]}：${v?.note || '没有数据'}` }));
+        svg.appendChild(dash);
+        return;
+      }
+      const yTop = sy(v.value);
+      const hAll = M.t + ih - yTop;
+      const color = seriesColor(si);
+
+      // 整根：淡色 = 全部帧的均值
+      const bar = el('rect', { x, y: yTop, width: bw, height: hAll,
+                               fill: color, opacity: 0.32, rx: 2 });
+      svg.appendChild(bar);
+      // 可信那一截：深色实心，高度按可信比例
+      const r = Number.isFinite(v.ratio) ? Math.max(0, Math.min(1, v.ratio)) : 0;
+      if (r > 0) {
+        svg.appendChild(el('rect', {
+          x, y: M.t + ih - hAll * r, width: bw, height: hAll * r,
+          fill: color, rx: 2 }));
+      }
+      bar.appendChild(Object.assign(el('title'), {
+        textContent: `${g.label} · ${seriesLabels[si]}\n`
+          + `${v.value} ${unit}（${v.n_frames ?? '?'} 帧的平均）\n`
+          + `其中 ${v.n_ok ?? 0} 帧可信（${Math.round(r * 100)}%）` }));
+    });
+
+    // 组名。样品名很长，斜着放，放不下就截断（tooltip 里给全名）
+    const label = String(g.label);
+    const short = label.length > 16 ? label.slice(0, 15) + '…' : label;
+    const tx = M.l + gi * gw + gw / 2;
+    const txt = Object.assign(
+      el('text', { x: tx, y: M.t + ih + 14, 'text-anchor': 'end',
+                   fill: 'var(--ink-2)', 'font-size': 11,
+                   transform: `rotate(-28 ${tx} ${M.t + ih + 14})` }),
+      { textContent: short });
+    txt.appendChild(Object.assign(el('title'), { textContent: label }));
+    svg.appendChild(txt);
+  });
+
+  const axis = el('g', { stroke: 'var(--ink-3)', 'stroke-width': 2 });
+  axis.appendChild(el('line', { x1: M.l, y1: M.t, x2: M.l, y2: M.t + ih }));
+  axis.appendChild(el('line', { x1: M.l, y1: M.t + ih, x2: M.l + iw, y2: M.t + ih }));
+  for (const t of gy.ticks) {
+    axis.appendChild(el('line', { x1: M.l, x2: M.l + 6, y1: sy(t), y2: sy(t) }));
+  }
+  svg.appendChild(axis);
+
+  const labels = el('g', { fill: 'var(--ink-3)', 'font-size': 11,
+                           'font-family': 'var(--font-mono)' });
+  for (const t of gy.ticks) {
+    labels.appendChild(Object.assign(
+      el('text', { x: M.l - 8, y: sy(t) + 3.5, 'text-anchor': 'end' }),
+      { textContent: tickLabel(t, gy.step) }));
+  }
+  svg.appendChild(labels);
+
+  if (yLabel) {
+    svg.appendChild(Object.assign(
+      el('text', { x: 13, y: M.t + ih / 2, 'text-anchor': 'middle',
+                   fill: 'var(--ink-2)', 'font-size': 12,
+                   'font-family': 'var(--font)',
+                   transform: `rotate(-90 13 ${M.t + ih / 2})` }),
+      { textContent: yLabel }));
+  }
+
+  host.appendChild(svg);
+
+  const legend = document.createElement('div');
+  legend.className = 'chart-legend';
+  seriesLabels.forEach((name, i) => {
+    const span = document.createElement('span');
+    span.innerHTML = `<i style="background:${seriesColor(i)}"></i>`;
+    span.appendChild(document.createTextNode(name));
+    legend.appendChild(span);
+  });
+  const hint = document.createElement('span');
+  hint.className = 'dim';
+  hint.textContent = '深色 = 其中可信的比例';
+  legend.appendChild(hint);
+  host.appendChild(legend);
+  return host;
+}
