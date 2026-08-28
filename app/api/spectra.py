@@ -247,9 +247,11 @@ def thickness(
     artifact_id: str,
     lam_min: float = Query(775.0, gt=0),
     lam_max: float = Query(1120.0, gt=0),
-    max_points: int = Query(0, ge=0, le=5000),
 ) -> dict:
     """光学厚度 OT = n·d·cosθ vs 时间。
+
+    **逐帧全算、逐帧全给。** 没有抽样参数 —— 抽样过的膜厚曲线看不出
+    干燥过程在哪一秒变坏，而那正是这条曲线唯一的用处。
 
     算法是 fringe-optical-thickness 冻结规范的可执行副本
     （app/analysis/fringe_ot.py），STEP 0–10 逐条对应。
@@ -269,6 +271,9 @@ def thickness(
             sm.lam, sm.t, sm.M,
             target_times_s="all",
             window_nm=[float(lam_min), float(lam_max)],
+            # 「算得准」的门槛按平台的实际样品调到 2 条纹（规范 DEFAULTS 是 3）。
+            # 显式 override，DEFAULTS 不动 —— 块 A 回显的是这里传的值。
+            accurate_cycles=fringe_ot.PLATFORM_ACCURATE_CYCLES,
             input_is_absorbance=bool(sm.meta.get("input_is_absorbance", False)),
         )
     except fringe_ot.FringeError as exc:
@@ -287,9 +292,14 @@ def thickness(
         "n_points": len(pts),
         "n_ok": res["n_ok"],
         "diagnostics": res["diagnostics"],
-        # §5 要求块 A–D 全文，且禁止简化、禁止省略。这里原样带上，
-        # 前端把它整段显示出来，不折叠。
-        "report": fringe_ot.format_report(res, max_rows=max_points or 24),
+        # 每一档判级在界面上怎么说人话。前端据此上色和写图注，
+        # 不在两边各维护一份文案。
+        "status_text": {k: fringe_ot.explain_status(k)
+                        for k in sorted({q["status"] for q in pts})},
+        # §5 要求块 A–D 全文，且禁止简化、禁止省略。
+        # **max_rows=0 = 逐帧全列**：原来传 24，211 帧被抽成 24 行，
+        # 时刻分辨率低到看不出曲线在哪一段变坏，等于把最有用的信息抽掉了。
+        "report": fringe_ot.format_report(res, max_rows=0),
     }
 
 

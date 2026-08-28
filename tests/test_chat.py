@@ -421,3 +421,68 @@ def test_a_plain_answer_produces_no_card(client, samples, monkeypatch):
         "conversation"]["conversation_id"]
     r = client.post(f"/api/chat/conversations/{cid}/messages", json={"content": "怎么样"})
     assert not [d for k, d in _frames(r.text) if k == "card"]
+
+
+# ---------------------------------------------------------------- 术语 ⓘ 弹窗
+# 界面上每个词旁边那个小圆圈点开是一条独立的对话线。三件事要钉住：
+# 线之间不串、定义原文真的进了 prompt、别拿一张 40 行的样品表去答一个名词解释。
+
+def test_each_term_gets_its_own_thread(client, samples, monkeypatch):
+    _use(monkeypatch, _FakeProvider(["嗯"]))
+    a = client.post("/api/chat/conversations",
+                    json={"scope": {"topic": "glossary:ot"}}).json()
+    b = client.post("/api/chat/conversations",
+                    json={"scope": {"topic": "glossary:cycles"}}).json()
+    client.post("/api/chat/conversations/"
+                f"{a['conversation']['conversation_id']}/messages",
+                json={"content": "OT 是什么"})
+
+    only_ot = client.get("/api/chat/conversations", params={"topic": "glossary:ot"}).json()
+    assert [c["conversation_id"] for c in only_ot["conversations"]] \
+        == [a["conversation"]["conversation_id"]]
+
+    # 不带 topic 还是全都列出来 —— 抽屉的历史列表里也找得到这些
+    every = client.get("/api/chat/conversations").json()["conversations"]
+    ids = {c["conversation_id"] for c in every}
+    assert a["conversation"]["conversation_id"] in ids
+    assert b["conversation"]["conversation_id"] in ids
+
+
+def test_the_definition_on_screen_is_what_the_model_is_told(client, samples, monkeypatch):
+    """术语表是界面文案，后端不另存一份 —— 但送进 prompt 的必须是同一份。"""
+    p = _use(monkeypatch, _FakeProvider(["好"]))
+    cid = client.post("/api/chat/conversations",
+                      json={"scope": {"topic": "glossary:ot_status"}}).json()[
+        "conversation"]["conversation_id"]
+    client.post(f"/api/chat/conversations/{cid}/messages",
+                json={"content": "为什么这帧不可信？",
+                      "context_note": "可信度判级\n判据只打标志，绝不修改数值。"})
+
+    system = p.seen[0].content
+    assert "判据只打标志，绝不修改数值。" in system
+    assert "不要输出 json 动作块" in system    # 名词解释不该诱它去操作平台
+
+
+def test_a_term_question_does_not_drag_in_the_sample_table(client, samples, monkeypatch):
+    """问「LOW_CYCLES 是什么意思」时，40 行样品明细帮不上忙，
+    「请先给一个收窄的筛选式」那句更是彻底跑偏。"""
+    p = _use(monkeypatch, _FakeProvider(["好"]))
+    cid = client.post("/api/chat/conversations",
+                      json={"scope": {"topic": "glossary:cycles"}}).json()[
+        "conversation"]["conversation_id"]
+    client.post(f"/api/chat/conversations/{cid}/messages", json={"content": "条纹数是什么"})
+
+    blob = "\n".join(str(m.content) for m in p.seen)
+    assert "样品明细" not in blob
+    assert "收窄" not in blob
+    assert "概览" in blob                       # L1 汇总还是给的，好把定义落到他的数据上
+
+
+def test_topic_is_a_label_not_a_place_to_stash_sample_ids(client, samples):
+    """topic 只是一根线的名字。范围仍然只认筛选式 —— 别让它变成第二个后门。"""
+    r = client.post("/api/chat/conversations",
+                    json={"scope": {"topic": "glossary:ot", "ids": ["s1", "s2"]}})
+    scope = r.json()["conversation"]["scope"]
+    assert scope["topic"] == "glossary:ot"
+    assert "ids" not in scope
+    assert scope["filter"] == {}

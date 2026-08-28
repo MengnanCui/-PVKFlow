@@ -7,6 +7,25 @@
 import { api } from '../api.js';
 import { h, mount, modal, toast, fmtBytes, empty, skeletonRows, errorBox, busy } from '../ui.js';
 
+// 最近导入过的目录。导数据是个反复动作 —— 每次都从「起始位置」一层层点回去
+// 是纯粹的浪费。存 localStorage，跟工作区无关，换工作区也还在。
+const RECENT_KEY = 'hte.import.recent';
+const RECENT_MAX = 3;
+
+function recentPaths() {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY));
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, RECENT_MAX) : [];
+  } catch { return []; }               // 隐私模式下 localStorage 会抛
+}
+
+function rememberPath(path) {
+  if (!path) return;
+  // 去重后放到最前面，只留 3 个
+  const next = [path, ...recentPaths().filter((p) => p !== path)].slice(0, RECENT_MAX);
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch { /* 同上 */ }
+}
+
 export async function openImportDialog({ onDone } = {}) {
   let cursor = null;
   const body = h('div');
@@ -24,9 +43,22 @@ export async function openImportDialog({ onDone } = {}) {
     mount(body, skeletonRows(3));
     try {
       const { roots } = await api.roots();
+      const recent = recentPaths();
       mount(body,
         h('p.small.muted', '选择一个目录，下一步会先给出扫描预览，确认后才写入。'),
-        h('div.mt-3.panel',
+        recent.length
+          ? h('div.mt-3',
+              h('div.small.strong.mb-2', '最近导入过'),
+              h('div.panel',
+                h('div.list', ...recent.map((rp) =>
+                  h('button.list-row', { onclick: () => showDir(rp) },
+                    h('span.muted', '↻'),
+                    h('div.grow.min0',
+                      h('div.name.truncate', rp.split(/[\\/]/).filter(Boolean).pop() || rp),
+                      h('div.meta.mono.truncate', { title: rp }, rp)))))))
+          : null,
+        h('div.mt-4.small.strong.mb-2', '起始位置'),
+        h('div.panel',
           h('div.list', ...roots.map((r) =>
             h('button.list-row', { onclick: () => showDir(r.path) },
               h('div.grow', h('div.name', r.name), h('div.meta.mono', r.path)))))),
@@ -119,6 +151,7 @@ export async function openImportDialog({ onDone } = {}) {
       return;
     }
     busy(button, false);
+    rememberPath(path);        // 扫得动才记 —— 记一个打不开的路径是帮倒忙
     renderPreview(result);
   }
 

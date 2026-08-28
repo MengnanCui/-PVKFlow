@@ -4,6 +4,7 @@
 // 并在图注里写明降级了。不偷偷少画。
 
 import { api } from '../api.js';
+import { infoDot } from '../components/info.js';
 import {
   h, mount, clear, toast, empty, skeletonRows, errorBox, busy,
   fmtInt, fmtNum, fmtTime, modal, sampleLabel,
@@ -173,10 +174,12 @@ function drawChart() {
     h('div.section-head',
       h('div.section-title', '特殊处理对比'),
       h('div.row.gap-3.wrap',
-        select('显示', S.mode,
-          [['auto', `自动（>${SPAGHETTI_LIMIT} 条降级）`], ['all', '全部画出'],
-           ['band', '强制分位数带']],
-          (v) => { S.mode = v; drawChart(); }),
+        h('span.row.gap-1',
+          select('显示', S.mode,
+            [['auto', `自动（>${SPAGHETTI_LIMIT} 条降级）`], ['all', '全部画出'],
+             ['band', '强制分位数带']],
+            (v) => { S.mode = v; drawChart(); }),
+          infoDot('quantile_band')),
         select('着色', S.groupBy, [['batch', '按样品号'], ['none', '逐条']],
           (v) => { S.groupBy = v; drawChart(); }))),
     h('div.fig-grid-2',

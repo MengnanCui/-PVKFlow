@@ -190,12 +190,20 @@
    自己那一行的顶边就行。 */
 .fig-grid-2 > .figure > *, .fig-grid-4 > .figure > * { align-self: start; }
 
-/* 标题跟控件同处一条 flex 行时会被垂直居中，而控件有高有矮
-   （下拉框一行、波段控件两行），于是两格的标题差几个像素。
-   在并排的图里让整行贴顶：标题永远从这一带的顶边开始。 */
+/* 标题行现在只有标题（控件全下沉到第二行），所以本来就一样高。
+   仍然贴顶 + 定高，免得以后有人往标题行里塞东西时又不齐。 */
 .fig-grid-2 .figure-head, .fig-grid-4 .figure-head { align-items: flex-start; }
 .fig-grid-2 .figure-title, .fig-grid-4 .figure-title {
   display: flex; align-items: center; min-height: 26px;
+}
+/* 功能块：有内容时给个浅底和内边距，让「这一块是控件」一眼看得出来；
+   空的时候什么都不画，但**仍然占着 subgrid 的那一行** —— 这正是
+   「没有功能模块就空着，总之对齐」。 */
+.fig-grid-2 .figure-ctl:not(:empty), .fig-grid-4 .figure-ctl:not(:empty) {
+  padding: var(--s2x) var(--s3x);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
 }
 
 /* subgrid 不可用时退回原来的独立布局：图不齐，但不会错位塌掉 */

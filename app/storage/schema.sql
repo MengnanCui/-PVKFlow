@@ -202,6 +202,8 @@ CREATE INDEX IF NOT EXISTS idx_mea_measured_at
 CREATE INDEX IF NOT EXISTS idx_mea_sample_method ON measurement(sample_id, method);
 CREATE INDEX IF NOT EXISTS idx_artifact_matrix ON artifact(sample_id, is_matrix);
 CREATE INDEX IF NOT EXISTS idx_artifact_path ON artifact(display_path);
+-- 导入去重要按绝对路径查一次（「同一个文件再导一遍」）
+CREATE INDEX IF NOT EXISTS idx_artifact_origpath ON artifact(original_path);
 
 -- ---------------------------------------------------------------- AI 会话
 -- 「比完就没了、找不到在哪儿」在对比那边靠 analysis_run 解决了，

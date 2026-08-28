@@ -69,10 +69,29 @@ SYSTEM_PROMPT = """\
 """
 
 
+GLOSSARY_PROMPT = """\
+你是 HTE Studio 里的术语解释助手。用户在界面上点开了某个术语旁边的 ⓘ，\
+想把这个概念弄明白。
+
+下面会给你两样东西：
+
+1. **平台里这条术语的权威定义** —— 这是界面上正在显示给用户看的原文。\
+   你的回答必须和它一致。它没说的你可以补，它说了的不要改口，\
+   更不要另编一套定义出来（用户会同时看到两份，对不上就没法用了）。
+2. **用户当前库里的汇总统计** —— 用来把抽象定义落到他自己的数据上。\
+   这里面没有的数字不要编。
+
+回答用中文，直接，不要客套话。用户问的是概念，不是要你操作平台 ——\
+**不要输出 json 动作块。**
+"""
+
+
 # ---------------------------------------------------------------- 会话 CRUD
 @router.get("/conversations")
-def list_conversations(limit: int = Query(50, ge=1, le=200)) -> dict:
-    return {"conversations": conversations.list_recent(limit)}
+def list_conversations(limit: int = Query(50, ge=1, le=200),
+                       topic: str = Query("")) -> dict:
+    """带 `topic` 就只列这个术语下的对话（术语 ⓘ 弹窗用），不带就是全部。"""
+    return {"conversations": conversations.list_recent(limit, topic=topic or None)}
 
 
 @router.post("/conversations")
@@ -145,7 +164,10 @@ def post_message(conversation_id: str, payload: dict = Body(...)):
     # ★ 没配模型要在**开流之前**炸。开了流就再也改不了状态码了。
     provider, model = _resolve_or_501(payload.get("provider"), payload.get("model"))
 
-    built = guard(ai_context.build, scope)
+    # 术语对话不给逐样品明细：用户问的是「DEGRADED 是什么意思」，
+    # 塞 40 行样品表既挤掉定义本身，又会诱着模型去提议收窄筛选式。
+    topic = scope.get("topic") or ""
+    built = guard(ai_context.build, scope, overview_only=bool(topic))
     facts = ai_context.to_prompt(built["facts"])
 
     history = conversations.history_for_model(conversation_id)
@@ -154,7 +176,16 @@ def post_message(conversation_id: str, payload: dict = Body(...)):
     if conv["title"] == "新对话":
         conversations.rename(conversation_id, question[:40])
 
-    messages = [ChatMessage("system", SYSTEM_PROMPT)]
+    system = SYSTEM_PROMPT
+    if topic:
+        # 定义原文由前端带上来 —— 术语表是界面文案，跟界面放在一起才不会漂。
+        # 两份定义各自维护迟早对不上，那时候用户看到的和模型说的就不是一回事了。
+        note = str(payload.get("context_note") or "").strip()[:2000]
+        system = GLOSSARY_PROMPT
+        if note:
+            system += f"\n\n界面上这条术语的定义原文：\n{note}\n"
+
+    messages = [ChatMessage("system", system)]
     messages += [ChatMessage(m["role"], m["content"]) for m in history]
     messages.append(ChatMessage("user", f"已知事实：\n{facts}\n\n我的问题：{question}"))
 
@@ -308,4 +339,7 @@ def _clean_scope(raw) -> dict:
         out["filter"] = {}
     if raw.get("label"):
         out["label"] = str(raw["label"])[:120]
+    # 术语 ⓘ 弹窗：一条术语一条对话线。只是个标签，不参与查询。
+    if raw.get("topic"):
+        out["topic"] = str(raw["topic"])[:80]
     return out

@@ -1,6 +1,7 @@
 // 总览：只显示数据库里真实存在的数字。为零就是零，不编。
 
 import { api } from '../api.js';
+import { withInfo } from '../components/info.js';
 import { h, mount, render, fmtInt, fmtTime, empty, sampleLabel } from '../ui.js';
 
 export const meta = {
@@ -21,8 +22,8 @@ export function view(host, { nav }) {
     return h('div',
       h('div.section',
         metricRow([
-          ['样品', c.samples, '实验对象'],
-          ['原始文件', c.artifacts, '已登记'],
+          [withInfo('样品', 'sample_identity'), c.samples, '实验对象'],
+          [withInfo('原始文件', 'storage_mode'), c.artifacts, '已登记'],
           ['关键结果', c.results, '结构化字段值'],
           ['待复核', c.pending_review, '处理后需人工确认'],
         ])),

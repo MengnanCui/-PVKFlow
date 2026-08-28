@@ -4,6 +4,7 @@
 // 中间的列表只是它的一个视图。手点几个之后平台会提议「要不要扩展成规则」。
 
 import { api } from '../api.js';
+import { infoDot } from '../components/info.js';
 import {
   h, mount, clear, toast, empty, skeletonRows, errorBox, busy,
   fmtBytes, fmtInt, modal,
@@ -228,10 +229,12 @@ function drawList() {
             }),
             h('span.small#selectCount',
               selectedCount ? `已选 ${fmtInt(selectedCount)}` : '全选本页')),
-          h('span.xsmall.dim', '点行选中 · 按住拖着刷一片 · shift+点 选中间一整段 · 双击或「打开」进样品'),
+          h('span.xsmall.dim', '点行选中 · 按住拖着刷一片 · shift+点 选中间一整段 · 双击或「打开」进样品',
+            infoDot('sample_identity')),
           S.total > all
             ? h('span.xsmall.dim',
-                `· 列表载入前 ${fmtInt(all)} 行，「批处理全部」按的是筛选式命中的 ${fmtInt(S.total)} 个`)
+                `· 列表载入前 ${fmtInt(all)} 行，「批处理全部」按的是筛选式命中的 ${fmtInt(S.total)} 个`,
+                infoDot('filter_expr'))
             : null),
         h('div.row.gap-2',
           h('button.btn.btn-sm#clearSelBtn', {

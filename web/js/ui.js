@@ -185,3 +185,37 @@ export function busy(button, on) {
   button.classList.toggle('is-busy', on);
   button.disabled = on;
 }
+
+// ------------------------------------------------------------------ 轻量文本
+/** 极简 markdown：围栏代码块 + 段落 + 粗体 + 行内代码。
+ *
+ * 不值得为它引一个库，但也不能不管 —— 模型是真的会吐 `**` 和反引号的，
+ * 术语表的定义里也用粗体标了重点。原样显示出来就是一串星号，看着像坏了。
+ *
+ * 全程只造文本节点，不碰 innerHTML：模型的输出是不可信文本。
+ */
+export function richText(text, cls = 'ai-p') {
+  const out = [];
+  String(text ?? '').split(/```/).forEach((part, i) => {
+    if (i % 2 === 1) { out.push(h('pre.ai-code', part.replace(/^\w*\n/, ''))); return; }
+    for (const para of part.split(/\n{2,}/)) {
+      const t = para.trim();
+      if (t) out.push(h(`p.${cls}`, ...inlineText(t)));
+    }
+  });
+  return out;
+}
+
+/** `**粗体**` 和 `` `行内代码` `` 切成节点。切不出来就原样当纯文本。 */
+export function inlineText(text) {
+  const out = [];
+  const re = /\*\*([^*]+)\*\*|`([^`]+)`/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(m[1] !== undefined ? h('strong', m[1]) : h('code.ai-inline', m[2]));
+    last = re.lastIndex;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out.length ? out : [text];
+}

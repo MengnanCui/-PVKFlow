@@ -5,6 +5,7 @@
 // 唯一的入口是跑完那一下的「看结果」按钮，页面一刷新就没了。
 
 import { api } from '../api.js';
+import { withInfo } from '../components/info.js';
 import { h, mount, render, empty, fmtInt, fmtTime } from '../ui.js';
 
 export const meta = {
@@ -39,7 +40,7 @@ export async function view(host, ctx) {
         h('table.data',
           h('thead', h('tr',
             h('th', '名称'), h('th', '样品'), h('th', '失败'),
-            h('th', 'AI'), h('th', '配方'), h('th', '时间'))),
+            h('th', withInfo('AI', 'ai_scope')), h('th', '配方'), h('th', '时间'))),
           h('tbody', ...runs.map((r) => row(r, ctx, d.pinCounts[r.analysis_run_id] || 0))))));
   });
 }

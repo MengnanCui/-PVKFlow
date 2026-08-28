@@ -760,3 +760,69 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   background: var(--surface-sunk);
   border: 1px solid var(--line);
 }
+
+/* ------------------------------------------------------------------ 术语 ⓘ
+   词旁边那个小圆圈。要求互相矛盾：显眼到能被发现，安静到不抢主内容。
+   折中：默认用 --ink-4（比正文淡），hover 才提到强调色；尺寸跟着行高走，
+   不用固定 px —— 它出现在标题、图注、表头三种字号里。 */
+.info-dot {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.15em; height: 1.15em; margin-left: .3em; padding: 0;
+  border: 0; border-radius: 50%; background: transparent;
+  color: var(--ink-4); font-size: .92em; line-height: 1; cursor: help;
+  vertical-align: baseline; flex: none;
+  transition: color .12s, background .12s;
+}
+.info-dot:hover, .info-dot:focus-visible {
+  color: var(--accent); background: var(--surface-2); outline: none;
+}
+.with-info { display: inline-flex; align-items: baseline; gap: 0; }
+
+.btn-xs { padding: 1px 6px; font-size: var(--t-xs); }
+.danger { color: var(--danger); }
+
+.info-wrap { display: flex; flex-direction: column; gap: var(--s4x); }
+
+/* 上半截：固定定义。深底一块，跟下面的对话区分开 —— 这一段不受模型影响，
+   视觉上也要看得出是两种东西。 */
+.info-def {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--r); padding: var(--s3x) var(--s4x);
+}
+.info-what { font-size: var(--t-md); line-height: 1.55; color: var(--ink); }
+.info-why  { margin-top: var(--s3x); padding-top: var(--s3x);
+             border-top: 1px dashed var(--line); }
+.info-why .info-p { font-size: var(--t-sm); line-height: 1.65; color: var(--ink-2); }
+
+.info-chat { display: flex; flex-direction: column; gap: var(--s2x); }
+.info-chat-head { display: flex; align-items: center; justify-content: space-between;
+                  font-size: var(--t-xs); }
+
+.info-thread {
+  display: flex; flex-direction: column; gap: var(--s3x);
+  max-height: 40vh; overflow-y: auto; min-height: 0;
+}
+.info-hint { display: flex; align-items: center; gap: var(--s2x);
+             font-size: var(--t-sm); padding: var(--s2x) 0; }
+
+.info-msg { display: flex; flex-direction: column; gap: 2px; max-width: 100%; }
+.info-msg.is-user { align-items: flex-end; }
+.info-msg-body {
+  border-radius: var(--r); padding: var(--s2x) var(--s3x);
+  font-size: var(--t-sm); line-height: 1.6; max-width: 88%;
+  overflow-wrap: anywhere;
+}
+.info-msg.is-user .info-msg-body { background: var(--accent-wash); color: var(--ink); }
+.info-msg.is-assistant .info-msg-body { background: var(--surface-2); color: var(--ink); }
+.info-msg-time { font-size: var(--t-xs); }
+.info-p { margin: 0; }
+.info-p + .info-p { margin-top: .55em; }
+
+.info-compose { display: flex; align-items: flex-end; gap: var(--s2x); }
+.info-input {
+  flex: 1; min-width: 0; resize: none; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface); color: var(--ink);
+  padding: 6px 10px; font: inherit; font-size: var(--t-sm); line-height: 1.5;
+}
+.info-input:focus { outline: none; border-color: var(--accent); }

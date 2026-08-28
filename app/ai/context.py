@@ -29,12 +29,17 @@ DETAIL_MAX = getattr(config, "AI_DETAIL_MAX", 40)
 FACTS_BYTE_LIMIT = 60_000
 
 
-def build(scope: dict | None, *, detail_max: int = DETAIL_MAX) -> dict:
+def build(scope: dict | None, *, detail_max: int = DETAIL_MAX,
+          overview_only: bool = False) -> dict:
     """按范围拼一份事实包。
 
     scope 形如 `{"mode": "selected"|"all", "filter": {...}, "label": "..."}`。
     `mode` 只影响措辞（告诉模型这是你手挑的还是筛出来的），真正决定看什么的是
     `filter` —— 两种模式走的是同一条查询路径。
+
+    `overview_only=True` 时只给 L1 概览：不给逐样品明细，也不发「请先收窄」
+    那句指令。术语 ⓘ 弹窗走这条 —— 问「LOW_CYCLES 是什么意思」的时候，
+    一张 40 行的样品表帮不上忙，反而会把模型带去提议筛选式。
 
     返回 `{"facts": {...}, "n_samples": int, "needs_narrowing": bool}`。
     """
@@ -56,6 +61,8 @@ def build(scope: dict | None, *, detail_max: int = DETAIL_MAX) -> dict:
 
     if n == 0:
         facts["提示"] = "这个范围里一个样品都没有。请提醒用户先导入数据或放宽筛选。"
+    elif overview_only:
+        pass
     elif needs_narrowing:
         facts["为什么没有逐个样品的明细"] = (
             f"命中 {n} 个样品，超过一次能逐条阅读的上限（{detail_max} 个）。"

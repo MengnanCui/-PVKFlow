@@ -147,7 +147,7 @@ export const api = {
   spectraThickness: (id, params) => get(`/api/spectra/${id}/thickness`, params),
 
   // AI 抽屉：会话、流式、钉住
-  conversations: () => get('/api/chat/conversations'),
+  conversations: (q) => get('/api/chat/conversations', q),
   newConversation: (scope, title) => post('/api/chat/conversations', { scope, title }),
   conversation: (id) => get(`/api/chat/conversations/${id}`),
   patchConversation: (id, patch) =>

@@ -310,6 +310,13 @@ def ingest_paths(
     seen_samples: set[str] = set()
 
     for entry in entries:
+        # 一串裸路径也接着 —— 脚本和 curl 里最自然的写法就是给一个字符串列表，
+        # 为此丢一个 500 出去说不过去（栈回溯不是给用户看的诊断信息）
+        if isinstance(entry, str):
+            entry = {"abs_path": entry}
+        elif not isinstance(entry, dict):
+            report.failed.append({"path": None, "error": f"不认识的条目：{type(entry).__name__}"})
+            continue
         abs_path = entry.get("abs_path") or entry.get("path")
         if not abs_path:
             report.failed.append({"path": None, "error": "缺少 abs_path"})
@@ -319,19 +326,40 @@ def ingest_paths(
             if not src.is_file():
                 raise FileNotFoundError("文件不存在或不是普通文件")
 
-            display = entry.get("display_path") or src.name
+            # 没给 display_path 时补上父文件夹。**不能只用文件名**：
+            # 三个样品文件夹里都躺着一个 Data.csv，只拿 src.name 的话
+            # 下面那条「同一个文件夹」会把它们判成同一份，三个样品静默变一个。
+            # 这类错在小数据集上看不出来 —— 数字对不上时已经分析了半天了。
+            display = entry.get("display_path") or (
+                f"{src.parent.name}/{src.name}" if src.parent.name else src.name)
             ext = (entry.get("ext") or src.suffix).lower()
             mode = entry.get("storage_mode") or classify(ext, copy_ext, ref_ext, unknown)
 
+            # ── 去重，三条依次判，都会记进 duplicates 并说清是哪一条命中的 ──
+            #
+            # ① 内容相同（sha256）：同一份数据换个地方放，不该进两次
+            # ② 路径相同：同一个文件再导一次
+            # ③ **同一个子文件夹**：display_path 是「子文件夹名/Data.csv」，
+            #    所以这一条就是「按文件夹目录去重」。它必须独立于 sha ——
+            #    仪器重新导出一次，字节会变、sha 会变，但那还是同一次测量。
             sha = sha256_file(src)
+            abs_str = str(src.resolve())
             dup = db.query_one(
-                "SELECT artifact_id, filename FROM artifact WHERE sha256 = ? AND kind = 'raw'",
-                (sha,),
+                "SELECT artifact_id, filename, display_path,"
+                "       CASE WHEN sha256 = ? THEN '内容相同'"
+                "            WHEN original_path = ? THEN '同一个文件'"
+                "            ELSE '同一个文件夹' END AS why"
+                "  FROM artifact"
+                " WHERE kind = 'raw'"
+                "   AND (sha256 = ? OR original_path = ? OR display_path = ?)"
+                " LIMIT 1",
+                (sha, abs_str, sha, abs_str, display),
             )
             if dup:
                 report.duplicates.append({
                     "path": str(src), "display_path": display,
                     "artifact_id": dup["artifact_id"], "existing": dup["filename"],
+                    "reason": dup["why"],
                 })
                 continue
 

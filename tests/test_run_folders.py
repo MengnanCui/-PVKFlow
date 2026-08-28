@@ -162,3 +162,45 @@ def test_imported_run_parses_and_gives_a_thickness_curve(workspace, main_folder)
         window_nm=fringe_ot.PLATFORM_WINDOW_NM)
     assert len(res["points"]) == sm.t.size
     assert np.isfinite([q["ot_nm"] for q in res["points"]]).all()
+
+
+# ---------------------------------------------------------------- 去重
+def test_reimporting_the_same_folder_is_a_duplicate(workspace, main_folder):
+    """同一个主文件夹导两次，第二次应该一个都不进。"""
+    prev = ingest.scan_folders(main_folder)
+    first = ingest.ingest_paths(prev["files"]).as_dict()
+    assert first["counts"]["imported"] == 3
+
+    second = ingest.ingest_paths(prev["files"]).as_dict()
+    assert second["counts"]["imported"] == 0
+    assert second["counts"]["duplicates"] == 3
+    assert db.scalar("SELECT COUNT(*) FROM sample") == 3
+
+
+def test_folder_dedup_survives_the_file_being_re_exported(workspace, main_folder):
+    """★ 仪器重新导出一次，字节变了、sha 变了，但那还是同一次测量。
+
+    只靠 sha256 去重的话这一次会当成新数据放进来，于是同一个子文件夹
+    在库里有了两份 —— 而它们本该是**一个样品的一次测量**。
+    """
+    prev = ingest.scan_folders(main_folder)
+    ingest.ingest_paths(prev["files"])
+    n_art = db.scalar("SELECT COUNT(*) FROM artifact")
+
+    # 原地改一个字节：内容哈希变了，路径和文件夹没变
+    target = main_folder / RUNS[0] / "Data.csv"
+    target.write_text(target.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+    rep = ingest.ingest_paths(ingest.scan_folders(main_folder)["files"]).as_dict()
+    assert rep["counts"]["imported"] == 0
+    assert db.scalar("SELECT COUNT(*) FROM artifact") == n_art
+    whys = {d.get("reason") for d in rep["duplicates"]}
+    assert "同一个文件夹" in whys or "同一个文件" in whys
+
+
+def test_duplicate_rows_say_why_they_were_skipped(workspace, main_folder):
+    """跳过的理由要写出来 —— 「导了怎么一个都没进」得有答案。"""
+    prev = ingest.scan_folders(main_folder)
+    ingest.ingest_paths(prev["files"])
+    rep = ingest.ingest_paths(prev["files"]).as_dict()
+    assert all(d.get("reason") for d in rep["duplicates"])

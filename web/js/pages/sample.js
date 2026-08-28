@@ -12,6 +12,7 @@ import {
 } from '../ui.js';
 import { xyChart } from '../chart.js';
 import { heatmap } from '../components/heatmap.js';
+import { infoDot, withInfo } from '../components/info.js';
 import { downloadMenu } from '../download.js';
 import { bandIntegral, wavelengthSlope, spectraAtTimes, windowResolution,
          saturatedHead } from '../spectra.js';
@@ -42,6 +43,8 @@ const S = {
   // ③ 特殊处理
   slopeCenter: 950, slopeHalf: 10,
   integMin: 800, integMax: 950,
+  // 模块导航高亮：spyLock 是点击后的短暂锁，spyOff 摘掉上一次的监听
+  spyLock: null, spyTimer: 0, spyRaf: 0, spyOff: null,
 };
 
 let refs = {};
@@ -51,6 +54,13 @@ export function actions(nav) {
 }
 
 export async function view(host, ctx) {
+  // 上一次进这个页面挂的滚动监听要先摘掉 —— 一个 SPA 里翻十次样品就会
+  // 攒十份监听，每次滚动都在给已经不存在的 DOM 算位置
+  S.spyOff?.();
+  S.spyOff = null;
+  clearTimeout(S.spyTimer);
+  S.spyLock = null;
+
   S.artifactId = ctx.arg;
   S.frames = null;
   S.error = null;
@@ -132,25 +142,80 @@ const section = (id, title, note) =>
 const bodyOf = (id) => refs.body.querySelector(`#body-${id}`);
 
 function scrollTo(id) {
+  // 点了就立刻高亮，不等滚动跟上 —— 而且在平滑滚动这段时间里锁住，
+  // 免得中途扫过的模块把高亮抢走（滚动结束前用户看到的是一路乱跳）。
+  setActive(id);
+  S.spyLock = id;
+  clearTimeout(S.spyTimer);
+  S.spyTimer = setTimeout(() => { S.spyLock = null; syncSpy(); }, 700);
   refs.body.querySelector(`#module-${id}`)
     ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function observeScroll() {
-  const links = [...refs.nav.querySelectorAll('.module-link')];
-  const io = new IntersectionObserver((entries) => {
-    for (const e of entries) {
-      if (!e.isIntersecting) continue;
-      const id = e.target.id.replace('module-', '');
-      links.forEach((a) => a.classList.toggle('is-active', a.dataset.module === id));
-    }
-  }, { rootMargin: '-15% 0px -70% 0px' });
-  MODULES.forEach((m) => {
-    const el = refs.body.querySelector(`#module-${m.id}`);
-    if (el) io.observe(el);
-  });
+function setActive(id) {
+  for (const a of refs.nav.querySelectorAll('.module-link')) {
+    a.classList.toggle('is-active', a.dataset.module === id);
+  }
 }
 
+/**
+ * 模块导航的高亮。
+ *
+ * 原来用的是 IntersectionObserver + rootMargin '-15% 0px -70%'，
+ * 也就是「谁进了视口顶部那条 15% 的窄带谁高亮」。问题是**最后一个模块
+ * 永远进不了那条带**：页面滚到底就停住了，「特殊处理」的顶还在带子下面，
+ * 于是点它，高亮留在「膜厚处理」上 —— 点击和显示对不上。
+ *
+ * 改成直接算：取一条参考线（视口顶下方 25%），谁的顶最后一个越过这条线就是谁；
+ * 滚到底了就强制算最后一个。这条规则对「最后一个模块比视口短」是天然成立的，
+ * 不需要给它开特例。
+ */
+function syncSpy() {
+  if (S.spyLock) return;
+  const root = refs.body.closest('.viewport') || document.scrollingElement;
+  if (!root) return;
+
+  const line = root.getBoundingClientRect().top + root.clientHeight * 0.25;
+  const atBottom = root.scrollTop + root.clientHeight >= root.scrollHeight - 4;
+
+  let active = MODULES[0].id;
+  for (const m of MODULES) {
+    const el = refs.body.querySelector(`#module-${m.id}`);
+    if (el && el.getBoundingClientRect().top <= line) active = m.id;
+  }
+  // 到底了就是最后一个。短模块靠自己越不过参考线，只能靠这一条兜住。
+  if (atBottom) active = MODULES[MODULES.length - 1].id;
+  setActive(active);
+}
+
+function observeScroll() {
+  const root = refs.body.closest('.viewport') || document.scrollingElement;
+  if (!root) return;
+  const onScroll = () => {
+    if (S.spyRaf) return;
+    S.spyRaf = requestAnimationFrame(() => { S.spyRaf = 0; syncSpy(); });
+  };
+  root.addEventListener('scroll', onScroll, { passive: true });
+  // 图是异步画出来的，模块高度会变 —— 高度一变参考线的结论就变了
+  const ro = new ResizeObserver(onScroll);
+  ro.observe(refs.body);
+  // 换样品时 refs.body 整个换掉，旧的监听要摘干净，不然越积越多
+  S.spyOff = () => { root.removeEventListener('scroll', onScroll); ro.disconnect(); };
+  syncSpy();
+}
+
+
+// 膜厚模块的条纹图**永远**每帧归一化，和光谱模块那个下拉无关。
+//
+// 原来两处共用 S.norm，于是在「光谱处理」里换一下归一化，「膜厚处理」的
+// 条纹图跟着变 —— 一个模块的显示开关悄悄改了另一个模块的图。
+// 而且条纹图要看的就是每一帧内部的明暗周期，逐帧归一化本来就是唯一正确的选择：
+// 全局归一化会让干燥后期对比度低的那些帧糊成一片。
+//
+// 光学厚度**曲线**从来不受影响 —— 它是后端拿完整矩阵（全部波长 × 全部帧）
+// 重算的，跟前端的任何显示设置都没有关系。
+const FRINGE_NORM = 'frame';
+const FRINGE_SCALE = { vMin: 0, vMax: 1, vLabel: '每帧归一化' };
 
 /** 色标条的值域与说明，随归一化方式变化。 */
 function colorScale() {
@@ -183,7 +248,7 @@ function drawSpectra() {
 
   mount(host,
     h('div.fig-grid-2',
-      figure('全波长强度热力图', {
+      figure(withInfo('全波长强度热力图', 'norm'), {
         head: [
           selectControl('归一化', S.norm, [
             ['frame', '每帧归一化'], ['wavelength', '每波长归一化'],
@@ -199,7 +264,7 @@ function drawSpectra() {
         body: hm,
       }),
 
-      figure('不同时刻的光谱叠加', {
+      figure(withInfo('不同时刻的光谱叠加', 'overlay_n'), {
         head: [
           h('span.small.muted', '条数'),
           h('input.range', {
@@ -292,7 +357,7 @@ function drawOverlay() {
       `${n} 条 · ${from.toFixed(2)}–${to.toFixed(2)} s · `,
       `${lo.toFixed(0)}–${hi.toFixed(0)} nm · 颜色由浅到深 = 由早到晚 · `,
       `每条在显示范围内按自身最大值归一化 · λ 抽样至 ${fmtNum(S.frames.lambda_step, 3)} nm`),
-    S.satNote ? h('div.chart-caption.dim', S.satNote) : null);
+    S.satNote ? h('div.chart-caption.dim', S.satNote, infoDot('saturated_head')) : null);
 }
 
 /** 时间色阶：浅蓝 → 深蓝。u∈[0,1]，0 最早。 */
@@ -313,23 +378,24 @@ function drawThickness() {
   const L0 = S.meta.lambda_min, L1 = S.meta.lambda_max;
 
   const kFull = heatmap({
-    src: api.heatmapUrl(S.artifactId, { axis: 'wavenumber', norm: S.norm, cmap: 'gray' }),
+    src: api.heatmapUrl(S.artifactId,
+      { axis: 'wavenumber', norm: FRINGE_NORM, cmap: 'gray' }),
     xMin: S.meta.time_min, xMax: S.meta.time_max,
     yMin: 1 / L1, yMax: 1 / L0,
     xLabel: '时间 (s)', yLabel: 'k = 1/λ (nm⁻¹)', height: 300,
-    cmap: 'gray', ...colorScale(),
+    cmap: 'gray', ...FRINGE_SCALE,
     caption: '全波段干涉条纹。相位对波数线性，所以只有在 k 轴上条纹才是等周期的',
   });
 
   const kBand = heatmap({
     src: api.heatmapUrl(S.artifactId, {
-      axis: 'wavenumber', norm: S.norm, cmap: 'gray',
+      axis: 'wavenumber', norm: FRINGE_NORM, cmap: 'gray',
       lam_min: S.bandMin, lam_max: S.bandMax,
     }),
     xMin: S.meta.time_min, xMax: S.meta.time_max,
     yMin: 1 / S.bandMax, yMax: 1 / S.bandMin,
     xLabel: '时间 (s)', yLabel: 'k = 1/λ (nm⁻¹)', height: 300,
-    cmap: 'gray', ...colorScale(),
+    cmap: 'gray', ...FRINGE_SCALE,
     caption: '只看选定波段的条纹。窗口越窄，能分辨的膜越厚',
   });
 
@@ -340,13 +406,13 @@ function drawThickness() {
 
   mount(host,
     h('div.fig-grid-4',
-      figure(`全波段条纹　${L0.toFixed(0)}–${L1.toFixed(0)} nm`, {
+      figure(withInfo(`全波段条纹　${L0.toFixed(0)}–${L1.toFixed(0)} nm`, 'k_axis'), {
         head: dlHeatmap(() => api.heatmapUrl(S.artifactId,
-          { axis: 'wavenumber', norm: S.norm, cmap: 'gray' }), '全波段条纹'),
+          { axis: 'wavenumber', norm: FRINGE_NORM, cmap: 'gray' }), '全波段条纹'),
         body: kFull,
       }),
 
-      figure('全波段　光学厚度 vs 时间', {
+      figure(withInfo('全波段　光学厚度 vs 时间', 'ot'), {
         head: dl(() => refs.otFullHost, '全波段OT'),
         body: otFullHost,
         // 说明放在图**下面**：放上面的话它会把同排的条纹图一起往下推三行
@@ -359,20 +425,20 @@ function drawThickness() {
               '窗口选错时曲线会崩到噪声上，而且是看得见地崩 —— 不是悄悄给个错数。'))),
       }),
 
-      figure('指定波段条纹', {
+      figure(withInfo('指定波段条纹', 'band'), {
         head: [
           bandControl(L0, L1, () => [S.bandMin, S.bandMax],
             (lo, hi) => { S.bandMin = lo; S.bandMax = hi; drawWindowResolution(); },
             () => { updateBandFigures(); loadThickness('band'); }),
           dlHeatmap(() => api.heatmapUrl(S.artifactId, {
-            axis: 'wavenumber', norm: S.norm, cmap: 'gray',
+            axis: 'wavenumber', norm: FRINGE_NORM, cmap: 'gray',
             lam_min: S.bandMin, lam_max: S.bandMax }), '指定波段条纹'),
         ],
         ctl: resHost,
         body: kBand,
       }),
 
-      figure('指定波段　光学厚度 vs 时间', {
+      figure(withInfo('指定波段　光学厚度 vs 时间', 'ot'), {
         head: dl(() => refs.otBandHost, '指定波段OT'),
         body: otBandHost,
       })),
@@ -413,47 +479,76 @@ async function loadThickness(which) {
 const thicknessToken = {};
 
 function paintThickness(hostEl, d, lo, hi) {
-  const okX = [], okY = [], badX = [], badY = [];
+  // ★ 标**可信**的，不标不可信的。
+  //
+  // 上一版把不可信的帧画成红色散点。真实样品里干燥后半段大半都不可信，
+  // 于是整张图被红点糊满，反倒看不见「哪一段是能用的」—— 而那才是
+  // 你看这张图的目的。现在反过来：底下一条淡灰的完整曲线（数值一个不藏，
+  // 判据只打标志、绝不修改数值），可信的那一段用实色描粗压在上面。
+  const okX = [], okY = [], degX = [], degY = [];
   for (let i = 0; i < d.x.length; i++) {
-    (d.status[i] === 'OK' ? okX : badX).push(d.x[i]);
-    (d.status[i] === 'OK' ? okY : badY).push(d.y[i]);
+    const st = d.status[i];
+    if (st === 'OK') { okX.push(d.x[i]); okY.push(d.y[i]); }
+    else if (st === 'DEGRADED') { degX.push(d.x[i]); degY.push(d.y[i]); }
   }
 
-  // 规范 §6：线 alpha=0.7 + 空心散点；非 OK 的点用 COLORS[1] 标出来。
-  // 不可信的点照画 —— 判据只打标志，不改数值，也不藏点。
-  const series = [{
-    label: `OT ${lo.toFixed(0)}–${hi.toFixed(0)} nm`,
-    x: d.x, y: d.y, style: 'line', color: 'var(--s1)',
-  }];
-  if (badX.length) {
-    series.push({ label: '不可信', x: badX, y: badY, style: 'scatter', color: 'var(--s2)' });
+  const series = [
+    // 全部帧的底图：淡灰，让你看得见曲线的完整走向，但一眼知道它不是结论
+    { label: '全部帧（含不可信）', x: d.x, y: d.y, style: 'line', color: 'var(--ink-4)' },
+  ];
+  if (degX.length) {
+    series.push({ label: '可用（精度下降）', x: degX, y: degY,
+                  style: 'scatter', color: 'var(--warn)' });
+  }
+  if (okX.length) {
+    series.push({ label: '可信', x: okX, y: okY, style: 'scatter', color: 'var(--ok)' });
   }
 
-  const nBad = d.n_points - d.n_ok;
   const spec = { x_label: '时间 (s)', y_label: '光学厚度 OT = n·d·cosθ (nm)', series };
   hostEl.__spec = spec;
+  const nOk = okX.length;
+  const nDeg = degX.length;
+
   mount(hostEl,
     xyChart(spec, { height: 300 }),
     h('div.chart-caption',
       `${fmtInt(d.n_points)} 帧 · `,
-      nBad
-        ? h('span.status.status-warn', `${fmtInt(nBad)} 帧不可信（红点）`)
-        : h('span.status.status-ok', '全部可信'),
-      `　可测下限 ${fmtNum(d.diagnostics.ot_floor_nm, 0)} nm`,
-      `　量化格距 ${fmtNum(d.diagnostics.ot_quantum_nm, 0)} nm`));
+      nOk
+        ? h('span.status.status-ok', `${fmtInt(nOk)} 帧可信`)
+        : h('span.status.status-warn', '没有一帧达到「可信」'),
+      nDeg ? h('span.status.status-warn', `　${fmtInt(nDeg)} 帧可用但精度下降`) : null,
+      '　', withInfo(`可测下限 ${fmtNum(d.diagnostics.ot_floor_nm, 0)} nm`, 'ot_floor'),
+      '　', withInfo(`量化格距 ${fmtNum(d.diagnostics.ot_quantum_nm, 0)} nm`, 'ot_quantum'),
+      infoDot('ot_status')),
+    statusLegend(d.status_text));
+}
+
+/** 这张图里出现过的判级，各自一行人话。文案来自后端，两边不各写一份。 */
+function statusLegend(text) {
+  const seen = Object.entries(text || {});
+  if (!seen.length) return null;
+  return h('div.chart-caption.col.gap-1.mt-2',
+    ...seen.map(([key, v]) => h('div.row.gap-2',
+      // flex:none + 左对齐：只给 minWidth 的话这一列会被压扁，
+      // 三个状态码各缩到各自的宽度，看着就不是一列了
+      h('span.mono.xsmall.dim',
+        { style: { minWidth: '104px', flex: 'none', textAlign: 'left' } }, key),
+      h('span.xsmall', h('span.strong', v.label), '　', v.short),
+      infoDot(`status:${key}`))));
 }
 
 /** 规范 §5 的块 A–D。写死了「禁止简化、禁止省略」，所以整段摊开，不折叠。 */
 function drawOtReport() {
   if (!refs.otReport) return;
   if (!S.otReport) { clear(refs.otReport); return; }
+  // 走同一个 figure()，三行结构跟上面四张图一致 —— 报告是整幅宽的，
+  // 没有控件，第二行就空着。空着也保留，那正是「强制对齐」的做法。
   mount(refs.otReport,
-    h('div.figure.mt-4',
-      h('div.figure-head',
-        h('div.figure-title', '完整报告'),
-        h('span.xsmall.dim',
-          'fringe-optical-thickness 规范 §5 要求块 A–D 一个都不能少')),
-      h('pre.code-block.is-half', S.otReport)));
+    h('div.mt-4', figure('完整报告', {
+      head: h('span.xsmall.dim',
+        'fringe-optical-thickness 规范 §5 要求块 A–D 一个都不能少'),
+      body: h('pre.code-block.is-half', S.otReport),
+    })));
 }
 
 function drawWindowResolution() {
@@ -486,7 +581,7 @@ function drawSpecial() {
       '连续跟着变，不需要等后端；停下约 0.3 秒后自动换成全波长分辨率的精确结果。'),
 
     h('div.fig-grid-2.mt-4',
-      figure('谱斜率 vs 时间', {
+      figure(withInfo('谱斜率 vs 时间', 'slope'), {
         head: [
           numberControl('波长', S.slopeCenter, S.meta.lambda_min, S.meta.lambda_max, 1,
             (v) => { S.slopeCenter = v; drawSlope(); }),
@@ -497,7 +592,7 @@ function drawSpecial() {
         body: slopeHost,
       }),
 
-      figure('波段积分 vs 时间', {
+      figure(withInfo('波段积分 vs 时间', 'integral'), {
         head: [
           bandControl(S.meta.lambda_min, S.meta.lambda_max,
             () => [S.integMin, S.integMax],
@@ -597,20 +692,17 @@ function updateHeatmaps() {
     src: api.heatmapUrl(S.artifactId, { axis: 'wavelength', norm: S.norm, cmap: S.cmap }),
     cmap: S.cmap, ...cs,
   });
-  refs.kFull?.update({
-    src: api.heatmapUrl(S.artifactId, { axis: 'wavenumber', norm: S.norm, cmap: 'gray' }),
-    ...cs,
-  });
+  // 膜厚的条纹图**不跟**这里的归一化下拉走 —— 见 FRINGE_NORM 那条注释
   updateBandFigures();
 }
 
 function updateBandFigures() {
   refs.kBand?.update({
     src: api.heatmapUrl(S.artifactId, {
-      axis: 'wavenumber', norm: S.norm, cmap: 'gray',
+      axis: 'wavenumber', norm: FRINGE_NORM, cmap: 'gray',
       lam_min: S.bandMin, lam_max: S.bandMax,
     }),
-    yMin: 1 / S.bandMax, yMax: 1 / S.bandMin, ...colorScale(),
+    yMin: 1 / S.bandMax, yMax: 1 / S.bandMin, ...FRINGE_SCALE,
   });
 }
 
@@ -647,11 +739,18 @@ function dlHeatmap(urlGetter, name) {
  * 一起往下推，为了几行字浪费一整块竖向空间。
  */
 function figure(title, { head = null, ctl = null, body = null, note = null } = {}) {
+  // 三行是**分开的三块**，不是「标题行里塞控件」：
+  //   1 标题行  —— 只有标题和下载，所以每一格都一样高
+  //   2 功能块  —— 所有控件都在这儿。没有控件就空着（subgrid 仍占一行）
+  //   3 图
+  //
+  // 上一版把下拉、滑块塞进标题行的右侧，于是控件多的那一格标题行 100px、
+  // 少的那一格 26px。图靠 subgrid 还是对齐的，但两个标题一高一低，
+  // 看上去就是「没对齐」。控件全部下沉之后，标题行只剩一行文字，天然齐平。
+  const ctls = [head, ctl].flat().filter(Boolean);
   return h('div.figure',
-    h('div.figure-head',
-      h('div.figure-title', title),
-      head ? h('div.row.gap-2.wrap', head) : null),
-    h('div.figure-ctl', ctl),
+    h('div.figure-head', h('div.figure-title', title)),
+    h('div.figure-ctl', ctls.length ? h('div.row.gap-3.wrap', ...ctls) : null),
     h('div.figure-body', body, note));
 }
 

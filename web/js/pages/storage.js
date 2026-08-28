@@ -1,6 +1,7 @@
 // 数据存储：展示真实的落地情况，而不是一张架构示意图。
 
 import { api } from '../api.js';
+import { infoDot, withInfo } from '../components/info.js';
 import { h, mount, clear, render, fmtBytes, fmtInt, fmtTime, empty } from '../ui.js';
 
 export const meta = {
@@ -22,7 +23,8 @@ export function view(host, ctx = {}) {
 
       h('div.section',
         h('div.metrics.metrics-4',
-          metric('复制进工作区', copied.n, fmtBytes(copied.bytes) + ' · 内容寻址去重'),
+          metric(withInfo('复制进工作区', 'storage_mode'), copied.n,
+                 h('span', fmtBytes(copied.bytes), ' · 内容寻址去重', infoDot('dedup'))),
           metric('原地引用', referenced.n, fmtBytes(referenced.bytes) + ' · 原图未搬动'),
           metric('关键结果', d.counts.results, `${d.fields.length} 个不同字段`),
           metric('数值表', d.tables.length, 'Parquet 列式存储'))),

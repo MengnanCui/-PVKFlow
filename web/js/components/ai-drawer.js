@@ -10,7 +10,8 @@
 //    要点一下的确认卡。错了你看到的是错的 chip，不是错的结果。
 
 import { api } from '../api.js';
-import { h, mount, $, toast, fmtInt, fmtTime, confirmDialog, modal } from '../ui.js';
+import { infoDot } from './info.js';
+import { h, mount, $, toast, fmtInt, fmtTime, confirmDialog, modal, richText, inlineText } from '../ui.js';
 import { getScope, onScope, scopeFilter, hasSelection } from '../scope.js';
 
 const WIDTH_KEY = 'hte.ai.width';
@@ -322,7 +323,8 @@ function drawScopeBar() {
   mount(refs.scopeBar,
     h('div.ai-seg-row',
       seg('selected', '选中的', nSel, nSel === 0),
-      seg('all', '全部命中的', nAll)),
+      seg('all', '全部命中的', nAll),
+      infoDot('ai_scope')),
     D.needsNarrowing
       ? h('div.ai-scope-note',
           `${fmtInt(D.scopeN)} 个样品超过逐条阅读上限（${D.detailMax}），`,
@@ -409,7 +411,7 @@ function paintEmpty() {
   mount(refs.body,
     h('div.ai-empty',
       h('div.ai-empty-title', 'AI 助手'),
-      h('p.small.dim', ...inline(
+      h('p.small.dim', ...inlineText(
         '它能看到你当前范围里的**汇总统计和标量**，看不到原始光谱矩阵。')),
       h('div.ai-hints',
         ...['这批样品的膜厚分布怎么样？',
@@ -481,43 +483,6 @@ function stripActionJson(text) {
   return String(text || '')
     .replace(/```(?:json)?\s*\{[\s\S]*?"action"[\s\S]*?\}\s*```/g, '')
     .trim();
-}
-
-/** 极简 markdown：围栏代码块 + 段落 + 粗体 + 行内代码。
- *
- * 不值得为它引一个库，但也不能不管 —— 模型是真的会吐 `**` 和反引号的，
- * 原样显示出来就是一串星号，看着像坏了。
- *
- * 全程只造文本节点，不碰 innerHTML：模型的输出是不可信文本。
- */
-function richText(text) {
-  const out = [];
-  String(text).split(/```/).forEach((part, i) => {
-    if (i % 2 === 1) {
-      out.push(h('pre.ai-code', part.replace(/^\w*\n/, '')));
-      return;
-    }
-    for (const para of part.split(/\n{2,}/)) {
-      const t = para.trim();
-      if (t) out.push(h('p.ai-p', ...inline(t)));
-    }
-  });
-  return out;
-}
-
-/** `**粗体**` 和 `` `行内代码` `` 切成节点。切不出来就原样当纯文本。 */
-function inline(text) {
-  const out = [];
-  const re = /\*\*([^*]+)\*\*|`([^`]+)`/g;
-  let last = 0;
-  let m;
-  while ((m = re.exec(text))) {
-    if (m.index > last) out.push(text.slice(last, m.index));
-    out.push(m[1] !== undefined ? h('strong', m[1]) : h('code.ai-inline', m[2]));
-    last = re.lastIndex;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out.length ? out : [text];
 }
 
 // ------------------------------------------------------------------ 动作卡片

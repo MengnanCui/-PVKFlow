@@ -37,12 +37,21 @@ def get(conversation_id: str) -> dict | None:
     return _row(row) if row else None
 
 
-def list_recent(limit: int = 50) -> list[dict]:
+def list_recent(limit: int = 50, topic: str | None = None) -> list[dict]:
+    """最近的对话。
+
+    `topic` 是给术语 ⓘ 弹窗用的：每个术语一条独立的对话线，点开只看这一条
+    的历史。存在 scope 里而不是 localStorage —— 换台机器、清了浏览器缓存，
+    问过的话都还在，而且在抽屉的历史列表里也找得到。
+    """
+    where = "" if topic is None else " WHERE json_extract(c.scope_json, '$.topic') = ?"
+    args: tuple = (limit,) if topic is None else (topic, limit)
     rows = db.query(
         "SELECT c.*, ("
         "   SELECT COUNT(*) FROM message m WHERE m.conversation_id = c.conversation_id"
         " ) AS n_messages"
-        " FROM conversation c ORDER BY c.updated_at DESC, c.rowid DESC LIMIT ?", (limit,))
+        " FROM conversation c" + where +
+        " ORDER BY c.updated_at DESC, c.rowid DESC LIMIT ?", args)
     return [_row(r) for r in rows]
 
 

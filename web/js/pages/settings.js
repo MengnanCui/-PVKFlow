@@ -1,6 +1,7 @@
 // 设置：导入策略、命名规则（带实时预览）、模型配置。
 
 import { api } from '../api.js';
+import { infoDot } from '../components/info.js';
 import { h, mount, render, toast, busy, errorBox, empty, skeletonRows,
          fmtBytes, fmtInt } from '../ui.js';
 
@@ -34,7 +35,8 @@ function importSection(s) {
     ...[['reference', '只登记路径（推荐）'], ['copy', '复制进工作区']].map(([v, t]) =>
       h('option', { value: v, selected: s.unknown_policy === v }, t)));
 
-  return section('导入策略', '决定一个文件是被复制进工作区，还是只登记原始路径',
+  return section(h('span', '导入策略', infoDot('storage_mode')),
+                 '决定一个文件是被复制进工作区，还是只登记原始路径',
     h('div.panel.panel-body',
       h('p.small.muted.measure',
         '文本类文件小、易丢、经常被人手改，复制一份才谈得上可复现；',
@@ -44,7 +46,8 @@ function importSection(s) {
         h('div.field',
           h('label.field-label', '复制进工作区的扩展名'),
           copyBox,
-          h('div.field-help', '空格分隔。这些文件按 sha256 内容寻址存放，重复导入自动去重。')),
+          h('div.field-help', '空格分隔。这些文件按 sha256 内容寻址存放，重复导入自动去重。',
+                                infoDot('dedup'))),
         h('div.field',
           h('label.field-label', '只登记路径的扩展名'),
           refBox,
@@ -104,7 +107,8 @@ function namingSection(s) {
     } catch (err) { mount(out, errorBox(err)); }
   };
 
-  return section('命名规则', '从文件名或路径自动解析样品身份，导入时先给预览，不对可以手改',
+  return section(h('span', '命名规则', infoDot('sample_identity')),
+                 '从文件名或路径自动解析样品身份，导入时先给预览，不对可以手改',
     h('div.panel.panel-body',
       h('div.col.gap-4',
         h('div.field',

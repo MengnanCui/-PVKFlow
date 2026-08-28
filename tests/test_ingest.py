@@ -119,3 +119,28 @@ def test_failed_entry_does_not_abort_the_batch(workspace, sample_dir):
     report = ingest.ingest_paths(entries)
     assert len(report.imported) == 4
     assert len(report.failed) == 1
+
+
+def test_same_filename_in_different_folders_are_different_samples(workspace, tmp_path):
+    """一个子文件夹一个样品，里面都叫 Data.csv —— 这是仪器的真实输出格式。
+
+    去重那条「同一个文件夹」按 display_path 判。给的是裸路径、没有
+    display_path 时，如果拿 src.name 兜底，三个样品会静默合并成一个：
+    数据没丢但全串了，而且在几个样品的小数据集上根本看不出来。
+    """
+    paths = []
+    for i in range(3):
+        d = tmp_path / f"ZG00{13 + i}_Mode5_SPS100"
+        d.mkdir()
+        f = d / "Data.csv"
+        f.write_text(f"Wavelength,Abs\n400,{0.1 * (i + 1)}\n", encoding="utf-8")
+        paths.append(str(f))
+
+    r = ingest.ingest_paths(paths, "")
+    assert len(r.imported) == 3, f"三个文件夹应该是三个样品，实际 {r.counts}"
+    assert not r.duplicates
+
+    # 再导一次同一批 —— 这一次才该全是重复
+    again = ingest.ingest_paths(paths, "")
+    assert not again.imported
+    assert len(again.duplicates) == 3
