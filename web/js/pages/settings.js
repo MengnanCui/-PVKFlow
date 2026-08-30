@@ -3,6 +3,7 @@
 import { api } from '../api.js';
 import { infoDot } from '../components/info.js';
 import { h, mount, clear, render, toast, busy, errorBox, empty, skeletonRows,
+         confirmDialog,
          fmtBytes, fmtInt } from '../ui.js';
 
 export const meta = {
@@ -12,10 +13,12 @@ export const meta = {
 };
 
 export function view(host) {
-  return render(host, () => Promise.all([api.settings(), api.models(), api.skills()]),
-    ([cfg, models, skills]) => h('div',
+  return render(host,
+    () => Promise.all([api.settings(), api.models(), api.skills(), api.modules()]),
+    ([cfg, models, skills, mods]) => h('div',
       importSection(cfg.settings),
       namingSection(cfg.settings),
+      moduleSection(mods),
       modelSection(models),
       skillSection(skills),
       workspaceSection(cfg)));
@@ -137,6 +140,145 @@ function namingSection(s) {
           },
         }, '保存')),
       out));
+}
+
+// ------------------------------------------------------------------ 功能模块
+//
+// 同事加功能走的是这里：一个模块 = 一个文件夹 = 一个 zip。
+// 收发靠导入导出，不靠 Git —— 网络受限、不会用分支，都不影响。
+function moduleSection(mods) {
+  const list = mods.modules || [];
+  const errs = mods.errors || [];
+  const status = h('div.mt-3');
+
+  const reload = async (e) => {
+    busy(e.target, true);
+    try {
+      const r = await api.reloadModules();
+      toast(`重载完成：${r.count} 个模块`
+        + (r.errors.length ? `，${r.errors.length} 个加载失败` : ''),
+        r.errors.length ? 'warn' : 'ok');
+      setTimeout(() => window.dispatchEvent(
+        new CustomEvent('hte:nav', { detail: 'settings' })), 400);
+    } catch (err) { toast(err.message, 'err'); }
+    busy(e.target, false);
+  };
+
+  const fileInput = h('input', {
+    type: 'file', accept: '.zip', style: { display: 'none' },
+    onchange: async (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      mount(status, h('div.small.muted', '正在验证…'));
+      try {
+        const r = await api.importModule(f);
+        if (r.installed) {
+          mount(status, h('div.notice.notice-ok', h('div.grow',
+            h('div.small', `装好了：${r.report.module_id}`))));
+          setTimeout(() => window.dispatchEvent(
+            new CustomEvent('hte:nav', { detail: 'settings' })), 700);
+        } else {
+          // 装不上要把每一条都摊开 —— 同事（和他的模型）就靠这段改
+          mount(status, reportBox(r.report, r.hint));
+        }
+      } catch (err) { mount(status, errorBox(err)); }
+      e.target.value = '';
+    },
+  });
+
+  return section(h('span', '功能模块', infoDot('module_contract')),
+    '同事写的功能。放一个文件夹进工作区，或者直接导入 zip —— 不用 Git、不用分支',
+    h('div.panel.panel-body',
+      h('div.notice',
+        h('div.grow',
+          h('div.small.strong', '模块只交算法和声明，界面由平台画'),
+          h('p.xsmall.dim.mt-2',
+            '所以同事加的功能和平台其它部分长得一模一样 —— 他碰不到 CSS。',
+            '写法见 ', h('span.mono', 'docs/MODULE_AUTHORING.md'),
+            '，模板在 ', h('span.mono', `${mods.modules_dir}/_template/`), '。'))),
+
+      errs.length
+        ? h('div.mt-4',
+            h('div.small.strong.danger', `${errs.length} 个模块加载失败`),
+            ...errs.map((e) => h('div.notice.notice-danger.mt-2',
+              h('div.grow',
+                h('div.small.mono', e.source),
+                h('div.xsmall.mt-1', e.error),
+                e.detail ? h('details.mt-2',
+                  h('summary.xsmall.dim', { style: { cursor: 'pointer' } }, '详细'),
+                  h('pre.xsmall', e.detail)) : null))))
+        : null,
+
+      list.length
+        ? h('div.panel.panel-body.flush.mt-4', moduleTable(list, status))
+        : h('p.small.muted.mt-4', '还没有装任何模块。'),
+
+      h('div.row.gap-2.mt-3',
+        h('button.btn', { onclick: reload }, '重载模块'),
+        h('button.btn', { onclick: () => fileInput.click() }, '导入 zip…'),
+        fileInput,
+        h('span.xsmall.dim.grow',
+          `算子：${(mods.ops || []).map((o) => o.name).join('、') || '无'}`)),
+      status));
+}
+
+function moduleTable(list, status) {
+  return h('table.table',
+    h('thead', h('tr',
+      h('th', '名字'), h('th', 'id'), h('th', '版本'), h('th', '面板'),
+      h('th', '批处理曲线'), h('th', '来源'), h('th', ''))),
+    h('tbody', ...list.map((m) => h('tr',
+      h('td.strong', m.name),
+      h('td.mono.xsmall.dim', m.id),
+      h('td.mono.xsmall', m.version),
+      h('td.xsmall',
+        `${m.panels.length} 格`,
+        m.live_panels.length
+          ? h('span.xsmall.dim', `　${m.live_panels.length} 格可实时拖动`)
+          : null),
+      h('td.xsmall.mono.dim',
+        (m.batch_curves || []).map((c) => c.name).join(', ') || '—'),
+      h('td', h('span.tag', m.origin === 'builtin' ? '平台自带' : '同事装的')),
+      h('td.row.gap-1',
+        h('button.btn.btn-ghost.btn-xs', {
+          onclick: async (e) => {
+            busy(e.target, true);
+            try {
+              const r = await api.validateModule(m.id);
+              mount(status, reportBox(r));
+            } catch (err) { mount(status, errorBox(err)); }
+            busy(e.target, false);
+          },
+        }, '验证'),
+        h('a.btn.btn-ghost.btn-xs', { href: api.moduleExportUrl(m.id) }, '导出'),
+        m.origin === 'builtin' ? null : h('button.btn.btn-ghost.btn-xs', {
+          onclick: async () => {
+            if (!await confirmDialog(`卸载「${m.name}」？文件会被删掉。`,
+                                     { danger: true, confirmLabel: '卸载' })) return;
+            try {
+              await api.uninstallModule(m.id);
+              toast('已卸载', 'ok');
+              setTimeout(() => window.dispatchEvent(
+                new CustomEvent('hte:nav', { detail: 'settings' })), 400);
+            } catch (err) { toast(err.message, 'err'); }
+          },
+        }, '卸载'))))));
+}
+
+/** 验证报告。**每一条都要看得见** —— 这段就是同事拿去喂给模型的东西。 */
+function reportBox(r, hint) {
+  if (r.ok) {
+    return h('div.notice.notice-ok', h('div.grow',
+      h('div.small', `${r.module_id} 验证通过`),
+      h('div.xsmall.dim.mt-1', `查了：${(r.checked || []).join(' · ')}`),
+      ...(r.warnings || []).map((w) => h('div.xsmall.warn-text.mt-1', '⚠ ' + w))));
+  }
+  return h('div.notice.notice-danger', h('div.grow',
+    h('div.small.strong', `没通过，${r.errors.length} 条要改`),
+    ...(r.errors || []).map((e) => h('pre.xsmall.mt-2', { style: {
+      whiteSpace: 'pre-wrap', margin: '4px 0' } }, '✗ ' + e)),
+    ...(r.warnings || []).map((w) => h('div.xsmall.warn-text.mt-1', '⚠ ' + w)),
+    hint ? h('div.xsmall.dim.mt-2', hint) : null));
 }
 
 // ------------------------------------------------------------------ 模型

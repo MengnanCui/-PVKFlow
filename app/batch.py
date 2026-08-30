@@ -47,6 +47,9 @@ class Recipe:
     slope_center: float = 950.0      # 谱斜率
     slope_half_width: float = 10.0
     max_time_points: int = 0         # 0 = 全部帧
+    # 同事装的模块，各自的控件值：{module_id: {control_key: value}}。
+    # 不填就用模块声明里的默认值。
+    module_params: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "Recipe":
@@ -86,7 +89,84 @@ class SampleOutcome:
     ot_t: np.ndarray | None = None
     ot: np.ndarray | None = None
     ot_status: list[str] = field(default_factory=list)
+    # 已装模块声明的曲线：{列名: 数组}。同事的模块产出什么，这里就多什么列。
+    module_curves: dict[str, np.ndarray] = field(default_factory=dict)
     metrics: dict[str, float] = field(default_factory=dict)
+
+
+# ------------------------------------------------------------------ 模块驱动的曲线
+#
+# 「批处理产出哪些曲线」不再写死在这里，而是由已装模块的 batch_curves 声明决定。
+# 同事放一个模块进 workspace/modules/，它的曲线就自动出现在长表、对比页叠图、
+# 时刻切片和导出脚本里 —— 这个文件一个字都不用改。
+
+# 老配方的扁平字段 → 特殊处理模块的控件。
+# 界面上存了几个月的配方不能因为迁移就读不出来了。
+_LEGACY_MAP = {
+    "special.slope_integral": {
+        "integ": lambda r: [r.integral_min, r.integral_max],
+        "slope_center": lambda r: r.slope_center,
+        "slope_half": lambda r: r.slope_half_width,
+    },
+}
+
+
+def _params_for(module_id: str, spec, recipe: "Recipe") -> dict:
+    """一个模块这一次批处理用什么参数：默认值 ← 老配方映射 ← 显式指定。"""
+    params = dict(spec.defaults())
+    for key, pick in (_LEGACY_MAP.get(module_id) or {}).items():
+        try:
+            params[key] = pick(recipe)
+        except AttributeError:
+            pass
+    params.update((recipe.module_params or {}).get(module_id) or {})
+    return params
+
+
+def _run_modules(lam, M, t, recipe: "Recipe", warnings: list[str]) -> dict[str, np.ndarray]:
+    """跑所有声明了 batch_curves 的模块，收集它们的曲线。
+
+    **一个模块崩了不能带走整批。** 记一条 warning，那几列留空 ——
+    同事的模块出问题，你的其它结果照常拿得到。
+    """
+    from app.modules.base import ModuleContext
+    from app.modules.registry import registry as module_registry
+
+    # registry 平时由 web 启动时装好。但批处理跑在任务线程里，也可能被脚本或
+    # 测试直接调起来 —— 那些路径没有走过 lifespan。空着就懒加载一次，
+    # 否则症状是「批处理静默地一条曲线都不产出」，最难查的那种。
+    if not module_registry.all():
+        module_registry.load_all()
+
+    out: dict[str, np.ndarray] = {}
+    for mod in module_registry.all():
+        spec = mod.spec
+        if not spec.batch_curves:
+            continue
+        params = _params_for(spec.id, spec, recipe)
+        try:
+            panels = mod.compute(ModuleContext(lam, M, t, params))
+        except Exception as exc:                     # noqa: BLE001
+            warnings.append(f"模块「{spec.name}」算不出来：{type(exc).__name__}: {exc}")
+            continue
+        for cv in spec.batch_curves:
+            d = panels.get(cv.from_panel)
+            if d is None:
+                warnings.append(f"模块「{spec.name}」没有返回面板 {cv.from_panel}")
+                continue
+            y = np.asarray([np.nan if v is None else float(v) for v in d.y],
+                           dtype=np.float32)
+            if len(y) != len(t):
+                warnings.append(
+                    f"模块「{spec.name}」的 {cv.name} 有 {len(y)} 个点，"
+                    f"时间轴有 {len(t)} 帧，对不上，这一列跳过")
+                continue
+            if np.all(np.isnan(y)):
+                warnings.append(
+                    f"模块「{spec.name}」的 {cv.name} 全是空值 —— "
+                    f"多半是参数落在数据范围（{lam[0]:g}–{lam[-1]:g} nm）之外")
+            out[cv.name] = y
+    return out
 
 
 # ------------------------------------------------------------------ 单样品
@@ -103,18 +183,16 @@ def _process_one(row: dict, recipe: Recipe) -> SampleOutcome:
             keep = render.pick_frames(t, recipe.max_time_points)
             t, M = t[keep], M[:, keep]
 
-        integ = render.band_integral(M, lam, recipe.integral_min, recipe.integral_max)
-        slope = render.wavelength_slope(M, lam, recipe.slope_center,
-                                        recipe.slope_half_width)
-
-        if np.all(np.isnan(integ)):
-            out.warnings.append(
-                f"积分波段 {recipe.integral_min:g}–{recipe.integral_max:g} nm "
-                f"落在数据范围 {lam[0]:g}–{lam[-1]:g} nm 之外")
-        if np.all(np.isnan(slope)):
-            out.warnings.append(
-                f"斜率窗口 {recipe.slope_center:g}±{recipe.slope_half_width:g} nm "
-                f"落在数据范围之外")
+        # 曲线由**已装的模块**产出 —— 模块声明了 batch_curves，
+        # 平台就自动把它接进长表、对比页叠图、时刻切片和导出脚本。
+        # 同事加一个模块，这些地方一处都不用改。
+        out.module_curves = _run_modules(lam, M, t, recipe, out.warnings)
+        integ = out.module_curves.get("integral")
+        slope = out.module_curves.get("slope")
+        if integ is None:
+            integ = np.full(len(t), np.nan)
+        if slope is None:
+            slope = np.full(len(t), np.nan)
 
         # 分辨率诊断是纯几何量。用 fringe_ot 那一份实现，别在这儿抄第二遍 ——
         # 抄第二遍就会有一天两边对不上。
@@ -306,14 +384,19 @@ def _write_long_table(parent_id: str, outcomes: list[SampleOutcome]) -> dict:
     for o in outcomes:
         if not o.ok or o.t is None:
             continue
-        frames.append(pd.DataFrame({
+        cols = {
             "sample_id": o.sample_id,
             "sample_name": o.sample_name,
             "batch": o.batch or "",
             "t": o.t,
-            "integral": o.integral,
-            "slope": o.slope,
-        }))
+        }
+        # 模块声明了几条曲线就有几列。integral / slope 也走这条路 ——
+        # 它们现在也是模块产出的，不是平台写死的。
+        for name, y in (o.module_curves or {}).items():
+            cols[name] = y
+        cols.setdefault("integral", o.integral)
+        cols.setdefault("slope", o.slope)
+        frames.append(pd.DataFrame(cols))
     if not frames:
         return {}
     df = pd.concat(frames, ignore_index=True)

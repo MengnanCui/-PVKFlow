@@ -3,7 +3,8 @@
 // 渲染策略（见 app/parsers/render.py）：
 //   热力图 / 条纹图  = 服务端 PNG + 前端矢量坐标轴。位图就该当位图传。
 //   曲线            = 前端 SVG，可悬停、可框选、可导出、跟随明暗主题。
-//   特殊处理        = 拿抽样谱在本地实时算，拖滑块 0 延迟。
+//   特殊处理        = **由功能模块渲染**（app/modules/builtin/special_processing）。
+//                     模块只交声明，界面由平台按声明画 —— 同事加功能走的就是这条路。
 
 import { api } from '../api.js';
 import {
@@ -12,10 +13,12 @@ import {
 } from '../ui.js';
 import { xyChart } from '../chart.js';
 import { heatmap } from '../components/heatmap.js';
+import { figure, selectControl, numberControl,
+         bandControl } from '../components/figure.js';
 import { infoDot, withInfo } from '../components/info.js';
+import { moduleView } from '../components/module-panel.js';
 import { downloadMenu } from '../download.js';
-import { bandIntegral, wavelengthSlope, spectraAtTimes, windowResolution,
-         saturatedHead } from '../spectra.js';
+import { spectraAtTimes, windowResolution, saturatedHead } from '../spectra.js';
 
 export const meta = {
   id: 'sample',
@@ -24,11 +27,26 @@ export const meta = {
   desc: '',
 };
 
-const MODULES = [
+// 页面上有哪几个模块 = 平台自带的两个 + **所有已装的功能模块**。
+//
+// 「特殊处理」现在就是一个功能模块（app/modules/builtin/special_processing），
+// 和同事装的模块走完全同一条路 —— 平台自己吃自己的契约。
+// 同事放一个模块进 workspace/modules/，它就出现在下面这个导航里，
+// 这个文件一个字都不用改。
+const CORE_MODULES = [
   { id: 'spectra', name: '光谱处理' },
   { id: 'thickness', name: '膜厚处理' },
-  { id: 'special', name: '特殊处理' },
 ];
+
+// 模块 id 里有点（`pl.demo`），直接当 DOM id 用的话 querySelector 得转义，
+// 一处忘了就是一个 null。换成安全字符，省掉整类坑。
+const domId = (moduleId) => 'mod-' + String(moduleId).replace(/[^a-zA-Z0-9_-]/g, '-');
+
+/** 当前页面上的模块列表。装了几个功能模块就多几项。 */
+function moduleList() {
+  return [...CORE_MODULES,
+          ...(S.modules || []).map((m) => ({ id: domId(m.id), name: m.name, spec: m }))];
+}
 
 const S = {
   artifactId: null, meta: null, frames: null, error: null,
@@ -40,9 +58,8 @@ const S = {
   // ② 膜厚处理：775 避开吸收边，1120 是光谱仪上限
   bandMin: 775, bandMax: 1120,
   otFull: null, otBand: null, otReport: '',
-  // ③ 特殊处理
-  slopeCenter: 950, slopeHalf: 10,
-  integMin: 800, integMax: 950,
+  // ③ 及以后：全部由功能模块提供，这里存它们的声明
+  modules: [],
   // 模块导航高亮：spyLock 是点击后的短暂锁，spyOff 摘掉上一次的监听
   spyLock: null, spyTimer: 0, spyRaf: 0, spyOff: null,
 };
@@ -92,7 +109,7 @@ export async function view(host, ctx) {
     h('div.sample-layout', nav, body));
   refs = { host, nav, body, ctx };
 
-  mount(nav, ...MODULES.map((m) => h('a.module-link', {
+  mount(nav, ...moduleList().map((m) => h('a.module-link', {
     href: `#module-${m.id}`,
     onclick: (e) => { e.preventDefault(); scrollTo(m.id); },
     dataset: { module: m.id },
@@ -100,12 +117,11 @@ export async function view(host, ctx) {
 
   mount(body,
     section('spectra', '光谱处理'),
-    section('thickness', '膜厚处理'),
-    section('special', '特殊处理'));
+    section('thickness', '膜厚处理'));
 
   drawSpectra();
   drawThickness();
-  drawSpecial();
+  await loadModules();      // 已装模块各占一节，接在上面两个后面
   loadFrames();
   observeScroll();
 }
@@ -178,13 +194,14 @@ function syncSpy() {
   const line = root.getBoundingClientRect().top + root.clientHeight * 0.25;
   const atBottom = root.scrollTop + root.clientHeight >= root.scrollHeight - 4;
 
-  let active = MODULES[0].id;
-  for (const m of MODULES) {
+  const mods = moduleList();
+  let active = mods[0].id;
+  for (const m of mods) {
     const el = refs.body.querySelector(`#module-${m.id}`);
     if (el && el.getBoundingClientRect().top <= line) active = m.id;
   }
   // 到底了就是最后一个。短模块靠自己越不过参考线，只能靠这一条兜住。
-  if (atBottom) active = MODULES[MODULES.length - 1].id;
+  if (atBottom) active = mods[mods.length - 1].id;
   setActive(active);
 }
 
@@ -572,94 +589,60 @@ function drawWindowResolution() {
 }
 
 // ------------------------------------------------------------------ ③ 特殊处理
-function drawSpecial() {
-  const host = bodyOf('special');
-  const slopeHost = h('div#slopeHost', skeletonRows(3));
-  const integHost = h('div#integHost', skeletonRows(3));
-
-  mount(host,
-    h('p.small.muted.measure',
-      '这两条曲线用「光谱处理」已经载入的抽样谱在本地实时计算 —— 拖动控件时曲线',
-      '连续跟着变，不需要等后端；停下约 0.3 秒后自动换成全波长分辨率的精确结果。'),
-
-    h('div.fig-grid-2.mt-4',
-      figure(withInfo('谱斜率 vs 时间', 'slope'), {
-        head: [
-          numberControl('波长', S.slopeCenter, S.meta.lambda_min, S.meta.lambda_max, 1,
-            (v) => { S.slopeCenter = v; drawSlope(); }),
-          numberControl('半宽', S.slopeHalf, 1, 100, 1,
-            (v) => { S.slopeHalf = v; drawSlope(); }),
-          dl(() => refs.slopeHost, '谱斜率'),
-        ],
-        body: slopeHost,
-      }),
-
-      figure(withInfo('波段积分 vs 时间', 'integral'), {
-        head: [
-          bandControl(S.meta.lambda_min, S.meta.lambda_max,
-            () => [S.integMin, S.integMax],
-            (lo, hi) => { S.integMin = lo; S.integMax = hi; drawIntegral(); }),
-          dl(() => refs.integHost, '波段积分'),
-        ],
-        body: integHost,
-      })));
-
-  refs.slopeHost = slopeHost;
-  refs.integHost = integHost;
-}
-
-function drawSlope() {
-  if (!refs.slopeHost || !S.frames) return;
-  renderCurve(refs.slopeHost,
-    wavelengthSlope(S.frames, S.slopeCenter, S.slopeHalf),
-    `dI/dλ @ ${S.slopeCenter} nm`, 'dI/dλ (a.u./nm)',
-    { kind: 'slope', center: S.slopeCenter, half_width: S.slopeHalf });
-}
-
-function drawIntegral() {
-  if (!refs.integHost || !S.frames) return;
-  renderCurve(refs.integHost,
-    bandIntegral(S.frames, S.integMin, S.integMax),
-    `∫ ${S.integMin}–${S.integMax} nm`, '积分强度 (a.u.·nm)',
-    { kind: 'integral', lam_min: S.integMin, lam_max: S.integMax });
-}
-
-// 每个曲线容器一个防抖计时器：拖动过程中不打后端，停下来才取精确值
-const pending = new WeakMap();
-
 /**
- * 画一条派生曲线。
+ * 已装的功能模块，每个占一节。
  *
- * 先用抽样谱在本地画（0.1 ms 级），停手后自动取后端的全分辨率版本替换。
- * 抽样带来的偏差约为信号 RMS 的 1–2%，肉眼看不出，但最终结果必须是精确的 ——
- * 所以两步都做，并且在标注上如实说明当前看到的是哪一种。
+ * 平台的「特殊处理」也在这里面 —— 它就是一个模块，和同事装的走同一条路。
+ * 界面全部由 moduleView 按声明渲染：面板、控件、图注、下载、ⓘ、对齐，
+ * 模块作者一行前端代码都不写。
  */
-function renderCurve(host, y, label, yLabel, serverParams) {
-  paint(host, S.frames.time, y, label, yLabel, false);
+async function loadModules() {
+  let mods;
+  try {
+    mods = (await api.modules()).modules || [];
+  } catch (err) {
+    // 取不到模块列表不该让整页空着 —— 上面两个平台模块是好的
+    mount(refs.body, ...refs.body.childNodes, errorBox(err, loadModules));
+    return;
+  }
+  // 平台自带的排前面，同事装的排后面；各自按名字排
+  S.modules = mods.sort((a, b) =>
+    (a.origin === b.origin ? 0 : a.origin === 'builtin' ? -1 : 1)
+    || a.name.localeCompare(b.name, 'zh'));
 
-  clearTimeout(pending.get(host));
-  pending.set(host, setTimeout(async () => {
-    try {
-      const exact = await api.spectraCurve(S.artifactId, serverParams);
-      paint(host, exact.x, exact.y, exact.label, exact.unit, true, exact.n_points);
-    } catch {
-      // 取不到精确值就保留预览，不打断用户
-    }
-  }, 300));
+  // 先清掉上一轮的模块小节再加。这个函数可能被跑第二次（换样品、重载模块），
+  // 只 append 不清理的话页面上会出现两份一模一样的模块。
+  for (const old of refs.body.querySelectorAll('section.module[data-module-section]')) {
+    old.remove();
+  }
+  for (const m of S.modules) {
+    const sec = section(domId(m.id), m.name, m.description || '');
+    sec.dataset.moduleSection = m.id;
+    refs.body.appendChild(sec);
+  }
+  // 重建导航（现在多了几项）
+  mount(refs.nav, ...moduleList().map((m) => h('a.module-link', {
+    href: `#module-${m.id}`,
+    onclick: (e) => { e.preventDefault(); scrollTo(m.id); },
+    dataset: { module: m.id },
+  }, m.name)));
+
+  drawModules();
 }
 
-function paint(host, x, y, label, yLabel, exact, nPoints) {
-  const spec = { x_label: '时间 (s)', y_label: yLabel,
-                 series: [{ label, x, y, style: 'line' }] };
-  host.__spec = spec;
-  mount(host,
-    xyChart(spec, { height: 280 }),
-    h('div.chart-caption',
-      exact
-        ? h('span.status.status-ok.xsmall',
-            `全分辨率 · ${fmtInt(nPoints ?? x.length)} 点 · λ ${fmtNum(S.frames.native_lambda_step, 3)} nm`)
-        : h('span.status.status-accent.xsmall',
-            `实时预览 · λ 抽样至 ${fmtNum(S.frames.lambda_step, 3)} nm`)));
+/** 把每个模块画进它自己那一节。要等抽样谱到位 —— A 档面板靠它本地实时算。 */
+function drawModules() {
+  if (!S.frames) return;
+  for (const m of S.modules) {
+    const host = bodyOf(domId(m.id));
+    if (!host) continue;
+    moduleView(host, m, {
+      frames: S.frames,
+      sampleName: S.meta?.sample_name || '样品',
+      compute: (params) =>
+        api.moduleCompute(m.id, S.artifactId, params).then((r) => r.panels),
+    });
+  }
 }
 
 // ------------------------------------------------------------------ 数据加载
@@ -677,15 +660,15 @@ async function loadFrames() {
     S.frames = { ...info, values };
   } catch (err) {
     S.frames = null;
-    [refs.overlayHost, refs.slopeHost, refs.integHost].forEach((n) => {
+    [refs.overlayHost].forEach((n) => {
       if (n) mount(n, errorBox(err, loadFrames));
     });
     return;
   }
   drawOverlayTimeControl();
   drawOverlay();
-  drawSlope();
-  drawIntegral();
+  // 抽样谱到位了，模块才画得出来（A 档面板要拿它在本地实时算）
+  drawModules();
 }
 
 function updateHeatmaps() {
@@ -728,160 +711,3 @@ function dlHeatmap(urlGetter, name) {
   });
 }
 
-// ------------------------------------------------------------------ 图与控件
-
-/**
- * 一格图。**结构固定成三行**：标题 / 功能模块 / 图。
- *
- * 这个约束是整个横排对齐的前提 —— `.fig-grid-*` 用 subgrid 把这三行的高度
- * 在**整行上**统一，取那一带里最高的。所以左右两格的图必然从同一条线开始，
- * 哪怕一边有俩滑块、另一边什么都没有（那一格就空着）。
- *
- * 说明文字走 `note`，放在图**下面** —— 放上面的话它会把同排的另一张图
- * 一起往下推，为了几行字浪费一整块竖向空间。
- */
-function figure(title, { head = null, ctl = null, body = null, note = null } = {}) {
-  // 三行是**分开的三块**，不是「标题行里塞控件」：
-  //   1 标题行  —— 只有标题和下载，所以每一格都一样高
-  //   2 功能块  —— 所有控件都在这儿。没有控件就空着（subgrid 仍占一行）
-  //   3 图
-  //
-  // 上一版把下拉、滑块塞进标题行的右侧，于是控件多的那一格标题行 100px、
-  // 少的那一格 26px。图靠 subgrid 还是对齐的，但两个标题一高一低，
-  // 看上去就是「没对齐」。控件全部下沉之后，标题行只剩一行文字，天然齐平。
-  const ctls = [head, ctl].flat().filter(Boolean);
-  return h('div.figure',
-    h('div.figure-head', h('div.figure-title', title)),
-    h('div.figure-ctl', ctls.length ? h('div.row.gap-3.wrap', ...ctls) : null),
-    h('div.figure-body', body, note));
-}
-
-// ------------------------------------------------------------------ 控件
-function selectControl(label, value, options, onChange) {
-  return h('label.inline-field',
-    h('span.small.muted', label),
-    h('select.select.select-sm', { onchange: (e) => onChange(e.target.value) },
-      ...options.map(([v, t]) => h('option', { value: v, selected: v === value }, t))));
-}
-
-function numberControl(label, value, min, max, step, onChange) {
-  const num = h('input.input.input-sm', {
-    type: 'number', value, min, max, step, style: { width: '78px' },
-  });
-  const range = h('input.range', { type: 'range', value, min, max, step });
-  const push = (v) => {
-    const clamped = Math.max(min, Math.min(max, Number(v)));
-    num.value = clamped;
-    range.value = clamped;
-    onChange(clamped);
-  };
-  num.oninput = (e) => push(e.target.value);
-  range.oninput = (e) => push(e.target.value);       // 拖动时连续触发 —— 这才叫实时
-  return h('label.inline-field', h('span.small.muted', label), num, range);
-}
-
-/**
- * 波段选择：两个滑块 + 两个数字框。
- * onLive 在拖动过程中连续触发（前端算得起），onCommit 在松手时触发（要打后端）。
- */
-function bandControl(min, max, get, onLive, onCommit, opts = {}) {
-  // 波长用整数步进就够；时间轴要小数，所以步长和最小跨度都可配。
-  const step = opts.step ?? 1;
-  const minSpan = opts.minSpan ?? 5;
-  const round = (v) => (step >= 1 ? Math.round(v) : Number(v.toFixed(3)));
-
-  // 边界取整。`<input type=range>` 的合法值是 **min + n×step** —— 光谱仪给的
-  // lambda_min 是 330.276，step=1，于是 value=775 被浏览器吸附到 775.276：
-  // 数字框写着 775，滑块停在 775.276，一碰就跳成 776.276。
-  // 数字框和滑块必须用同一套边界，775 才是 775。
-  const lo0Bound = step >= 1 ? Math.ceil(min) : min;
-  const hi0Bound = step >= 1 ? Math.floor(max) : max;
-
-  const [lo0, hi0] = get();
-  const numAttrs = { type: 'number', min: lo0Bound, max: hi0Bound, step,
-                     style: { width: '76px' } };
-  const loNum = h('input.input.input-sm', { ...numAttrs, value: lo0 });
-  const hiNum = h('input.input.input-sm', { ...numAttrs, value: hi0 });
-  const rangeAttrs = { type: 'range', min: lo0Bound, max: hi0Bound, step };
-  const loRange = h('input.range', { ...rangeAttrs, value: lo0 });
-  const hiRange = h('input.range', { ...rangeAttrs, value: hi0 });
-
-  const clamp = (lo, hi) => {
-    lo = Math.max(lo0Bound, Math.min(hi0Bound - minSpan, lo));
-    hi = Math.min(hi0Bound, Math.max(lo + minSpan, hi));
-    return [round(lo), round(hi)];
-  };
-
-  /** 四个控件全部对齐到同一对值，并把结果送出去。 */
-  const settle = (lo, hi, { skip = null } = {}) => {
-    const [a, b] = clamp(lo, hi);
-    // 正在打字的那个框不回写 —— 回写就是「敲一个字重排一次」，多位数永远输不完
-    if (skip !== loNum) loNum.value = a;
-    if (skip !== hiNum) hiNum.value = b;
-    loRange.value = a;
-    hiRange.value = b;
-    onLive(a, b);
-    return [a, b];
-  };
-
-  // ── 数字框：打字期间只解析，**绝不回写自己**。
-  //
-  // 上一版在 oninput 里直接 clamp 并回写：想输 800，敲下第一个 `8` 的瞬间
-  // 就被钳成 330 —— 于是「波段无法打字只能滑动」。
-  // 半途中的非法值（空串、只敲了一个 8、比另一头还大）不往下传，
-  // 图保持上一次的样子，不闪也不报错；松开焦点时才归一。
-  let committed = clamp(lo0, hi0);
-  const typing = (el, other, isLo) => {
-    el.oninput = () => {
-      const v = Number(el.value);
-      if (el.value === '' || !Number.isFinite(v)) return;
-      const o = Number(other.value);
-      if (!Number.isFinite(o)) return;
-      const [lo, hi] = isLo ? [v, o] : [o, v];
-      if (v < lo0Bound || v > hi0Bound || hi - lo < minSpan) return;  // 还没输完
-      settle(lo, hi, { skip: el });
-    };
-    // 归一放在 change/blur：这时候才知道你输完了。
-    // 每一头各自兜底到滑块上的当前值 —— 只清空了一个框时，另一头不该变成 NaN。
-    const finish = () => {
-      const v = Number(el.value);
-      const o = Number(other.value);
-      const mine = Number.isFinite(v) ? v : Number(isLo ? loRange.value : hiRange.value);
-      const theirs = Number.isFinite(o) ? o : Number(isLo ? hiRange.value : loRange.value);
-      const [a, b] = settle(...(isLo ? [mine, theirs] : [theirs, mine]));
-      // change 和 blur 会接连触发。值没变就别再打一次后端 ——
-      // 一次输入换来两个请求，图会闪两下。
-      if (a !== committed[0] || b !== committed[1]) {
-        committed = [a, b];
-        onCommit?.();
-      }
-    };
-    el.onchange = finish;
-    el.onblur = finish;
-  };
-  typing(loNum, hiNum, true);
-  typing(hiNum, loNum, false);
-
-  loRange.oninput = () => settle(Number(loRange.value), Number(hiNum.value));
-  hiRange.oninput = () => settle(Number(loNum.value), Number(hiRange.value));
-  if (onCommit) {
-    // 打后端的操作等松手，别在拖动过程中发几十个请求
-    const slid = () => {
-      committed = [Number(loRange.value), Number(hiRange.value)];
-      onCommit();
-    };
-    loRange.onchange = slid;
-    hiRange.onchange = slid;
-  }
-
-  // 初值也过一遍 clamp，保证一上来滑块和数字框就是同一个数
-  const [a, b] = clamp(lo0, hi0);
-  loNum.value = loRange.value = a;
-  hiNum.value = hiRange.value = b;
-
-  return h('div.band-control',
-    h('div.row.gap-2', h('span.small.muted', opts.label ?? '波段'), loNum,
-      h('span.small.dim', '–'), hiNum,
-      h('span.small.dim', opts.unit ?? 'nm')),
-    h('div.band-sliders', loRange, hiRange));
-}

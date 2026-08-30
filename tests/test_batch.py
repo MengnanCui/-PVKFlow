@@ -629,3 +629,78 @@ def test_a_run_without_thickness_says_to_rerun_instead_of_500(batch_client, work
     r = batch_client.get(f"/api/batch/runs/{run_id}/slices?windows=0:1")
     assert r.status_code == 404
     assert "重跑" in r.json()["error"]["message"]
+
+
+# ---------------------------------------------------------------- 模块化迁移
+def test_the_migrated_module_matches_the_old_hand_written_path(imported):
+    """「特殊处理」从手写页面迁成模块之后，算出来的必须**逐点相同**。
+
+    这是迁移的验收线。差一点点都不行 —— 用户拿着迁移前的图和迁移后的图
+    对比时，看到的必须是同一条曲线，否则他没法相信这次重构什么都没动。
+    """
+    from app.modules.base import ModuleContext
+    from app.modules.registry import registry as mreg
+    from app.parsers import render
+
+    mreg.load_all()
+    mod = mreg.get("special.slope_integral")
+
+    lam = np.linspace(600, 1100, 140)
+    t = np.linspace(0, 10, 30)
+    rng = np.random.default_rng(7)
+    M = rng.normal(1.0, 0.3, (140, 30))
+
+    params = {"integ": [800, 950], "slope_center": 950, "slope_half": 10}
+    out = mod.compute(ModuleContext(lam, M, t, params))
+
+    old_integ = render.band_integral(M, lam, 800, 950)
+    old_slope = render.wavelength_slope(M, lam, 950, 10)
+
+    np.testing.assert_allclose(out["integ"].y, old_integ, rtol=0, atol=0)
+    np.testing.assert_allclose(out["slope"].y, old_slope, rtol=0, atol=0)
+
+
+def test_batch_curves_now_come_from_the_module_declaration(imported):
+    """长表里的 integral / slope 列是模块声明出来的，不是 batch.py 写死的。
+
+    这条钉住的是「同事加一个模块，他的曲线自动进长表」—— 平台自己的
+    特殊处理走的就是这条路，所以这条路一定是通的。
+    """
+    from app.modules.registry import registry as mreg
+    from app.storage import tabular
+
+    mreg.load_all()
+    declared = {c.name for c in mreg.get("special.slope_integral").spec.batch_curves}
+    assert declared == {"integral", "slope"}
+
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20"]}, "recipe": {},
+    })["task_id"])
+    tbl = tabular.read_table(t["result"]["table"]["table_id"])
+    assert declared <= set(tbl["columns"])
+
+
+def test_a_module_that_crashes_does_not_take_the_whole_batch_down(imported, monkeypatch):
+    """同事的模块崩了，你的其它结果照常拿得到 —— 只是那几列空着 + 一条 warning。
+
+    不这样的话，没人敢在跑 200 个样品之前装别人的模块。
+    """
+    from app.modules.registry import registry as mreg
+
+    mreg.load_all()
+    mod = mreg.get("special.slope_integral")
+
+    def boom(ctx):
+        raise RuntimeError("同事写崩了")
+
+    monkeypatch.setattr(type(mod), "compute", lambda self, ctx: boom(ctx))
+
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20"]}, "recipe": {},
+    })["task_id"])
+
+    assert t["status"] == "ok"                 # 整批没被带走
+    assert t["result"]["n_ok"] > 0
+    detail = batch.batch_detail(t["result"]["parent_run_id"])
+    warns = " ".join(w for c in detail["children"] for w in c["warnings"])
+    assert "同事写崩了" in warns and "特殊处理" in warns    # 说清是哪个模块崩的

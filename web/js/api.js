@@ -84,6 +84,20 @@ export const api = {
   rawUrl: (id) => `/api/artifacts/${id}/raw`,
   thumbUrl: (id) => `/api/artifacts/${id}/thumb`,
 
+  // 功能模块（同事放进 workspace/modules/ 的那些）
+  modules: () => get('/api/modules'),
+  reloadModules: () => post('/api/modules/reload'),
+  validateModule: (id) => post('/api/modules/validate', { module_id: id }),
+  moduleCompute: (id, artifactId, params) =>
+    post(`/api/modules/${id}/compute`, { artifact_id: artifactId, params }),
+  moduleExportUrl: (id) => `/api/modules/${id}/export`,
+  uninstallModule: (id) => request(`/api/modules/${id}`, { method: 'DELETE' }),
+  importModule: (file) => {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    return request('/api/modules/import', { method: 'POST', body: fd });
+  },
+
   // skill
   skills: () => get('/api/skills'),
   reloadSkills: () => post('/api/skills/reload'),

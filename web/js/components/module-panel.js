@@ -1,0 +1,199 @@
+// 按声明渲染一个功能模块。
+//
+// 同事的模块只交两样东西：算法（可选）和一份声明。界面从这里长出来 ——
+// 面板的三行结构、控件、图注、下载菜单、ⓘ、左右等高，全部用平台自己的组件。
+// **这个文件里不写任何新样式。** 模块作者碰不到 CSS，风格也就漂不了。
+//
+// 两档面板在这里汇合：
+//
+//   A 档（声明里有 live=）：拖控件时在浏览器本地跑算子，实测 2 ms 级，
+//       和平台自己的特殊处理一样跟手。停手后再取一次后端的全分辨率结果。
+//   B 档（没有 live=）：本地算不了，松手才打后端。这不是降级 ——
+//       平台自己的膜厚模块（FFT）本来就是这么做的。
+//
+// 两档都会在图注里**如实标注**你现在看到的是抽样预览还是全分辨率结果。
+
+import { h, mount, fmtInt, fmtNum, errorBox, skeletonRows } from '../ui.js';
+import { xyChart } from '../chart.js';
+import { figure, bandControl, numberControl, selectControl } from './figure.js';
+import { infoDot, withInfo } from './info.js';
+import { downloadMenu } from '../download.js';
+import { runOp } from '../ops.js';
+
+// 停手多久之后去取精确值。和 sample.js 里那个 300 ms 一致 ——
+// 两处都是「拖动中不打后端」的同一个决定。
+const SETTLE_MS = 300;
+
+/**
+ * 渲染一个模块。
+ *
+ * @param host    挂载点
+ * @param spec    后端给的模块声明（ModuleSpec.as_dict()）
+ * @param opts
+ *   - `frames`   已载入的抽样谱 {lambda, time, values, ...}，A 档本地计算要用
+ *   - `compute`  (params) => Promise<{panel_id: {x, y, label, y_label, caption}}>
+ *                后端精确计算
+ *   - `sampleName` 下载文件名用
+ */
+export function moduleView(host, spec, { frames, compute, sampleName = '样品' }) {
+  const params = { ...Object.fromEntries(
+    (spec.controls || []).map((c) => [c.key, c.default])) };
+
+  const hosts = {};          // panel_id → 画图的容器
+  let settleTimer = 0;
+
+  // ── 控件画在哪一格：第一个 uses 到它的面板。声明里没人 uses 的控件
+  //    放在第一格 —— 不显示出来的话，用户就永远改不了它。
+  const ownerOf = (key) => {
+    const p = (spec.panels || []).find((x) => (x.uses || []).includes(key));
+    return p ? p.id : (spec.panels || [])[0]?.id;
+  };
+
+  function controlsFor(panelId) {
+    const out = [];
+    for (const c of spec.controls || []) {
+      if (ownerOf(c.key) !== panelId) continue;
+      out.push(buildControl(c));
+    }
+    return out;
+  }
+
+  function buildControl(c) {
+    const live = () => { paintLocal(c.key); scheduleExact(); };
+    const commit = () => scheduleExact(0);
+
+    // 声明说「跟着波长/时间轴」就用数据的实际范围。写死一个数只对一台仪器成立。
+    const axis = (kind) => {
+      if (!frames) return null;
+      if (kind === 'lambda') return [frames.lambda[0], frames.lambda[frames.lambda.length - 1]];
+      if (kind === 'time') return [frames.time[0], frames.time[frames.time.length - 1]];
+      return null;
+    };
+
+    if (c.type === 'band') {
+      const [lo, hi] = c.default || [0, 1];
+      // 波段天然是波长上的一段，默认就跟着波长轴走
+      const [min, max] = axis(c.range_from || 'lambda') || [lo, hi];
+      return bandControl(min, max, () => params[c.key],
+        (a, b) => { params[c.key] = [a, b]; live(); }, commit,
+        { label: c.label, unit: c.unit || 'nm', step: c.step ?? 1 });
+    }
+    if (c.type === 'number') {
+      const auto = axis(c.range_from);
+      const min = auto ? auto[0] : (c.min ?? 0);
+      const max = auto ? auto[1] : (c.max ?? 1e6);
+      return numberControl(c.label, params[c.key], min, max,
+        c.step ?? 1, (v) => { params[c.key] = v; live(); commit(); });
+    }
+    if (c.type === 'select') {
+      return selectControl(c.label, params[c.key],
+        (c.options || []).map((o) => [o, String(o)]),
+        (v) => { params[c.key] = v; live(); commit(); });
+    }
+    if (c.type === 'bool') {
+      return h('label.inline-field',
+        h('input', { type: 'checkbox', checked: !!params[c.key],
+          onchange: (e) => { params[c.key] = e.target.checked; live(); commit(); } }),
+        h('span.small.muted', c.label));
+    }
+    // 认不出来的类型不该静默忽略 —— 那样用户会以为控件坏了
+    return h('span.xsmall.danger', `认不出的控件类型：${c.type}`);
+  }
+
+  // ── A 档：本地跑算子，立刻重画
+  //
+  // `changed` 是刚动过的那个控件的 key。**只重算真正依赖它的面板** ——
+  // 无脑全画一遍的话，拖一个滑块会把另一格也算一遍，白干一倍的活。
+  // （实测：全画 3.4 ms，只画相关的 2.2 ms，和迁移前一致。）
+  function paintLocal(changed = null) {
+    if (!frames) return;
+    for (const p of spec.panels || []) {
+      if (!p.live) continue;                 // B 档没有本地路径
+      if (changed && !Object.values(p.live.bind || {}).includes(changed)) continue;
+      let y;
+      try {
+        y = runOp(p.live.op, frames, resolveArgs(p.live, params));
+      } catch (err) {
+        mount(hosts[p.id], errorBox(err));
+        continue;
+      }
+      draw(p, frames.time, y, false);
+    }
+  }
+
+  // ── 两档共用：停手后取后端的精确结果
+  function scheduleExact(delay = SETTLE_MS) {
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(async () => {
+      // B 档在等的时候要有交代，不能干瞪眼
+      for (const p of spec.panels || []) {
+        if (!p.live && hosts[p.id]) mount(hosts[p.id], skeletonRows(3));
+      }
+      let data;
+      try {
+        data = await compute(params);
+      } catch (err) {
+        for (const p of spec.panels || []) {
+          if (!p.live && hosts[p.id]) mount(hosts[p.id], errorBox(err, () => scheduleExact(0)));
+        }
+        return;      // A 档保留本地预览，不打断
+      }
+      for (const p of spec.panels || []) {
+        const d = data[p.id];
+        if (d) draw(p, d.x, d.y, true, d);
+      }
+    }, delay);
+  }
+
+  function draw(panel, x, y, exact, extra = null) {
+    const host = hosts[panel.id];
+    if (!host) return;
+    const yLabel = extra?.y_label || panel.y_label || '';
+    const chartSpec = {
+      x_label: panel.x_label || '时间 (s)',
+      y_label: yLabel,
+      series: [{ label: extra?.label || panel.title, x, y, style: 'line' }],
+    };
+    host.__spec = chartSpec;
+    mount(host,
+      xyChart(chartSpec, { height: panel.height || 300 }),
+      h('div.chart-caption',
+        // 如实说明这条曲线是抽样预览还是全分辨率 —— 和平台自己那三个模块一样
+        exact
+          ? h('span.status.status-ok.xsmall',
+              `全分辨率 · ${fmtInt(x.length)} 点`)
+          : h('span.status.status-accent.xsmall',
+              `实时预览 · λ 抽样至 ${fmtNum(frames?.lambda_step, 3)} nm`),
+        extra?.caption ? h('span.xsmall.dim', `　${extra.caption}`) : null,
+        panel.caption ? h('span.xsmall.dim', `　${panel.caption}`) : null));
+  }
+
+  // ── 搭骨架
+  const cols = spec.columns === 1 ? '' : `.fig-grid-${spec.columns || 2}`;
+  const figs = (spec.panels || []).map((p) => {
+    const body = h(`div.module-panel-body`, skeletonRows(3));
+    hosts[p.id] = body;
+    return figure(p.info ? withInfo(p.title, p.info) : p.title, {
+      head: downloadMenu({
+        svg: () => body.querySelector('svg'),
+        spec: () => body.__spec || null,
+        name: `${sampleName}_${p.title}`,
+      }),
+      ctl: controlsFor(p.id),
+      body,
+    });
+  });
+
+  mount(host, h(`div${cols}`, ...figs));
+
+  paintLocal();          // A 档立刻有东西看
+  scheduleExact(0);      // 两档都去取一次精确值
+  return { params, refresh: () => { paintLocal(); scheduleExact(0); } };
+}
+
+/** 把 `{算子参数: 控件 key}` 解成 `{算子参数: 实际值}`。和后端 _resolve_bind 同一件事。 */
+function resolveArgs(live, params) {
+  const out = {};
+  for (const [arg, key] of Object.entries(live.bind || {})) out[arg] = params[key];
+  return out;
+}

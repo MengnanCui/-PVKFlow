@@ -17,7 +17,9 @@ from fastapi.staticfiles import StaticFiles
 from app import config
 from app.api import (artifacts, assist, batch, chat, files, results, selection,
                      settings, skills, spectra)
+from app.api import modules as modules_api
 from app.api.common import error_response
+from app.modules.registry import reload as reload_modules, seed_template
 from app.skills.registry import registry
 
 log = logging.getLogger("hte")
@@ -32,6 +34,9 @@ async def lifespan(app: FastAPI):
     db.seed_defaults()
     registry.load_all()
     log.info("已加载 %d 个 skill", len(registry.all()))
+    seed_template()          # 工作区里得真有个模板目录可以复制
+    mods = reload_modules()
+    log.info("已加载 %d 个功能模块", mods["count"])
 
     # 上次没跑完的任务不能永远显示 running —— 用户会一直等一个早就死了的东西
     from app import tasks as task_queue
@@ -40,6 +45,9 @@ async def lifespan(app: FastAPI):
         log.warning("有 %d 个任务因为上次重启被中断，已标记", reaped)
     for err in registry.errors:
         log.warning("skill 加载失败 %s：%s", err["source"], err["error"])
+    # 模块加载失败不能静默 —— 同事装了个坏模块，得看得见是哪一个、为什么
+    for err in mods["errors"]:
+        log.warning("模块加载失败 %s：%s", err["source"], err["error"])
     yield
     from app import tasks as task_queue
     task_queue.shutdown()
@@ -57,6 +65,7 @@ app = FastAPI(
 for router in (files.router, skills.router, results.router, artifacts.router,
                assist.router, settings.router, spectra.router,
                selection.router, batch.router, batch.tasks_router,
+               modules_api.router,
                chat.router):
     app.include_router(router)
 
