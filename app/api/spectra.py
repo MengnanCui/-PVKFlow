@@ -160,14 +160,20 @@ def frames_bin(
     )
 
 
+def _one_of(names) -> str:
+    return "^(" + "|".join(sorted(names)) + ")$"
+
+
 @router.get("/{artifact_id}/heatmap.png")
 def heatmap(
     artifact_id: str,
-    axis: str = Query("wavelength", pattern="^(wavelength|wavenumber)$"),
+    # 三个白名单都从 render.py 取，别在这儿再抄一份 ——
+    # 抄了之后加一个色标就得记着改两处，而漏改的那处只会在运行时 422。
+    axis: str = Query("wavelength", pattern=_one_of(render.AXES)),
     lam_min: float | None = None,
     lam_max: float | None = None,
-    norm: str = Query("frame", pattern="^(none|frame|global|wavelength)$"),
-    cmap: str = Query("ice", pattern="^(gray|ice|steel|rainbow)$"),
+    norm: str = Query("frame", pattern=_one_of(render.NORMS)),
+    cmap: str = Query("ice", pattern=_one_of(render.COLORMAPS)),
     width: int = Query(1100, ge=120, le=3000),
     height: int = Query(560, ge=120, le=3000),
 ) -> Response:
@@ -259,6 +265,13 @@ def thickness(
     默认窗口 775–1120 nm：775 避开约 775 nm 的吸收边，1120 是光谱仪上限。
     这是**平台传的 override**，规范里的 DEFAULTS 仍是 780–1050 —— 块 A
     回显的是本次实际用的值，所以两边都成立。
+
+    ★ 页面上画的膜厚**不走这里**，走膜厚模块
+    （`app/modules/builtin/thickness/`）—— 样品页和批处理都是。
+    这个接口留着是因为它给的是模块不给的**逐帧原始数**：flags、条纹数、
+    信噪比。要拿数字自己分析、或者要对着模块的结果做独立核对时用它
+    （tests/test_batch.py 里那条「批处理和单样品页逐点相同」就是拿它当参照的）。
+    所以这不是迁移剩下的尾巴，是有意留的那一份独立读数。
     """
     from app.analysis import fringe_ot
 

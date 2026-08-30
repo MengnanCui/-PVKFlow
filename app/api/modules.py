@@ -74,11 +74,18 @@ def compute(module_id: str, payload: dict = Body(...)) -> dict:
     sm = _load(artifact_id)
     params = {**mod.spec.defaults(), **(payload.get("params") or {})}
 
-    def _run():
-        return mod.compute(ModuleContext(sm.lam, sm.M, sm.t, params, meta=sm.meta))
+    # 界面说这次动了哪几个控件。据此算出「哪些面板的结果可能变了」——
+    # `uses=[]` 的面板（不依赖任何控件）永远不变，没必要陪着重算一遍。
+    changed = payload.get("changed")
+    ctx = ModuleContext(sm.lam, sm.M, sm.t, params,
+                        meta=sm.meta, artifact_id=artifact_id)
+    if isinstance(changed, list):
+        ch = set(changed)
+        ctx._needed = {p.id for p in mod.spec.panels
+                       if p.uses and (set(p.uses) & ch)}
 
     try:
-        out = _run()
+        out = mod.compute(ctx)
     except Exception as exc:                        # noqa: BLE001
         # 模块是同事写的，崩了要说清是**哪个模块**崩的，
         # 不能让它看起来像平台的毛病

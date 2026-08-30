@@ -29,7 +29,8 @@ import numpy as np
 
 from app import config
 from app.modules import ops
-from app.modules.base import Module, ModuleContext, ModuleSpec, PanelData
+from app.modules.base import (SERIES_COLORS, Module, ModuleContext, ModuleSpec,
+                              PanelData)
 
 ID_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
 
@@ -142,6 +143,13 @@ def check_spec(spec: Any, *, known_ids: set[str] | None = None) -> Report:
                       f"　现有的 controls：{', '.join(sorted(keys)) or '（一个都没有）'}"
                       + _did_you_mean(u, keys))
 
+        if p.kind not in ("xy", "heatmap", "text"):
+            r.err(f"面板 \"{p.id}\" 的 kind=\"{p.kind}\" 不认识。"
+                  "　能用的：xy（曲线，默认）、heatmap（服务端位图）、text（等宽文本）。")
+        if p.kind != "xy" and p.live:
+            r.err(f"面板 \"{p.id}\" 是 {p.kind} 类型，不能用 live= 算子 —— "
+                  "算子产出的是曲线。要么把 kind 改回 xy，要么去掉 live= 自己写 compute()。")
+
         if p.info and terms and p.info not in terms:
             r.err(f"panel \"{p.id}\" 的 info=\"{p.info}\" 在术语表里不存在。"
                   "　要么把这条术语加进 web/js/glossary.js，要么把 info 去掉。"
@@ -208,7 +216,10 @@ def trial_run(mod: Module, report: Report, *,
 
     before = _snapshot_workspace()
     try:
-        out = mod.compute(ModuleContext(lam, M, t, spec.defaults()))
+        # 试跑给一个占位 artifact_id：热力图面板要拿它拼图片地址，
+        # 不给的话它永远过不了验证，而那不是模块的错。
+        out = mod.compute(ModuleContext(lam, M, t, spec.defaults(),
+                                        artifact_id="art_trialrun"))
     except Exception as exc:
         report.err(f"compute() 跑崩了：{type(exc).__name__}: {exc}\n"
                    + traceback.format_exc()[-1200:])
@@ -231,16 +242,7 @@ def trial_run(mod: Module, report: Report, *,
         if not isinstance(d, PanelData):
             report.err(f"面板 \"{p.id}\" 返回的是 {type(d).__name__}，要 PanelData。")
             continue
-        if len(d.x) != len(d.y):
-            report.err(f"面板 \"{p.id}\"：x 有 {len(d.x)} 个点，y 有 {len(d.y)} 个，对不上。")
-        elif len(d.y) != len(t):
-            report.err(f"面板 \"{p.id}\" 返回了 {len(d.y)} 个点，"
-                       f"但时间轴有 {len(t)} 帧。曲线要和时间轴一一对应。")
-        vals = [v for v in d.y if v is not None and v == v]
-        if not vals:
-            report.err(f"面板 \"{p.id}\" 算出来全是空值。"
-                       "多半是控件默认值落在数据范围外了 —— "
-                       f"这份试跑数据的波长范围是 {lam[0]:.0f}–{lam[-1]:.0f} nm。")
+        _check_panel_shape(p, d, t, lam, report)
 
     extra = set(out) - {p.id for p in spec.panels}
     if extra:
@@ -253,6 +255,85 @@ def trial_run(mod: Module, report: Report, *,
                    + "、".join(str(p) for p in changed[:5])
                    + "。模块只应该读数据、返回结果，不该往工作区里写东西。")
     return out
+
+
+def _check_panel_shape(panel, d: PanelData, t, lam, report: Report) -> None:
+    """一个面板返回的东西对不对。**每种 kind 的要求不一样。**
+
+    这些检查存在的意义：声明合法不代表算出来能看。曲线长度和时间轴对不上、
+    热力图没给图片地址、文本面板返回空的 —— 装上去都是一格空白，
+    而空白不会告诉你哪里错了。
+    """
+    pid = panel.id
+
+    if panel.kind == "text":
+        if not (d.text or "").strip():
+            report.err(f"面板 \"{pid}\" 是 text 类型，但 PanelData 的 text 是空的。"
+                       "　写法：PanelData(text=\"要显示的内容\")")
+        return
+
+    if panel.kind == "heatmap":
+        if not d.image_url:
+            report.err(f"面板 \"{pid}\" 是 heatmap 类型，但没给 image_url。"
+                       "　热力图是服务端渲染成图片传过来的 —— "
+                       "把渲染接口的地址填进 PanelData(image_url=...)。")
+        for name, val in (("x_range", d.x_range), ("y_range", d.y_range)):
+            if val is not None and len(val) != 2:
+                report.err(f"面板 \"{pid}\" 的 {name} 要给两个数（[起, 止]），"
+                           f"现在是 {val!r}。它决定坐标轴的刻度。")
+        if d.x_range is None or d.y_range is None:
+            report.warn(f"面板 \"{pid}\" 没给 x_range / y_range —— "
+                        "坐标轴会没有刻度，图上就读不出数值了。")
+        return
+
+    # ── kind == "xy"
+    series = list(d.series) or ([1] if len(d.y) else [])
+    if not series:
+        report.err(f"面板 \"{pid}\" 什么都没返回。"
+                   "　写法：PanelData(x=ctx.t, y=算出来的值)，"
+                   "多条曲线用 PanelData(series=[Series(...), ...])。")
+        return
+
+    for i, ser in enumerate(d.series or []):
+        if len(ser.x) != len(ser.y):
+            report.err(f"面板 \"{pid}\" 第 {i + 1} 条序列"
+                       f"（{ser.label or '没写 label'}）：x 有 {len(ser.x)} 个点、"
+                       f"y 有 {len(ser.y)} 个，对不上。")
+        if ser.color not in SERIES_COLORS:
+            report.err(f"面板 \"{pid}\" 第 {i + 1} 条序列的 color=\"{ser.color}\" 不认识。"
+                       f"　能用的：{', '.join(sorted(SERIES_COLORS))}。"
+                       "**不收十六进制颜色** —— 颜色由平台统一管，"
+                       "写死的颜色在暗色主题下会瞎掉。"
+                       + _did_you_mean(ser.color, SERIES_COLORS))
+        if ser.style not in ("line", "scatter", "line+scatter"):
+            report.err(f"面板 \"{pid}\" 第 {i + 1} 条序列的 style=\"{ser.style}\" 不认识。"
+                       "　能用的：line、scatter、line+scatter。")
+
+    if not d.series:
+        if len(d.x) != len(d.y):
+            report.err(f"面板 \"{pid}\"：x 有 {len(d.x)} 个点，y 有 {len(d.y)} 个，对不上。")
+        elif len(d.y) != len(t):
+            report.err(f"面板 \"{pid}\" 返回了 {len(d.y)} 个点，"
+                       f"但时间轴有 {len(t)} 帧。曲线要和时间轴一一对应。")
+
+    # 全空 = 参数多半落在数据范围外。这只有真跑一遍才发现。
+    vals = []
+    for ser in (d.series or []):
+        vals += [v for v in ser.y if v is not None and v == v]
+    if not d.series:
+        vals = [v for v in d.y if v is not None and v == v]
+    if not vals:
+        report.err(f"面板 \"{pid}\" 算出来全是空值。"
+                   "多半是控件默认值落在数据范围外了 —— "
+                   f"这份试跑数据的波长范围是 {lam[0]:.0f}–{lam[-1]:.0f} nm。")
+
+    # stats 的 ⓘ 也要指向真实术语
+    terms = _glossary_terms()
+    for st in d.stats or ():
+        if st.info and terms and st.info not in terms:
+            report.err(f"面板 \"{pid}\" 的 stat \"{st.label}\" "
+                       f"info=\"{st.info}\" 在术语表里不存在。"
+                       + _did_you_mean(st.info, terms))
 
 
 def _snapshot_workspace() -> dict[Path, float]:

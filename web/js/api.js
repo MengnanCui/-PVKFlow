@@ -88,8 +88,10 @@ export const api = {
   modules: () => get('/api/modules'),
   reloadModules: () => post('/api/modules/reload'),
   validateModule: (id) => post('/api/modules/validate', { module_id: id }),
-  moduleCompute: (id, artifactId, params) =>
-    post(`/api/modules/${id}/compute`, { artifact_id: artifactId, params }),
+  // changed = 这次动过的控件 key。后端据此跳过不受影响的面板（见 ctx.needs）
+  moduleCompute: (id, artifactId, params, changed = null) =>
+    post(`/api/modules/${id}/compute`,
+         { artifact_id: artifactId, params, ...(changed ? { changed } : {}) }),
   moduleExportUrl: (id) => `/api/modules/${id}/export`,
   uninstallModule: (id) => request(`/api/modules/${id}`, { method: 'DELETE' }),
   importModule: (file) => {

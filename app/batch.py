@@ -87,10 +87,11 @@ class SampleOutcome:
     # max_time_points 抽稀过。硬塞进同一张表就得二选一：要么给膜厚抽稀
     # （上一轮刚说过不行），要么给另外两条插值（凭空造数）。所以分两张表。
     ot_t: np.ndarray | None = None
-    ot: np.ndarray | None = None
-    ot_status: list[str] = field(default_factory=list)
     # 已装模块声明的曲线：{列名: 数组}。同事的模块产出什么，这里就多什么列。
+    #   module_curves —— 跟着抽稀过的时间轴 out.t
+    #   full_curves   —— 跟着未抽稀的 ot_t（声明了 batch_all_frames 的模块）
     module_curves: dict[str, np.ndarray] = field(default_factory=dict)
+    full_curves: dict[str, np.ndarray] = field(default_factory=dict)
     metrics: dict[str, float] = field(default_factory=dict)
 
 
@@ -103,6 +104,9 @@ class SampleOutcome:
 # 老配方的扁平字段 → 特殊处理模块的控件。
 # 界面上存了几个月的配方不能因为迁移就读不出来了。
 _LEGACY_MAP = {
+    "thickness.fringe_ot": {
+        "band": lambda r: [r.band_min, r.band_max],
+    },
     "special.slope_integral": {
         "integ": lambda r: [r.integral_min, r.integral_max],
         "slope_center": lambda r: r.slope_center,
@@ -123,8 +127,14 @@ def _params_for(module_id: str, spec, recipe: "Recipe") -> dict:
     return params
 
 
-def _run_modules(lam, M, t, recipe: "Recipe", warnings: list[str]) -> dict[str, np.ndarray]:
-    """跑所有声明了 batch_curves 的模块，收集它们的曲线。
+def _run_modules(lam, M, t, recipe: "Recipe", warnings: list[str], *,
+                 all_frames: bool = False, meta: dict | None = None,
+                 artifact_id: str = "") -> dict[str, np.ndarray]:
+    """跑声明了 batch_curves 的模块，收集它们的曲线。
+
+    `all_frames` 选的是哪一批模块：False = 跟着抽稀后的时间轴那些，
+    True = 声明了 `batch_all_frames` 要拿全部帧的那些（膜厚）。
+    两批分开跑、分开存 —— 时间轴不是同一条。
 
     **一个模块崩了不能带走整批。** 记一条 warning，那几列留空 ——
     同事的模块出问题，你的其它结果照常拿得到。
@@ -141,11 +151,12 @@ def _run_modules(lam, M, t, recipe: "Recipe", warnings: list[str]) -> dict[str, 
     out: dict[str, np.ndarray] = {}
     for mod in module_registry.all():
         spec = mod.spec
-        if not spec.batch_curves:
+        if not spec.batch_curves or bool(spec.batch_all_frames) != all_frames:
             continue
         params = _params_for(spec.id, spec, recipe)
         try:
-            panels = mod.compute(ModuleContext(lam, M, t, params))
+            panels = mod.compute(ModuleContext(lam, M, t, params, meta=meta,
+                                               artifact_id=artifact_id))
         except Exception as exc:                     # noqa: BLE001
             warnings.append(f"模块「{spec.name}」算不出来：{type(exc).__name__}: {exc}")
             continue
@@ -154,7 +165,16 @@ def _run_modules(lam, M, t, recipe: "Recipe", warnings: list[str]) -> dict[str, 
             if d is None:
                 warnings.append(f"模块「{spec.name}」没有返回面板 {cv.from_panel}")
                 continue
-            y = np.asarray([np.nan if v is None else float(v) for v in d.y],
+            col = d.column(cv.key)
+            if col is None:
+                warnings.append(
+                    f"模块「{spec.name}」的面板 {cv.from_panel} 里没有 "
+                    f"batch_extra[\"{cv.key}\"]，{cv.name} 这一列跳过"
+                    if cv.key else
+                    f"模块「{spec.name}」的面板 {cv.from_panel} 没画出任何数据，"
+                    f"{cv.name} 这一列跳过")
+                continue
+            y = np.asarray([np.nan if v is None else float(v) for v in col],
                            dtype=np.float32)
             if len(y) != len(t):
                 warnings.append(
@@ -186,7 +206,9 @@ def _process_one(row: dict, recipe: Recipe) -> SampleOutcome:
         # 曲线由**已装的模块**产出 —— 模块声明了 batch_curves，
         # 平台就自动把它接进长表、对比页叠图、时刻切片和导出脚本。
         # 同事加一个模块，这些地方一处都不用改。
-        out.module_curves = _run_modules(lam, M, t, recipe, out.warnings)
+        out.module_curves = _run_modules(lam, M, t, recipe, out.warnings,
+                                         meta=sm.meta,
+                                         artifact_id=row["matrix_id"])
         integ = out.module_curves.get("integral")
         slope = out.module_curves.get("slope")
         if integ is None:
@@ -202,43 +224,36 @@ def _process_one(row: dict, recipe: Recipe) -> SampleOutcome:
             diag = fringe_ot.diagnostics_for(recipe.band_min, recipe.band_max)
             out.metrics["ot_floor"] = diag["ot_floor_nm"]
             out.metrics["fringe_bin"] = diag["bin_f_nm"]
-
-            # 逐帧光学厚度。走的是单样品页那条**同一个** extract_series ——
-            # 批处理里另写一份 FFT 的话，两个页面对同一个样品会给出不同的膜厚，
-            # 而且没人知道该信哪个。
-            #
-            # 注意用的是**未抽样**的 lam / sm.M：膜厚必须拿完整光谱算，
-            # 上面那个 max_time_points 只影响 integral / slope 的显示密度。
-            try:
-                res = fringe_ot.extract_series(
-                    sm.lam, sm.t, sm.M,
-                    target_times_s="all",
-                    window_nm=[recipe.band_min, recipe.band_max],
-                    accurate_cycles=fringe_ot.PLATFORM_ACCURATE_CYCLES,
-                    input_is_absorbance=bool(sm.meta.get("input_is_absorbance", False)),
-                )
-                pts = res["points"]
-                out.ot_t = np.array([q["t"] for q in pts], dtype=np.float32)
-                out.ot = np.array([q["ot_nm"] for q in pts], dtype=np.float32)
-                out.ot_status = [q["status"] for q in pts]
-                n_ok = sum(1 for q in pts if q["status"] == "OK")
-                out.metrics["ot_ok_frames"] = float(n_ok)
-                out.metrics["ot_frames"] = float(len(pts))
-                if n_ok:
-                    ok_vals = [q["ot_nm"] for q in pts if q["status"] == "OK"]
-                    out.metrics["ot_first_ok"] = float(ok_vals[0])
-                    out.metrics["ot_last_ok"] = float(ok_vals[-1])
-                else:
-                    out.warnings.append(
-                        f"膜厚：{len(pts)} 帧里没有一帧达到「可信」"
-                        f"（窗口 {recipe.band_min:g}–{recipe.band_max:g} nm 下条纹数不足）")
-            except Exception as exc:            # noqa: BLE001
-                # 膜厚算不出来不该把整个样品判成失败 —— integral / slope 还是好的。
-                # 记一条 warning，界面上那一列显示空白而不是假数。
-                out.warnings.append(f"膜厚算不出来：{exc}")
         else:
             out.warnings.append(
                 f"膜厚窗口 {recipe.band_min:g}–{recipe.band_max:g} nm 超出数据范围")
+
+        # 逐帧的量（膜厚）走**未抽样**的 sm.lam / sm.t / sm.M：
+        # 上面那个 max_time_points 只影响 integral / slope 的显示密度，
+        # 而膜厚是要看干燥过程哪一秒变坏的，抽稀等于把答案抹掉。
+        #
+        # 这里跑的是**和单样品页同一个模块** —— 批处理里另写一份 FFT 的话，
+        # 两个页面对同一个样品会给出不同的膜厚，而且没人知道该信哪个。
+        out.full_curves = _run_modules(sm.lam, sm.M, sm.t, recipe, out.warnings,
+                                       all_frames=True, meta=sm.meta,
+                                       artifact_id=row["matrix_id"])
+        if out.full_curves:
+            out.ot_t = np.asarray(sm.t, dtype=np.float32)
+        ot = out.full_curves.get("ot")
+        ot_ok = out.full_curves.get("ot_ok")
+        if ot is not None and ot_ok is not None:
+            good = np.isfinite(ot) & (ot_ok > 0.5)
+            n_ok = int(good.sum())
+            out.metrics["ot_ok_frames"] = float(n_ok)
+            out.metrics["ot_frames"] = float(len(ot))
+            if n_ok:
+                vals = ot[good]
+                out.metrics["ot_first_ok"] = float(vals[0])
+                out.metrics["ot_last_ok"] = float(vals[-1])
+            else:
+                out.warnings.append(
+                    f"膜厚：{len(ot)} 帧里没有一帧达到「可信」"
+                    f"（窗口 {recipe.band_min:g}–{recipe.band_max:g} nm 下条纹数不足）")
 
         out.t = np.asarray(t, dtype=np.float32)
         out.integral = np.asarray(integ, dtype=np.float32)
@@ -409,16 +424,20 @@ def _write_thickness_table(parent_id: str, outcomes: list[SampleOutcome]) -> dic
 
     frames = []
     for o in outcomes:
-        if not o.ok or o.ot is None or o.ot_t is None:
+        if not o.ok or o.ot_t is None or not o.full_curves:
             continue
-        frames.append(pd.DataFrame({
+        cols = {
             "sample_id": o.sample_id,
             "sample_name": o.sample_name,
             "batch": o.batch or "",
             "t": o.ot_t,
-            "ot": o.ot,
-            "status": o.ot_status,
-        }))
+        }
+        # 列名由模块的 batch_curves 决定，这里不写死 —— 膜厚模块出 ot / ot_ok，
+        # 同事的全帧模块出别的，都自动多出几列。
+        for name, y in o.full_curves.items():
+            if len(y) == len(o.ot_t):
+                cols[name] = y
+        frames.append(pd.DataFrame(cols))
     if not frames:
         return {}
     df = pd.concat(frames, ignore_index=True)

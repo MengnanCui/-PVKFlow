@@ -20,6 +20,7 @@ class SpecialProcessing(Module):
         version="1.0.0",
         description="谱斜率与波段积分随时间的变化。两条曲线都用平台算子实时计算。",
         author="HTE Studio",
+        order=20,
 
         # ── 控件。平台渲染成功能块里的输入框和滑块，样式不归模块管。
         #    波段控件的上下限自动跟着数据走，这里只给默认值。

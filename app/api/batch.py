@@ -158,7 +158,15 @@ def slices(parent_run_id: str,
     for sid, g in df.groupby("sample_id", sort=False):
         t = g["t"].to_numpy()
         ot = g["ot"].to_numpy()
-        status = g["status"].astype(str).to_numpy()
+        # 「可信」是模块算出来的一列 0/1（膜厚模块的 batch_extra["ot_ok"]），
+        # 不是这里重新判的 —— 判据只有一份，在 fringe_ot 里。
+        # 老的批处理存的是 status 字符串列，还读得出来。
+        if "ot_ok" in g.columns:
+            ok_mask = g["ot_ok"].to_numpy() > 0.5
+        elif "status" in g.columns:
+            ok_mask = g["status"].astype(str).to_numpy() == "OK"
+        else:
+            ok_mask = np.zeros(len(ot), dtype=bool)
         t_lo, t_hi = (float(t.min()), float(t.max())) if len(t) else (0.0, 0.0)
 
         values = []
@@ -173,8 +181,7 @@ def slices(parent_run_id: str,
                              if lo > t_hi or hi < t_lo else "这个窗口里没有有效帧"),
                 })
                 continue
-            st = status[sel][np.isfinite(vals)]
-            n_ok = int((st == "OK").sum())
+            n_ok = int(ok_mask[sel][np.isfinite(vals)].sum())
             values.append({
                 "mean": round(float(finite.mean()), 2),
                 "std": round(float(finite.std()), 2),

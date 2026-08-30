@@ -18,7 +18,7 @@ import { figure, selectControl, numberControl,
 import { infoDot, withInfo } from '../components/info.js';
 import { moduleView } from '../components/module-panel.js';
 import { downloadMenu } from '../download.js';
-import { spectraAtTimes, windowResolution, saturatedHead } from '../spectra.js';
+import { spectraAtTimes, saturatedHead } from '../spectra.js';
 
 export const meta = {
   id: 'sample',
@@ -33,9 +33,11 @@ export const meta = {
 // 和同事装的模块走完全同一条路 —— 平台自己吃自己的契约。
 // 同事放一个模块进 workspace/modules/，它就出现在下面这个导航里，
 // 这个文件一个字都不用改。
+// 平台自己还手写着的只剩「光谱处理」了 —— 膜厚和特殊处理都已经是功能模块，
+// 和同事装的走完全同一条路。光谱那一格和叠加谱、时间控件耦合得深，
+// 等契约在真实使用里再站一站再迁。
 const CORE_MODULES = [
   { id: 'spectra', name: '光谱处理' },
-  { id: 'thickness', name: '膜厚处理' },
 ];
 
 // 模块 id 里有点（`pl.demo`），直接当 DOM id 用的话 querySelector 得转义，
@@ -55,9 +57,6 @@ const S = {
   tFrom: null, tTo: null,              // 叠加谱只看这一段时间，null = 全程
   lFrom: null, lTo: null,              // 叠加谱的波长范围，默认跳过饱和的短波端
   satNote: '',
-  // ② 膜厚处理：775 避开吸收边，1120 是光谱仪上限
-  bandMin: 775, bandMax: 1120,
-  otFull: null, otBand: null, otReport: '',
   // ③ 及以后：全部由功能模块提供，这里存它们的声明
   modules: [],
   // 模块导航高亮：spyLock 是点击后的短暂锁，spyOff 摘掉上一次的监听
@@ -115,12 +114,9 @@ export async function view(host, ctx) {
     dataset: { module: m.id },
   }, m.name)));
 
-  mount(body,
-    section('spectra', '光谱处理'),
-    section('thickness', '膜厚处理'));
+  mount(body, section('spectra', '光谱处理'));
 
   drawSpectra();
-  drawThickness();
   await loadModules();      // 已装模块各占一节，接在上面两个后面
   loadFrames();
   observeScroll();
@@ -221,18 +217,6 @@ function observeScroll() {
   syncSpy();
 }
 
-
-// 膜厚模块的条纹图**永远**每帧归一化，和光谱模块那个下拉无关。
-//
-// 原来两处共用 S.norm，于是在「光谱处理」里换一下归一化，「膜厚处理」的
-// 条纹图跟着变 —— 一个模块的显示开关悄悄改了另一个模块的图。
-// 而且条纹图要看的就是每一帧内部的明暗周期，逐帧归一化本来就是唯一正确的选择：
-// 全局归一化会让干燥后期对比度低的那些帧糊成一片。
-//
-// 光学厚度**曲线**从来不受影响 —— 它是后端拿完整矩阵（全部波长 × 全部帧）
-// 重算的，跟前端的任何显示设置都没有关系。
-const FRINGE_NORM = 'frame';
-const FRINGE_SCALE = { vMin: 0, vMax: 1, vLabel: '每帧归一化' };
 
 /** 色标条的值域与说明，随归一化方式变化。 */
 function colorScale() {
@@ -385,209 +369,6 @@ function timeShade(u) {
   return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
 
-// ------------------------------------------------------------------ ② 膜厚处理
-//
-// 四宫格：上排全波段，下排指定波段；每排左边是条纹图，右边是 OT 曲线。
-// 上下一比就知道「窗口收窄换来了什么、代价是什么」——
-// 窄窗口条纹看得清，但能测的最小厚度被抬高了。
-function drawThickness() {
-  const host = bodyOf('thickness');
-  const L0 = S.meta.lambda_min, L1 = S.meta.lambda_max;
-
-  const kFull = heatmap({
-    src: api.heatmapUrl(S.artifactId,
-      { axis: 'wavenumber', norm: FRINGE_NORM, cmap: 'gray' }),
-    xMin: S.meta.time_min, xMax: S.meta.time_max,
-    yMin: 1 / L1, yMax: 1 / L0,
-    xLabel: '时间 (s)', yLabel: 'k = 1/λ (nm⁻¹)', height: 300,
-    cmap: 'gray', ...FRINGE_SCALE,
-    caption: '全波段干涉条纹。相位对波数线性，所以只有在 k 轴上条纹才是等周期的',
-  });
-
-  const kBand = heatmap({
-    src: api.heatmapUrl(S.artifactId, {
-      axis: 'wavenumber', norm: FRINGE_NORM, cmap: 'gray',
-      lam_min: S.bandMin, lam_max: S.bandMax,
-    }),
-    xMin: S.meta.time_min, xMax: S.meta.time_max,
-    yMin: 1 / S.bandMax, yMax: 1 / S.bandMin,
-    xLabel: '时间 (s)', yLabel: 'k = 1/λ (nm⁻¹)', height: 300,
-    cmap: 'gray', ...FRINGE_SCALE,
-    caption: '只看选定波段的条纹。窗口越窄，能分辨的膜越厚',
-  });
-
-  const otFullHost = h('div#otFullHost', skeletonRows(3));
-  const otBandHost = h('div#otBandHost', skeletonRows(3));
-  const resHost = h('div#resHost');
-  const reportHost = h('div#otReport');
-
-  mount(host,
-    h('div.fig-grid-4',
-      figure(withInfo(`全波段条纹　${L0.toFixed(0)}–${L1.toFixed(0)} nm`, 'k_axis'), {
-        head: dlHeatmap(() => api.heatmapUrl(S.artifactId,
-          { axis: 'wavenumber', norm: FRINGE_NORM, cmap: 'gray' }), '全波段条纹'),
-        body: kFull,
-      }),
-
-      figure(withInfo('全波段　光学厚度 vs 时间', 'ot'), {
-        head: dl(() => refs.otFullHost, '全波段OT'),
-        body: otFullHost,
-        // 说明放在图**下面**：放上面的话它会把同排的条纹图一起往下推三行
-        note: h('div.notice.notice-warn.mt-3',
-          h('div.grow',
-            h('div.small.strong', '这一格是对照，不是测量结果'),
-            h('p.xsmall.dim.mt-2',
-              '全波段跨过了吸收边，还带上了短波端没有信号的区段 —— ',
-              '规范要求分析波段必须落在膜的透明区。这里画出来是为了跟下面那格比：',
-              '窗口选错时曲线会崩到噪声上，而且是看得见地崩 —— 不是悄悄给个错数。'))),
-      }),
-
-      figure(withInfo('指定波段条纹', 'band'), {
-        // 功能块里**只放控件**。窗口分辨率那段是说明，不是控件 ——
-        // 放进来会把这一格撑到 166px，同排另一格只有 43px，
-        // subgrid 把行拉到 166px，右边那格就空出一大块。说明走 note，放图下面。
-        head: [
-          bandControl(L0, L1, () => [S.bandMin, S.bandMax],
-            (lo, hi) => { S.bandMin = lo; S.bandMax = hi; drawWindowResolution(); },
-            () => { updateBandFigures(); loadThickness('band'); }),
-          dlHeatmap(() => api.heatmapUrl(S.artifactId, {
-            axis: 'wavenumber', norm: FRINGE_NORM, cmap: 'gray',
-            lam_min: S.bandMin, lam_max: S.bandMax }), '指定波段条纹'),
-        ],
-        body: kBand,
-        note: resHost,
-      }),
-
-      figure(withInfo('指定波段　光学厚度 vs 时间', 'ot'), {
-        head: dl(() => refs.otBandHost, '指定波段OT'),
-        body: otBandHost,
-      })),
-    reportHost);
-
-  refs.kFull = kFull;
-  refs.kBand = kBand;
-  refs.resHost = resHost;
-  refs.otFullHost = otFullHost;
-  refs.otBandHost = otBandHost;
-  refs.otReport = reportHost;
-
-  drawWindowResolution();
-  loadThickness('full');
-  loadThickness('band');
-}
-
-/** 拉一条 OT 曲线。which='full' 用全波段，'band' 用当前选的窗口。 */
-async function loadThickness(which) {
-  const hostEl = which === 'full' ? refs.otFullHost : refs.otBandHost;
-  if (!hostEl) return;
-  const lo = which === 'full' ? S.meta.lambda_min : S.bandMin;
-  const hi = which === 'full' ? S.meta.lambda_max : S.bandMax;
-
-  mount(hostEl, skeletonRows(3));
-  const token = (thicknessToken[which] = (thicknessToken[which] || 0) + 1);
-  try {
-    const d = await api.spectraThickness(S.artifactId, { lam_min: lo, lam_max: hi });
-    if (token !== thicknessToken[which]) return;      // 已经有更新的请求了
-    if (which === 'band') { S.otReport = d.report; drawOtReport(); }
-    paintThickness(hostEl, d, lo, hi);
-  } catch (err) {
-    if (token !== thicknessToken[which]) return;
-    mount(hostEl, errorBox(err, () => loadThickness(which)));
-  }
-}
-
-const thicknessToken = {};
-
-function paintThickness(hostEl, d, lo, hi) {
-  // ★ 标**可信**的，不标不可信的。
-  //
-  // 上一版把不可信的帧画成红色散点。真实样品里干燥后半段大半都不可信，
-  // 于是整张图被红点糊满，反倒看不见「哪一段是能用的」—— 而那才是
-  // 你看这张图的目的。现在反过来：底下一条淡灰的完整曲线（数值一个不藏，
-  // 判据只打标志、绝不修改数值），可信的那一段用实色描粗压在上面。
-  const okX = [], okY = [], degX = [], degY = [];
-  for (let i = 0; i < d.x.length; i++) {
-    const st = d.status[i];
-    if (st === 'OK') { okX.push(d.x[i]); okY.push(d.y[i]); }
-    else if (st === 'DEGRADED') { degX.push(d.x[i]); degY.push(d.y[i]); }
-  }
-
-  const series = [
-    // 全部帧的底图：淡灰，让你看得见曲线的完整走向，但一眼知道它不是结论
-    { label: '全部帧（含不可信）', x: d.x, y: d.y, style: 'line', color: 'var(--ink-4)' },
-  ];
-  if (degX.length) {
-    series.push({ label: '可用（精度下降）', x: degX, y: degY,
-                  style: 'scatter', color: 'var(--warn)' });
-  }
-  if (okX.length) {
-    series.push({ label: '可信', x: okX, y: okY, style: 'scatter', color: 'var(--ok)' });
-  }
-
-  const spec = { x_label: '时间 (s)', y_label: '光学厚度 OT = n·d·cosθ (nm)', series };
-  hostEl.__spec = spec;
-  const nOk = okX.length;
-  const nDeg = degX.length;
-
-  mount(hostEl,
-    xyChart(spec, { height: 300 }),
-    h('div.chart-caption',
-      `${fmtInt(d.n_points)} 帧 · `,
-      nOk
-        ? h('span.status.status-ok', `${fmtInt(nOk)} 帧可信`)
-        : h('span.status.status-warn', '没有一帧达到「可信」'),
-      nDeg ? h('span.status.status-warn', `　${fmtInt(nDeg)} 帧可用但精度下降`) : null,
-      '　', withInfo(`可测下限 ${fmtNum(d.diagnostics.ot_floor_nm, 0)} nm`, 'ot_floor'),
-      '　', withInfo(`量化格距 ${fmtNum(d.diagnostics.ot_quantum_nm, 0)} nm`, 'ot_quantum'),
-      // 判级的逐条解释收进这个 ⓘ 里。原来摊在图注下面占三行，
-      // 而那三行绝大多数时候你并不需要看 —— 图上的绿色/琥珀/灰已经把
-      // 「哪段能用」说清楚了，要追究定义时才点开。
-      infoDot('ot_status', { extra: statusExtra(d) })));
-}
-
-/** 这张图里出现过的判级，喂给 ⓘ 的附加段。文案来自后端，两边不各写一份。 */
-function statusExtra(d) {
-  const text = d.status_text || {};
-  const counts = {};
-  for (const st of d.status || []) counts[st] = (counts[st] || 0) + 1;
-  const items = Object.entries(text).map(([key, v]) => ({
-    key, label: v.label, note: v.detail || v.short, count: counts[key] ?? null,
-  }));
-  return items.length ? { title: '这张图上出现过的判级', items } : null;
-}
-
-/** 规范 §5 的块 A–D。写死了「禁止简化、禁止省略」，所以整段摊开，不折叠。 */
-function drawOtReport() {
-  if (!refs.otReport) return;
-  if (!S.otReport) { clear(refs.otReport); return; }
-  // 走同一个 figure()，三行结构跟上面四张图一致 —— 报告是整幅宽的，
-  // 没有控件，第二行就空着。空着也保留，那正是「强制对齐」的做法。
-  mount(refs.otReport,
-    h('div.mt-4', figure('完整报告', {
-      head: h('span.xsmall.dim',
-        'fringe-optical-thickness 规范 §5 要求块 A–D 一个都不能少'),
-      body: h('pre.code-block.is-half', S.otReport),
-    })));
-}
-
-function drawWindowResolution() {
-  if (!refs.resHost) return;
-  const r = windowResolution(S.bandMin, S.bandMax);
-  if (!r) { clear(refs.resHost); return; }
-  // 这几个数是纯几何量（Δk 决定能分辨的最小光程差），不依赖具体数据。
-  // 先看一眼可以避免选一个根本测不出来的窗口。
-  mount(refs.resHost,
-    h('div.notice.mt-3',
-      h('div.grow',
-        h('div.small',
-          `窗口 ${S.bandMin.toFixed(0)}–${S.bandMax.toFixed(0)} nm　`,
-          h('span.mono', `Δk = ${r.dk.toExponential(3)} nm⁻¹`), '　',
-          h('span.mono', `一个频率 bin = ${fmtNum(r.binF, 0)} nm`)),
-        h('div.xsmall.dim.mt-2',
-          `这个窗口能测的最小光学厚度约 ${fmtNum(r.otFloor, 0)} nm`,
-          '（低于它 FFT 会锁到噪声峰）。窗口越宽，可测的膜越薄。'))));
-}
-
 // ------------------------------------------------------------------ ③ 特殊处理
 /**
  * 已装的功能模块，每个占一节。
@@ -639,8 +420,8 @@ function drawModules() {
     moduleView(host, m, {
       frames: S.frames,
       sampleName: S.meta?.sample_name || '样品',
-      compute: (params) =>
-        api.moduleCompute(m.id, S.artifactId, params).then((r) => r.panels),
+      compute: (params, changed) =>
+        api.moduleCompute(m.id, S.artifactId, params, changed).then((r) => r.panels),
     });
   }
 }
@@ -676,18 +457,6 @@ function updateHeatmaps() {
   refs.heatmapMain?.update({
     src: api.heatmapUrl(S.artifactId, { axis: 'wavelength', norm: S.norm, cmap: S.cmap }),
     cmap: S.cmap, ...cs,
-  });
-  // 膜厚的条纹图**不跟**这里的归一化下拉走 —— 见 FRINGE_NORM 那条注释
-  updateBandFigures();
-}
-
-function updateBandFigures() {
-  refs.kBand?.update({
-    src: api.heatmapUrl(S.artifactId, {
-      axis: 'wavenumber', norm: FRINGE_NORM, cmap: 'gray',
-      lam_min: S.bandMin, lam_max: S.bandMax,
-    }),
-    yMin: 1 / S.bandMax, yMax: 1 / S.bandMin, ...FRINGE_SCALE,
   });
 }
 

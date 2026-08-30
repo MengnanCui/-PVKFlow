@@ -140,6 +140,140 @@ def compute(self, ctx):
 
 ---
 
+## 一格里画好几条线
+
+九成的情况一格就画一条，`PanelData(x=t, y=y)` 一个字都不用变。
+要画多条才写 `series`：
+
+```python
+from app.modules.base import Series
+
+PanelData(series=[
+    Series(xs, ys,   "全部帧",  "line",    "muted"),
+    Series(ok_x, ok_y, "可信",   "scatter", "ok"),
+])
+```
+
+| | 能填什么 |
+|---|---|
+| `style` | `"line"` · `"scatter"` · `"area"` |
+| `color` | `"auto"` · `"ok"` · `"warn"` · `"danger"` · `"muted"` · `"accent"` |
+
+**颜色只收这几个语义名，不收 `#ff00ff`。** 平台把它们映射到自己的
+配色 token，所以你的图在明暗两套主题下都对，而且和平台别处的
+「绿=可信 / 琥珀=将就 / 红=不行」是同一套意思。
+一旦能写十六进制，调色板就守不住了 —— 而「风格不漂」正是这件事的一半。
+
+一个用得上的例子：**标出可信的那一段，而不是标出坏的那一段。**
+底下一条淡灰的完整曲线（数值一个不藏），可信的那段用实色压在上面。
+反过来做的话，样品后半段全是标记，反倒看不见哪段能用。
+
+---
+
+## 三种面板：曲线 / 位图 / 文本
+
+```python
+Panel("ot",     "光学厚度 vs 时间")                      # kind="xy"，默认
+Panel("fringe", "干涉条纹", kind="heatmap")             # 服务端出图 + 矢量坐标轴
+Panel("report", "完整报告", kind="text", span=1)        # 整幅宽的等宽文本
+```
+
+- `heatmap` → 二维数据当位图传，别塞进 json：
+
+  ```python
+  PanelData(image_url=ctx.image_url("heatmap.png", axis="wavenumber",
+                                    norm="frame", cmap="gray"),
+            x_range=[t[0], t[-1]], y_range=[lo, hi],
+            v_range=[0, 1], v_label="每帧归一化", cmap="gray")
+  ```
+
+- `text` → `PanelData(text="...")`，渲染成等宽块。`span=1` 让它占满整行。
+
+---
+
+## 图注、提示块、跟着数据走的 ⓘ
+
+三样都是可选字段，不填就没有。
+
+```python
+from app.modules.base import Notice, Stat
+
+PanelData(
+    x=t, y=y,
+    # 图注里那串数字。info 填术语 id，那个数字旁边就会有个 ⓘ
+    stats=[Stat("帧", 211),
+           Stat("可信", 83, "帧", tone="ok"),
+           Stat("可测下限", 351, "nm", info="ot_floor")],
+    # 面板级的提示块
+    notice=Notice("warn", "这一格是对照，不是测量结果",
+                  "全波段跨过了吸收边 —— 画出来是为了跟下面那格比"),
+    # 喂给标题旁边那个 ⓘ 的附加段：**跟着当前这份数据走**的内容
+    info_extra={"title": "这张图上出现过的判级",
+                "items": [{"key": "OK", "label": "可信", "note": "…", "count": 83}]},
+)
+```
+
+`tone` 和 `Notice` 的第一个参数收的是同一套语义名（`ok` / `warn` /
+`danger` / `info`），理由和上面的颜色一样。
+
+`info` 是静态解释（术语表里那条），`info_extra` 是动态的
+（「**这张图里** 83 帧可信」）。两个一起点开，先看解释再看本图的实际情况。
+
+---
+
+## 进批处理
+
+```python
+batch_curves=[
+    Curve("ot",    from_panel="ot_band"),               # 取这一格画出来的第一条序列
+    Curve("ot_ok", from_panel="ot_band", key="ot_ok"),  # 取 batch_extra 里那一列
+],
+```
+
+`key` 那种用法是给「算出来了、但不该画在图上、又该进批处理」的数字准备的。
+面板这样给出来：
+
+```python
+PanelData(series=[...],
+          batch_extra={"ot_ok": [1.0 if st == "OK" else 0.0 for st in status]})
+```
+
+平台自己的膜厚就靠它：判级不画进曲线（画了满屏都是标记），
+但「1 s 内的平均膜厚」光有均值没法判断可不可靠，所以那一列必须跟着进长表。
+没有这个口子的话，批处理只能自己再跑一遍 FFT —— 同一件事两份实现，
+迟早对不上，而且没人知道该信哪个。
+
+**逐帧的量要加一句：**
+
+```python
+batch_all_frames=True,      # 写在 ModuleSpec 里
+```
+
+批处理有个 `max_time_points` 会把时间轴抽稀，好让长表别太大。
+对逐帧算的量（波段积分、谱斜率）无所谓，先抽再算和先算再抽结果一样。
+但膜厚这种「要看哪一秒变坏」的量，抽稀等于把答案抹掉，而且抹得悄无声息。
+声明了它，平台就拿未抽稀的矩阵单独再跑一次你的模块，
+曲线存进另一张表（时间轴不同，硬塞进同一张就得给别人插值造数）。
+代价是多算一遍全部帧，所以**贵的才开**。
+
+---
+
+## 贵的活别白算：`ctx.needs()`
+
+只动了波段控件时，一个 `uses=[]` 的面板结果不可能变 —— 但它照样会被重算。
+
+```python
+if ctx.needs("ot_full"):
+    out["ot_full"] = 很贵的计算(...)
+```
+
+实测：膜厚模块那格全波段 FFT 要 50 ms，占整次重算的四分之一，
+**每拖一次都白算一遍**。包上之后 216 ms → 51 ms。
+
+不写也没关系，只是慢一点，不会算错。**这是优化，不是义务。**
+
+---
+
 ## 控件类型
 
 | 类型 | 值长什么样 | 界面上是什么 |
@@ -171,6 +305,37 @@ Panel("main", "荧光强度 vs 时间", uses=["band"], info="integral")
 
 术语表里没有的词，验证器会拦住你 —— 要么把术语加进去，要么把 `info` 去掉。
 **指向一个不存在的术语，点开是空的，那比没有 ⓘ 更糟。**
+
+---
+
+## 本地验证：不用打包就能看报错
+
+```
+$ python -m app.modules.check workspace/modules/我的模块
+
+模块：荧光强度（pl.integral v1.0.0）
+查了：id · 控件 · 面板 · 算子绑定 · 术语 · 批处理 · 真跑一遍
+
+✗ panel "integ" 的 uses 里写了 "integral"，但 controls 里没有这个 key。
+  现有的 controls：slope_center, slope_half, integ
+  你是不是想写 "integ"？
+
+1 条要改。改完再跑一次。
+（把上面这段整个贴给你的模型，让它改。）
+```
+
+通过退出码 0，不通过 1 —— 能塞进你自己的脚本：
+
+```
+python -m app.modules.check 我的模块 && echo "可以导入了"
+```
+
+**跑的和界面上「导入」时是同一份代码、同一份文案**（有测试逐字断言这件事）。
+两份文案迟早会漂，到那天你按命令行改完、导入还是不过，比没有这个命令还糟。
+
+为什么要有它：改一行就想知道对不对。没有它的循环是
+「改 → 打包 zip → 上传 → 看结果」，一轮小一分钟；有了一轮不到一秒。
+**那个循环快不快，直接决定你的模型能不能收敛。**
 
 ---
 
@@ -213,11 +378,17 @@ Panel("main", "荧光强度 vs 时间", uses=["band"], info="integral")
 
 ## 活示范
 
-平台自带的「特殊处理」就是照这份文档写的：
-`app/modules/builtin/special_processing/module.py`。
+平台自带的两个模块就是照这份文档写的，**没有走后门**：
 
-它两个面板都是 A 档，**一行算法都没有**。要写新模块，
-先把那个文件打开看一眼，多半比读这份文档还快。
+- `app/modules/builtin/special_processing/module.py` —— 最简单的那种。
+  两个面板都是 A 档，**一行算法都没有**，纯声明。
+- `app/modules/builtin/thickness/module.py` —— 最难的那种。
+  五个面板（两张位图、两张三序列曲线、一整幅宽的报告）、B 档、
+  跟着数据走的 ⓘ、`batch_extra`、`batch_all_frames`、`ctx.needs()`。
+
+要写新模块，先把第一个打开看一眼，多半比读这份文档还快。
+**想知道这套契约的上限在哪，看第二个** —— 平台自己最复杂的那块
+也只用了这份文档里写出来的东西，你能做的事和平台自己同级。
 
 ---
 

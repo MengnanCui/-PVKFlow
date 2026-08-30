@@ -53,7 +53,9 @@ class ModuleRegistry:
         return self._dirs.get(module_id)
 
     def all(self) -> list[Module]:
-        return sorted(self._modules.values(), key=lambda m: m.spec.name)
+        # order 小的排前面，同 order 再按名字。平台自带的排在同事的前面。
+        return sorted(self._modules.values(),
+                      key=lambda m: (m.spec.order, m.spec.name))
 
     def specs(self) -> list[dict]:
         return [m.spec.as_dict() for m in self.all()]

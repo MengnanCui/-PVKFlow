@@ -15,6 +15,7 @@
 
 import { h, mount, fmtInt, fmtNum, errorBox, skeletonRows } from '../ui.js';
 import { xyChart } from '../chart.js';
+import { heatmap } from './heatmap.js';
 import { figure, bandControl, numberControl, selectControl } from './figure.js';
 import { infoDot, withInfo } from './info.js';
 import { downloadMenu } from '../download.js';
@@ -41,6 +42,10 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品' 
 
   const hosts = {};          // panel_id → 画图的容器
   let settleTimer = 0;
+  // 上一次取精确值之后又动过哪些控件。带给后端，它据此判断哪些面板要重算 ——
+  // `uses=[]` 的面板（比如膜厚那格全波段对照）结果不可能变，
+  // 陪着算一遍就是白白多等几十毫秒。
+  let changed = new Set();
 
   // ── 控件画在哪一格：第一个 uses 到它的面板。声明里没人 uses 的控件
   //    放在第一格 —— 不显示出来的话，用户就永远改不了它。
@@ -59,8 +64,8 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品' 
   }
 
   function buildControl(c) {
-    const live = () => { paintLocal(c.key); scheduleExact(); };
-    const commit = () => scheduleExact(0);
+    const live = () => { changed.add(c.key); paintLocal(c.key); scheduleExact(); };
+    const commit = () => { changed.add(c.key); scheduleExact(0); };
 
     // 声明说「跟着波长/时间轴」就用数据的实际范围。写死一个数只对一台仪器成立。
     const axis = (kind) => {
@@ -125,14 +130,25 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品' 
   function scheduleExact(delay = SETTLE_MS) {
     clearTimeout(settleTimer);
     settleTimer = setTimeout(async () => {
-      // B 档在等的时候要有交代，不能干瞪眼
+      const sending = [...changed];
+      changed = new Set();
+      // B 档在等的时候要有交代，不能干瞪眼。
+      //
+      // 但**只给这次真会重算的那几格挂骨架屏**。后端按面板声明的 uses
+      // 跳过输入没变的格子（膜厚那格全波段 FFT 就是这么省下 165 ms 的），
+      // 被跳过的格子不会有新数据回来 —— 提前清空的话，它就永远停在骨架屏上，
+      // 屏幕上少一张图。省下来的时间不值这个。
       for (const p of spec.panels || []) {
-        if (!p.live && hosts[p.id]) mount(hosts[p.id], skeletonRows(3));
+        if (p.live || !hosts[p.id]) continue;
+        if (sending.length && !(p.uses || []).some((k) => sending.includes(k))) continue;
+        mount(hosts[p.id], skeletonRows(3));
       }
       let data;
       try {
-        data = await compute(params);
+        // 第一次（sending 为空）不带 changed，后端就当全都要算
+        data = await compute(params, sending.length ? sending : null);
       } catch (err) {
+        sending.forEach((k) => changed.add(k));    // 失败了别把「动过」这件事丢掉
         for (const p of spec.panels || []) {
           if (!p.live && hosts[p.id]) mount(hosts[p.id], errorBox(err, () => scheduleExact(0)));
         }
@@ -140,51 +156,146 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品' 
       }
       for (const p of spec.panels || []) {
         const d = data[p.id];
+        // 后端没回的面板 = 它的输入没变，保持屏幕上那一份，别清空
         if (d) draw(p, d.x, d.y, true, d);
       }
     }, delay);
   }
 
-  function draw(panel, x, y, exact, extra = null) {
+  /**
+   * 画一格。三种 kind 各走各的，但**图注、提示块、stats 是共用的** ——
+   * 那些是「这一格在说什么」，跟画的是曲线还是位图无关。
+   */
+  function draw(panel, x, y, exact, d = null) {
     const host = hosts[panel.id];
     if (!host) return;
-    const yLabel = extra?.y_label || panel.y_label || '';
+
+    if (panel.kind === 'text') return drawText(host, panel, d);
+    if (panel.kind === 'heatmap') return drawHeatmap(host, panel, d);
+
+    // ── kind === 'xy'
+    // 后端把单条也归一成了 series，本地预览走的是 x/y —— 两条路在这里合流
+    const series = d?.series?.length
+      ? d.series.map((sr) => ({ label: sr.label, x: sr.x, y: sr.y,
+                                style: sr.style, color: sr.color || undefined }))
+      : [{ label: d?.label || panel.title, x, y, style: 'line' }];
+
     const chartSpec = {
       x_label: panel.x_label || '时间 (s)',
-      y_label: yLabel,
-      series: [{ label: extra?.label || panel.title, x, y, style: 'line' }],
+      y_label: d?.y_label || panel.y_label || '',
+      series,
     };
     host.__spec = chartSpec;
+    const nPts = Math.max(...series.map((sr) => sr.x?.length || 0), 0);
     mount(host,
       xyChart(chartSpec, { height: panel.height || 300 }),
-      h('div.chart-caption',
-        // 如实说明这条曲线是抽样预览还是全分辨率 —— 和平台自己那三个模块一样
-        exact
-          ? h('span.status.status-ok.xsmall',
-              `全分辨率 · ${fmtInt(x.length)} 点`)
-          : h('span.status.status-accent.xsmall',
-              `实时预览 · λ 抽样至 ${fmtNum(frames?.lambda_step, 3)} nm`),
-        extra?.caption ? h('span.xsmall.dim', `　${extra.caption}`) : null,
-        panel.caption ? h('span.xsmall.dim', `　${panel.caption}`) : null));
+      caption(panel, d, exact, nPts),
+      noticeBox(d));
+  }
+
+  function drawText(host, panel, d) {
+    // 规范报告这种整段要看的东西。**不折叠** —— 折起来就等于没给。
+    host.__spec = null;
+    mount(host,
+      h('pre.code-block.is-half', d?.text || ''),
+      caption(panel, d, true, null),
+      noticeBox(d));
+  }
+
+  function drawHeatmap(host, panel, d) {
+    host.__spec = null;
+    host.__imageUrl = d?.image_url || '';
+    if (!d?.image_url) { mount(host, skeletonRows(3)); return; }
+    const [x0, x1] = d.x_range || [0, 1];
+    const [y0, y1] = d.y_range || [0, 1];
+    const [v0, v1] = d.v_range || [0, 1];
+    mount(host,
+      // 位图 + 矢量坐标轴，复用平台自己那个组件 —— 二维数据当位图传，不塞进 json
+      heatmap({
+        src: d.image_url,
+        xMin: x0, xMax: x1, yMin: y0, yMax: y1,
+        vMin: v0, vMax: v1, vLabel: d.v_label || '',
+        xLabel: panel.x_label || '时间 (s)', yLabel: d.y_label || panel.y_label || '',
+        height: panel.height || 300, cmap: d.cmap || 'gray',
+      }),
+      caption(panel, d, true, null),
+      noticeBox(d));
+  }
+
+  /** 图注：预览/精确的标注 + stats 那串带 ⓘ 的数字 + 文字说明。三种 kind 共用。 */
+  function caption(panel, d, exact, nPts) {
+    const bits = [];
+    // 只有**真会出现预览态**的面板才标这一句。
+    //
+    // 它存在的意义是分清「你现在看的是拖动时的抽样预览」和「松手后的精确结果」。
+    // B 档面板压根没有预览态，永远是精确的 —— 那句「全分辨率 · 211 点」
+    // 什么都没说清，只是把图注前面那格位置占掉了。
+    if (panel.kind === 'xy' && panel.live) {
+      bits.push(exact
+        ? h('span.status.status-ok.xsmall', `全分辨率 · ${fmtInt(nPts)} 点`)
+        : h('span.status.status-accent.xsmall',
+            `实时预览 · λ 抽样至 ${fmtNum(frames?.lambda_step, 3)} nm`));
+    }
+    for (const st of d?.stats || []) {
+      const text = `${st.label} ${typeof st.value === 'number'
+        ? fmtNum(st.value, Number.isInteger(st.value) ? 0 : undefined) : st.value}`
+        + (st.unit ? ` ${st.unit}` : '');
+      bits.push(h('span.xsmall' + (st.tone ? `.status.status-${st.tone}` : ''),
+        '　', st.info ? withInfo(text, st.info) : text));
+    }
+    // 面板的 ⓘ 附加段跟着当前数据走，挂在图注末尾那个 ⓘ 上
+    if (d?.info_extra && panel.info) {
+      bits.push(infoDot(panel.info, { extra: d.info_extra }));
+    }
+    const extraCap = [d?.caption, panel.caption].filter(Boolean).join('　');
+    if (extraCap) bits.push(h('span.xsmall.dim', `　${extraCap}`));
+    return bits.length ? h('div.chart-caption', ...bits) : null;
+  }
+
+  /**
+   * 面板的提示块。**画在图下面，不是上面。**
+   *
+   * 放上面的话它把这一格的图往下推三行，而同排另一格没有提示块 ——
+   * 两张图的顶就错开一百来像素，一眼就看出来是歪的。
+   * 平台自己那版膜厚页当年就是为这个把它挪下去的，迁移时别再挪回来。
+   */
+  function noticeBox(d) {
+    const n = d?.notice;
+    if (!n) return null;
+    // 「这一格是对照，不是测量结果」这种必须看得见，塞图注会被当脚注忽略
+    return h('div.notice' + (n.kind && n.kind !== 'info' ? `.notice-${n.kind}` : ''),
+      h('div.grow',
+        n.title ? h('div.small.strong', n.title) : null,
+        n.body ? h('p.xsmall.dim.mt-2', n.body) : null));
   }
 
   // ── 搭骨架
   const cols = spec.columns === 1 ? '' : `.fig-grid-${spec.columns || 2}`;
-  const figs = (spec.panels || []).map((p) => {
-    const body = h(`div.module-panel-body`, skeletonRows(3));
+
+  // 独占一整行的面板（报告这种）不进网格，跟在后面。
+  // 塞进 2 列网格里的话，它旁边会空出半行，而且把那一带的行高一起撑高。
+  const inGrid = (spec.panels || []).filter((p) => p.span !== 1);
+  const fullWidth = (spec.panels || []).filter((p) => p.span === 1);
+
+  const buildFigure = (p) => {
+    const body = h('div.module-panel-body', skeletonRows(3));
     hosts[p.id] = body;
     return figure(p.info ? withInfo(p.title, p.info) : p.title, {
-      head: downloadMenu({
-        svg: () => body.querySelector('svg'),
-        spec: () => body.__spec || null,
+      head: p.kind === 'text' ? null : downloadMenu({
+        // 热力图是服务端渲染的位图，下的就是那张图；曲线下 SVG / CSV
+        svg: () => (p.kind === 'heatmap' ? null : body.querySelector('svg')),
+        spec: () => (p.kind === 'heatmap' ? null : body.__spec || null),
+        imageUrl: p.kind === 'heatmap' ? () => body.__imageUrl || '' : null,
         name: `${sampleName}_${p.title}`,
       }),
       ctl: controlsFor(p.id),
       body,
     });
-  });
+  };
 
-  mount(host, h(`div${cols}`, ...figs));
+  mount(host,
+    inGrid.length ? h(`div${cols}`, ...inGrid.map(buildFigure)) : null,
+    ...fullWidth.map((p) => h('div.mt-4', buildFigure(p))));
 
   paintLocal();          // A 档立刻有东西看
   scheduleExact(0);      // 两档都去取一次精确值

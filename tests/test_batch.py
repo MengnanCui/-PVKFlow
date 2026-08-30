@@ -704,3 +704,88 @@ def test_a_module_that_crashes_does_not_take_the_whole_batch_down(imported, monk
     detail = batch.batch_detail(t["result"]["parent_run_id"])
     warns = " ".join(w for c in detail["children"] for w in c["warnings"])
     assert "同事写崩了" in warns and "特殊处理" in warns    # 说清是哪个模块崩的
+
+
+def test_thickness_columns_come_from_the_module_not_from_batch_py(imported):
+    """膜厚长表的列由膜厚模块声明出来，`app/batch.py` 里没有第二份 FFT。
+
+    迁移前 `fringe_ot.extract_series` 被调用了两次：单样品页一次、批处理一次。
+    两份实现迟早会漂，而且漂了也不报错 —— 只是同一个样品在两个页面上
+    给出不同的膜厚，没人知道该信哪个。这条钉住「只剩一处」。
+    """
+    import inspect
+
+    from app.modules.registry import registry as mreg
+
+    mreg.load_all()
+    spec = mreg.get("thickness.fringe_ot").spec
+    assert {c.name for c in spec.batch_curves} == {"ot", "ot_ok"}
+    assert spec.batch_all_frames, "膜厚不能被 max_time_points 抽稀"
+
+    src = inspect.getsource(batch)
+    assert "extract_series" not in src, (
+        "app/batch.py 里又出现了 extract_series —— 膜厚该只在模块里算一次")
+
+
+def test_thickness_long_table_carries_the_per_frame_verdict(batch_client, imported):
+    """判级跟着膜厚一起进长表，而且是模块算的那一份 0/1。
+
+    「1 s 内的平均膜厚」光有均值没法判断可不可靠，所以每帧可不可信必须
+    一起存下来 —— 否则 /slices 只能自己再判一次，那就是第二份判据。
+    """
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20"]},
+        "recipe": {"band_min": 775, "band_max": 1100},
+    })["task_id"])
+    run_id = t["result"]["parent_run_id"]
+
+    from app.api import batch as batch_api
+
+    _detail, tbl, df = batch_api._load_curves(run_id, "ot")
+    assert {"ot", "ot_ok"} <= set(df.columns)
+    assert "status" not in df.columns, "判级现在是模块给的 0/1 列，不是字符串"
+
+    r = batch_client.get(f"/api/batch/runs/{run_id}/slices?windows=0:100").json()
+    for row in r["rows"]:
+        g = df[df["sample_id"] == row["sample_id"]]
+        want = int((g["ot_ok"] > 0.5).sum())
+        assert row["values"][0]["n_ok"] == want, (
+            f"{row['label']} 的可信帧数和长表对不上")
+
+
+def test_subsampling_shortens_the_curves_but_never_the_thickness(imported):
+    """max_time_points 抽稀 integral / slope，但**一帧都不能从膜厚里拿走**。
+
+    膜厚是用来看干燥过程哪一秒变坏的。抽稀等于把答案抹掉，
+    而且抹得悄无声息 —— 曲线照样画得出来，只是那个拐点没了。
+    """
+    row = db.query_one(
+        "SELECT s.sample_id, s.name, s.batch, a.artifact_id AS matrix_id"
+        "  FROM sample s JOIN artifact a ON a.sample_id = s.sample_id"
+        " WHERE a.is_matrix = 1 AND s.batch = 'B20' LIMIT 1")
+    recipe = batch.Recipe.from_dict(
+        {"band_min": 775, "band_max": 1100, "max_time_points": 7})
+    out = batch._process_one(dict(row), recipe)
+
+    assert out.ok, out.error
+    assert len(out.t) == 7, "integral / slope 该被抽稀"
+    assert len(out.ot_t) == 40, "膜厚必须是全部帧"
+    assert len(out.full_curves["ot"]) == 40
+    assert len(out.full_curves["ot_ok"]) == 40
+
+
+def test_batch_extra_is_how_undrawn_numbers_reach_the_batch(imported):
+    """`Curve(key=...)` 从 `PanelData.batch_extra` 取数，不从画出来的曲线取。
+
+    这是同事会用到的口子：算出来、不画在图上、但该进批处理的数字。
+    膜厚的判级就走这条路。
+    """
+    from app.modules.base import Curve, PanelData
+
+    d = PanelData(x=[0, 1], y=[3.0, 4.0], batch_extra={"flag": [1.0, 0.0]})
+    assert d.column() == [3.0, 4.0]
+    assert d.column("flag") == [1.0, 0.0]
+    # 取不到要返回 None，不是空列表 —— 「没这一列」和「这一列是空的」得分得开
+    assert d.column("nope") is None
+    assert PanelData().column() is None
+    assert Curve("ot_ok", from_panel="ot_band", key="ot_ok").as_dict()["key"] == "ot_ok"

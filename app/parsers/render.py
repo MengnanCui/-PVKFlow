@@ -14,6 +14,9 @@ from typing import Literal
 import numpy as np
 
 Norm = Literal["none", "frame", "global", "wavelength"]
+NORMS = ("none", "frame", "global", "wavelength")
+# 热力图的纵轴。k = 1/λ 那一档给干涉条纹用 —— 条纹的相位对波数才是线性的。
+AXES = ("wavelength", "wavenumber")
 
 # 色标锚点。两条都刻意做成亮度单调递增 —— 否则热力图上会出现
 # 数值不同但看起来一样亮的区域，人眼会读错。
