@@ -11,6 +11,9 @@ import { niceTicks, tickLabel, svgEl as el } from '../chart.js';
  * heatmap({src, xMin, xMax, yMin, yMax, xLabel, yLabel, height, ...})
  * 返回一个可插入 DOM 的元素，带 .update(newProps) 用于换参数时重画。
  */
+// 同页多张热力图时，色标渐变的 id 不能撞 —— 撞了后挂载的会把先挂载的染成别的色标。
+let hmUid = 0;
+
 export function heatmap(opts) {
   const host = h('div.heatmap');
   let props = { height: 300, xLabel: '时间 (s)', yLabel: '', cmapLabel: '', ...opts };
@@ -18,17 +21,43 @@ export function heatmap(opts) {
 
   const M = { t: 10, r: 96, b: 40, l: 62 };   // 右边留给色标条 + 数值 + 说明
   const W = 900;
+  const uid = ++hmUid;
 
-  function draw() {
+  // ── 常驻结构。**位图节点绝不能跟着指针重建。**
+  //
+  // 以前 draw() 每次都新建一个 <svg>（连里面那个 <image> 一起）再 mount 进 host，
+  // 而 draw() 挂在 mousemove 上 —— 你把鼠标划过条纹图，就是在让浏览器
+  // 每一帧丢掉再重建那张位图节点。副作用不只是慢：正在悬停的那个节点被换掉了，
+  // 所以量它的时候第二个事件根本没有落点。
+  //
+  // 现在 svg / <image> / 坐标轴 / 色标常驻，只有十字线和读数跟着指针走。
+  const svg = el('svg', { role: 'img' });
+  svg.style.width = '100%';
+  svg.style.height = 'auto';
+  svg.style.display = 'block';
+  svg.style.cursor = 'crosshair';
+  const defs = el('defs');
+  const structRoot = el('g', { class: 'heatmap-struct' });
+  const overlayRoot = el('g', { class: 'heatmap-overlay' });
+  svg.append(defs, structRoot, overlayRoot);
+
+  const captionEl = h('div.chart-caption');
+  let geom = null;                 // 浮层要用的几何量，骨架画完才有
+
+  /** 骨架：位图、边框、坐标轴、刻度、色标条。数据或参数变了才重画。 */
+  function drawStructure() {
+    while (structRoot.firstChild) structRoot.removeChild(structRoot.firstChild);
+    while (defs.firstChild) defs.removeChild(defs.firstChild);
+
     const H = props.height + M.t + M.b;
     const iw = W - M.l - M.r;
     const ih = props.height;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.setAttribute('aria-label', `${props.yLabel} 随 ${props.xLabel} 的变化`);
 
-    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
-                            'aria-label': `${props.yLabel} 随 ${props.xLabel} 的变化` });
-    svg.style.width = '100%';
-    svg.style.height = 'auto';
-    svg.style.display = 'block';
+    const sx = (v) => M.l + ((v - props.xMin) / (props.xMax - props.xMin || 1)) * iw;
+    const sy = (v) => M.t + ih - ((v - props.yMin) / (props.yMax - props.yMin || 1)) * ih;
+    geom = { H, iw, ih, sx, sy };
 
     // --- 位图 ---
     if (!state.error) {
@@ -38,16 +67,14 @@ export function heatmap(opts) {
         href: props.src,
       });
       img.setAttribute('image-rendering', 'auto');
-      svg.appendChild(img);
+      structRoot.appendChild(img);
     }
-    svg.appendChild(el('rect', { x: M.l, y: M.t, width: iw, height: ih,
-                                 fill: 'none', stroke: 'var(--ink-3)', 'stroke-width': 2 }));
+    structRoot.appendChild(el('rect', { x: M.l, y: M.t, width: iw, height: ih,
+                                        fill: 'none', stroke: 'var(--ink-3)', 'stroke-width': 2 }));
 
     // --- 坐标轴。刻度朝内，2px —— 和 matplotlib 规范一致 ---
     const gx = niceTicks(props.xMin, props.xMax, 6);
     const gy = niceTicks(props.yMin, props.yMax, 5);
-    const sx = (v) => M.l + ((v - props.xMin) / (props.xMax - props.xMin || 1)) * iw;
-    const sy = (v) => M.t + ih - ((v - props.yMin) / (props.yMax - props.yMin || 1)) * ih;
 
     const axis = el('g', { stroke: 'var(--ink-3)', 'stroke-width': 2 });
     const labels = el('g', { fill: 'var(--ink-3)', 'font-size': 11,
@@ -69,8 +96,8 @@ export function heatmap(opts) {
         el('text', { x: M.l - 8, y: y + 3.5, 'text-anchor': 'end' }),
         { textContent: tickLabel(v, gy.step) }));
     }
-    svg.appendChild(axis);
-    svg.appendChild(labels);
+    structRoot.appendChild(axis);
+    structRoot.appendChild(labels);
 
     const axisText = el('g', { fill: 'var(--ink-2)', 'font-size': 12, 'font-family': 'var(--font)' });
     axisText.appendChild(Object.assign(
@@ -82,22 +109,20 @@ export function heatmap(opts) {
                      transform: `rotate(-90 13 ${M.t + ih / 2})` }),
         { textContent: props.yLabel }));
     }
-    svg.appendChild(axisText);
+    structRoot.appendChild(axisText);
 
     // --- 色标条：不说清楚颜色对应什么数值，热力图就只是好看而已 ---
     if (props.cmap) {
       const bx = M.l + iw + 14, bw = 12;
-      const gid = `cbar-${props.cmap}`;
-      const defs = el('defs');
+      const gid = `cbar-${props.cmap}-${uid}`;
       const grad = el('linearGradient', { id: gid, x1: 0, y1: 1, x2: 0, y2: 0 });
       for (const [off, color] of RAMPS[props.cmap] || RAMPS.gray) {
         grad.appendChild(el('stop', { offset: off, 'stop-color': color }));
       }
       defs.appendChild(grad);
-      svg.appendChild(defs);
-      svg.appendChild(el('rect', { x: bx, y: M.t, width: bw, height: ih,
-                                   fill: `url(#${gid})`,
-                                   stroke: 'var(--ink-3)', 'stroke-width': 1 }));
+      structRoot.appendChild(el('rect', { x: bx, y: M.t, width: bw, height: ih,
+                                          fill: `url(#${gid})`,
+                                          stroke: 'var(--ink-3)', 'stroke-width': 1 }));
       const cap = el('g', { fill: 'var(--ink-3)', 'font-size': 10,
                             'font-family': 'var(--font)',
                             'font-variant-numeric': 'tabular-nums' });
@@ -115,60 +140,84 @@ export function heatmap(opts) {
                        transform: `rotate(-90 ${lx} ${M.t + ih / 2})` }),
           { textContent: props.vLabel }));
       }
-      svg.appendChild(cap);
-    }
-
-    // --- 悬停十字线与坐标读数 ---
-    if (state.hover && !state.error) {
-      const { px, py, xv, yv } = state.hover;
-      const g = el('g', { stroke: 'var(--paper)', 'stroke-width': 1, opacity: .85 });
-      g.appendChild(el('line', { x1: px, x2: px, y1: M.t, y2: M.t + ih }));
-      g.appendChild(el('line', { x1: M.l, x2: M.l + iw, y1: py, y2: py }));
-      svg.appendChild(g);
-
-      const text = `${fmt(xv)} s , ${fmt(yv)}`;
-      const bw = 18 + text.length * 6.6;
-      const bx = Math.min(px + 10, M.l + iw - bw - 2);
-      const by = Math.max(M.t + 2, py - 26);
-      svg.appendChild(el('rect', { x: bx, y: by, width: bw, height: 20, rx: 5,
-                                   fill: 'var(--paper)', stroke: 'var(--line-2)' }));
-      svg.appendChild(Object.assign(
-        el('text', { x: bx + 9, y: by + 14, 'font-size': 11, fill: 'var(--ink)',
-                     'font-family': 'var(--font)', 'font-variant-numeric': 'tabular-nums' }),
-        { textContent: text }));
+      structRoot.appendChild(cap);
     }
 
     if (state.loading && !state.error) {
-      svg.appendChild(Object.assign(
+      structRoot.appendChild(Object.assign(
         el('text', { x: M.l + iw / 2, y: M.t + ih / 2, 'text-anchor': 'middle',
                      'font-size': 12, fill: 'var(--ink-3)', 'font-family': 'var(--font)' }),
         { textContent: '正在渲染…' }));
     }
-
-    svg.addEventListener('mousemove', (e) => {
-      const r = svg.getBoundingClientRect();
-      const px = ((e.clientX - r.left) / r.width) * W;
-      const py = ((e.clientY - r.top) / r.height) * H;
-      if (px < M.l || px > M.l + iw || py < M.t || py > M.t + ih) {
-        if (state.hover) { state.hover = null; draw(); }
-        return;
-      }
-      state.hover = {
-        px, py,
-        xv: props.xMin + ((px - M.l) / iw) * (props.xMax - props.xMin),
-        yv: props.yMin + ((M.t + ih - py) / ih) * (props.yMax - props.yMin),
-      };
-      draw();
-    });
-    svg.addEventListener('mouseleave', () => { if (state.hover) { state.hover = null; draw(); } });
-    svg.style.cursor = 'crosshair';
-
-    mount(host,
-      state.error
-        ? h('div.notice.notice-warn', h('div.grow', state.error))
-        : svg,
-      props.caption ? h('div.chart-caption', props.caption) : null);
   }
+
+  /** 浮层：十字线与坐标读数。只有这几个节点跟着指针走。 */
+  function drawOverlay() {
+    while (overlayRoot.firstChild) overlayRoot.removeChild(overlayRoot.firstChild);
+    if (!state.hover || state.error || !geom) return;
+    const { iw, ih } = geom;
+    const { px, py, xv, yv } = state.hover;
+
+    const g = el('g', { stroke: 'var(--paper)', 'stroke-width': 1, opacity: .85 });
+    g.appendChild(el('line', { x1: px, x2: px, y1: M.t, y2: M.t + ih }));
+    g.appendChild(el('line', { x1: M.l, x2: M.l + iw, y1: py, y2: py }));
+    overlayRoot.appendChild(g);
+
+    const text = `${fmt(xv)} s , ${fmt(yv)}`;
+    const bw = 18 + text.length * 6.6;
+    const bx = Math.min(px + 10, M.l + iw - bw - 2);
+    const by = Math.max(M.t + 2, py - 26);
+    overlayRoot.appendChild(el('rect', { x: bx, y: by, width: bw, height: 20, rx: 5,
+                                         fill: 'var(--paper)', stroke: 'var(--line-2)' }));
+    overlayRoot.appendChild(Object.assign(
+      el('text', { x: bx + 9, y: by + 14, 'font-size': 11, fill: 'var(--ink)',
+                   'font-family': 'var(--font)', 'font-variant-numeric': 'tabular-nums' }),
+      { textContent: text }));
+  }
+
+  /** host 的孩子只在「有没有报错」这件事变了的时候才换，平时一个都不动。 */
+  function syncHost() {
+    const mode = state.error ? 'err' : 'svg';
+    if (host.__mode !== mode) {
+      host.__mode = mode;
+      mount(host, state.error
+        ? h('div.notice.notice-warn', h('div.grow', state.error))
+        : svg, captionEl);
+    }
+    captionEl.textContent = props.caption || '';
+    captionEl.hidden = !props.caption;
+  }
+
+  function draw() { drawStructure(); drawOverlay(); syncHost(); }
+
+  // 指针移动用 rAF 合并，和 chart.js / virtual-list.js 同一个写法
+  let raf = 0, pending = null;
+  function schedule() {
+    if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      const ev = pending; pending = null;
+      if (ev !== undefined) applyHover(ev);
+      drawOverlay();                 // **只重画浮层**，位图和坐标轴一个节点不动
+    });
+  }
+
+  function applyHover(ev) {
+    if (!ev || !geom) { state.hover = null; return; }
+    const { iw, ih } = geom;
+    const r = svg.getBoundingClientRect();
+    const px = ((ev.x - r.left) / r.width) * W;
+    const py = ((ev.y - r.top) / r.height) * (geom.H);
+    if (px < M.l || px > M.l + iw || py < M.t || py > M.t + ih) { state.hover = null; return; }
+    state.hover = {
+      px, py,
+      xv: props.xMin + ((px - M.l) / iw) * (props.xMax - props.xMin),
+      yv: props.yMin + ((M.t + ih - py) / ih) * (props.yMax - props.yMin),
+    };
+  }
+
+  svg.addEventListener('mousemove', (e) => { pending = { x: e.clientX, y: e.clientY }; schedule(); });
+  svg.addEventListener('mouseleave', () => { pending = null; state.hover = null; schedule(); });
 
   // 图片加载完才去掉「正在渲染」，失败要说清楚而不是留一块空白
   function loadImage() {
@@ -186,8 +235,10 @@ export function heatmap(opts) {
   }
 
   host.update = (next) => {
+    // src 真的变了才重新探测图片。同样的地址再探一遍，只会白闪一次「正在渲染…」。
+    const newSrc = next.src !== undefined && next.src !== props.src;
     props = { ...props, ...next };
-    if (next.src !== undefined) loadImage();
+    if (newSrc) loadImage();
     else draw();
   };
 

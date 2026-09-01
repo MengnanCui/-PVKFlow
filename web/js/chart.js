@@ -14,6 +14,14 @@ export const svgEl = (name, attrs = {}) => {
 
 const el = svgEl;
 
+// 同一页可能同时有好几张图。<clipPath> 和渐变的 id 是全文档共享的，
+// 撞了之后后挂载的那张会把先挂载的裁剪坏 —— 所以每张图自带一个序号。
+let uid = 0;
+
+// 悬停读数最多列几条。超过就只说「还有 N 条」——
+// 一个比图还高的读数框不是信息，是遮挡。
+const HOVER_ROWS = 8;
+
 export const seriesColor = (i) => `var(${PALETTE[i % PALETTE.length]})`;
 
 /** 「好看」的刻度：1 / 2 / 5 × 10^n。热力图的坐标轴也用它，保持一致。 */
@@ -81,6 +89,27 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
                           'aria-label': `${spec.y_label || 'Y'} vs ${spec.x_label || 'X'}` });
   host.appendChild(svg);
 
+  // ── 三层常驻结构。**这是这张图不卡的全部原因。**
+  //
+  // 以前 draw() 第一行是 `while (svg.firstChild) svg.removeChild(...)`，而
+  // draw() 挂在 mousemove 上 —— 鼠标每动一下，网格、坐标轴、每条曲线的 path
+  // 字符串、散点、图例全部重新生成一遍。实测 60 条 × 600 点时一次 17.5 ms、
+  // p95 72 ms，一个鼠标事件就把 16.7 ms 的帧预算花光了。
+  //
+  // 现在分开：骨架（贵，只有数据/视窗变了才重画）和浮层（便宜，十字线和读数）。
+  // 悬停只重画浮层那十几个节点。
+  const defs = el('defs');
+  const clipId = `plotclip-${++uid}`;      // 同页多张图时 id 不能撞
+  const clip = el('clipPath', { id: clipId });
+  clip.appendChild(el('rect', { x: M.l, y: M.t, width: iw, height: ih }));
+  defs.appendChild(clip);
+  svg.appendChild(defs);
+  const clipRef = `url(#${clipId})`;
+
+  const structRoot = el('g', { class: 'chart-struct' });
+  const overlayRoot = el('g', { class: 'chart-overlay' });
+  svg.append(structRoot, overlayRoot);
+
   const state = { hover: null, drag: null };
 
   // 分位数带的中位线占了 0 号色。代表曲线从 1 号起，否则第一条跟中位线
@@ -88,8 +117,9 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
   // 定义在 draw() 外面：hover 提示和图例也要用同一套颜色。
   const shift = band ? 1 : 0;
 
-  function draw() {
-    while (svg.firstChild) svg.removeChild(svg.firstChild);
+  /** 骨架：网格、分位带、曲线、散点、坐标轴、刻度。**贵，别挂在 mousemove 上。** */
+  function drawStructure() {
+    while (structRoot.firstChild) structRoot.removeChild(structRoot.firstChild);
 
     // 只按当前 X 视窗重算 Y 范围，放大后曲线才撑得满
     let ylo = Infinity, yhi = -Infinity;
@@ -113,7 +143,7 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
     for (const t of gy.ticks) {
       grid.appendChild(el('line', { x1: M.l, x2: M.l + iw, y1: sy(t), y2: sy(t) }));
     }
-    svg.appendChild(grid);
+    structRoot.appendChild(grid);
 
     // 分位数带画在最底下，作为背景
     if (band) {
@@ -129,8 +159,8 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
       }
       if (pts.length > 2) {
         d = 'M' + pts.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join('L') + 'Z';
-        svg.appendChild(el('path', { d, fill: seriesColor(0), 'fill-opacity': .16,
-                                     stroke: 'none', 'clip-path': 'url(#plotclip)' }));
+        structRoot.appendChild(el('path', { d, fill: seriesColor(0), 'fill-opacity': .16,
+                                            stroke: 'none', 'clip-path': clipRef }));
       }
       let md = '', pen = false;
       for (let i = 0; i < band.x.length; i++) {
@@ -140,8 +170,8 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
         pen = true;
       }
       if (md) {
-        svg.appendChild(el('path', { d: md, fill: 'none', stroke: seriesColor(0),
-                                     'stroke-width': 2.5, 'clip-path': 'url(#plotclip)' }));
+        structRoot.appendChild(el('path', { d: md, fill: 'none', stroke: seriesColor(0),
+                                            'stroke-width': 2.5, 'clip-path': clipRef }));
       }
     }
 
@@ -168,10 +198,10 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
         pen = true;
       }
       if (s.style !== 'scatter' && d) {
-        svg.appendChild(el('path', {
+        structRoot.appendChild(el('path', {
           d, fill: 'none', stroke: color, 'stroke-width': 2,
           'stroke-linejoin': 'round', 'stroke-linecap': 'round',
-          'clip-path': 'url(#plotclip)',
+          'clip-path': clipRef,
         }));
       }
       if (s.style === 'scatter' || s.style === 'line+scatter') {
@@ -181,9 +211,10 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
         for (let k = 0; k < pts.length; k += stride) {
           g.appendChild(el('circle', { cx: pts[k][0].toFixed(2), cy: pts[k][1].toFixed(2), r: 3.4 }));
         }
-        svg.appendChild(g);
+        structRoot.appendChild(g);
       }
       s._pts = pts;
+      s._color = color;        // 悬停读数要用同一个颜色，别再算一遍
     }
 
     // 坐标轴：2px、刻度朝内 —— 对齐 matplotlib 规范
@@ -199,7 +230,7 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
       const y = sy(t);
       axis.appendChild(el('line', { x1: M.l, x2: M.l + 6, y1: y, y2: y }));
     }
-    svg.appendChild(axis);
+    structRoot.appendChild(axis);
 
     const labels = el('g', { fill: 'var(--ink-3)', 'font-size': 11,
                              'font-family': 'var(--font)', 'font-variant-numeric': 'tabular-nums' });
@@ -215,7 +246,7 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
         el('text', { x: M.l - 8, y: sy(t) + 3.5, 'text-anchor': 'end' }),
         { textContent: tickLabel(t, gy.step) }));
     }
-    svg.appendChild(labels);
+    structRoot.appendChild(labels);
 
     const axisText = el('g', { fill: 'var(--ink-2)', 'font-size': 12, 'font-family': 'var(--font)' });
     if (spec.x_label) {
@@ -229,13 +260,15 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
                      transform: `rotate(-90 13 ${M.t + ih / 2})` }),
         { textContent: spec.y_label }));
     }
-    svg.appendChild(axisText);
+    structRoot.appendChild(axisText);
 
-    const defs = el('defs');
-    const clip = el('clipPath', { id: 'plotclip' });
-    clip.appendChild(el('rect', { x: M.l, y: M.t, width: iw, height: ih }));
-    defs.appendChild(clip);
-    svg.appendChild(defs);
+    host._scale = { sx, sy, gx, gy, M, iw, ih };
+  }
+
+  /** 浮层：框选矩形 + 悬停十字线和读数。**便宜，随指针走。** */
+  function drawOverlay() {
+    while (overlayRoot.firstChild) overlayRoot.removeChild(overlayRoot.firstChild);
+    const svg = overlayRoot;                 // 下面沿用原来的 svg.appendChild 写法
 
     // 框选高亮
     if (state.drag) {
@@ -252,15 +285,22 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
       const { px, items } = state.hover;
       svg.appendChild(el('line', { x1: px, x2: px, y1: M.t, y2: M.t + ih,
                                    stroke: 'var(--ink-4)', 'stroke-width': 1, 'stroke-dasharray': '3 3' }));
-      for (const it of items) {
-        svg.appendChild(el('circle', { cx: it.px, cy: it.py, r: 4,
-                                       fill: 'var(--paper)', stroke: it.color, 'stroke-width': 2.5 }));
-      }
-      const lines = items.map((it) => `${it.label}  ${fmtT(it.y)}`);
+      // 标记只画列出来的那几条 —— 60 个圈叠在一起是一条实心带，不是信息。
+      // 移到 shown 定义之后画（见下）。
+      // 对比页 60 条曲线时，每条都会命中 —— 60 行的读数框有 858px 高，
+      // 比图本身还高，等于把图整个盖住。列最近的 8 条，其余只说还有几条。
+      const shown = items.slice(0, HOVER_ROWS);
+      const restN = items.length - shown.length;
+      const lines = shown.map((it) => `${it.label}  ${fmtT(it.y)}`);
+      if (restN) lines.push(`还有 ${restN} 条`);
       const wBox = Math.min(230, 9 + Math.max(...lines.map((s) => s.length), 8) * 6.4);
       const hBox = 18 + lines.length * 14;
       const bx = Math.min(px + 12, M.l + iw - wBox - 2);
       const by = Math.max(M.t + 2, Math.min(items[0]?.py - hBox / 2 || M.t, M.t + ih - hBox - 2));
+      for (const it of shown) {
+        svg.appendChild(el('circle', { cx: it.px, cy: it.py, r: 4,
+                                       fill: 'var(--paper)', stroke: it.color, 'stroke-width': 2.5 }));
+      }
       const g = el('g');
       g.appendChild(el('rect', { x: bx, y: by, width: wBox, height: hBox, rx: 6,
                                  fill: 'var(--paper)', stroke: 'var(--line-2)', 'stroke-width': 1 }));
@@ -268,18 +308,25 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
         el('text', { x: bx + 8, y: by + 14, 'font-size': 10.5, fill: 'var(--ink-3)',
                      'font-family': 'var(--font)' }),
         { textContent: `${spec.x_label || 'x'} = ${fmtT(state.hover.x)}` }));
-      items.forEach((it, i) => {
+      shown.forEach((it, i) => {
         g.appendChild(el('rect', { x: bx + 8, y: by + 22 + i * 14, width: 8, height: 2.5, fill: it.color }));
         g.appendChild(Object.assign(
           el('text', { x: bx + 20, y: by + 26 + i * 14, 'font-size': 11, fill: 'var(--ink)',
                        'font-family': 'var(--font)', 'font-variant-numeric': 'tabular-nums' }),
           { textContent: `${it.label}  ${fmtT(it.y)}` }));
       });
+      if (restN) {
+        g.appendChild(Object.assign(
+          el('text', { x: bx + 20, y: by + 26 + shown.length * 14, 'font-size': 11,
+                       fill: 'var(--ink-3)', 'font-family': 'var(--font)' }),
+          { textContent: `还有 ${restN} 条` }));
+      }
       svg.appendChild(g);
     }
-
-    host._scale = { sx, sy, gx, gy, M, iw, ih };
   }
+
+  /** 全量重画。数据、缩放视窗、复位时用；**悬停时不要调它**。 */
+  function draw() { drawStructure(); drawOverlay(); }
 
   const fmtT = (v) => {
     if (v === null || v === undefined || !Number.isFinite(v)) return '—';
@@ -291,14 +338,30 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
 
   const toLocal = (evt) => {
     const r = svg.getBoundingClientRect();
-    return ((evt.clientX - r.left) / r.width) * W;
+    return {
+      px: ((evt.clientX - r.left) / r.width) * W,
+      py: ((evt.clientY - r.top) / r.height) * H,
+    };
   };
 
-  svg.addEventListener('mousemove', (e) => {
-    const px = toLocal(e);
-    if (state.drag) { state.drag.to = px; draw(); return; }
+  // 指针移动用 rAF 合并。鼠标事件能到 120 Hz，而屏幕只有 60 帧 ——
+  // 逐事件算就是一半的活白干。写法和 virtual-list.js 里那个一致。
+  let hoverRaf = 0;
+  let pending = null;
+  function scheduleHover() {
+    if (hoverRaf) return;
+    hoverRaf = requestAnimationFrame(() => {
+      hoverRaf = 0;
+      const ev = pending; pending = null;
+      if (ev) applyHover(ev.px, ev.py);
+      drawOverlay();                 // **只重画浮层**，骨架一个节点都不动
+    });
+  }
+
+  function applyHover(px, py) {
+    if (state.drag) { state.drag.to = px; state.hover = null; return; }
     const { M: m, iw: w } = host._scale || {};
-    if (!m || px < m.l || px > m.l + w) { if (state.hover) { state.hover = null; draw(); } return; }
+    if (!m || px < m.l || px > m.l + w) { state.hover = null; return; }
     const items = [];
     let hoverX = null;
     for (const [i, s] of series.entries()) {
@@ -310,18 +373,27 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
       }
       if (best && bd < 40) {
         items.push({ label: s.label, px: best[0], py: best[1], y: best[3],
-                     color: s.color || seriesColor(i + shift) });
+                     color: s._color || s.color || seriesColor(i + shift) });
         hoverX = best[2];
       }
     }
-    state.hover = items.length ? { px, x: hoverX, items } : null;
-    draw();
+    // 按到指针的竖直距离排序 —— 60 条曲线时只列 8 条，那 8 条得是
+    // 你光标底下的这几条，不是碰巧排在数组最前面的那几条。
+    items.sort((a, b) => Math.abs(a.py - py) - Math.abs(b.py - py));
+    state.hover = items.length ? { px, py, x: hoverX, items } : null;
+  }
+
+  svg.addEventListener('mousemove', (e) => { pending = toLocal(e); scheduleHover(); });
+  svg.addEventListener('mouseleave', () => {
+    pending = null;
+    state.hover = null; state.drag = null;
+    scheduleHover();
   });
-  svg.addEventListener('mouseleave', () => { state.hover = null; state.drag = null; draw(); });
   svg.addEventListener('mousedown', (e) => {
-    const px = toLocal(e);
+    const { px } = toLocal(e);
     state.drag = { from: px, to: px };
     state.hover = null;
+    scheduleHover();          // 框选矩形也在浮层，画它不用碰骨架
     e.preventDefault();
   });
   svg.addEventListener('mouseup', () => {

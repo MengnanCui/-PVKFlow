@@ -148,26 +148,55 @@ async function loadSets() {
 }
 
 // ------------------------------------------------------------------ 左栏
+
+/**
+ * 搜索框**建一次就一直用那一个节点**。
+ *
+ * 以前它写在 drawFacets() 里，而每次筛选变化都会重建整个左栏 ——
+ * 于是你敲完回车，输入框被换成了一个新的，焦点和光标位置一起没了，
+ * 想接着改关键词得再点一次。这是打字时最直接的一处「不顺滑」。
+ */
+function searchBox() {
+  if (!refs.search) {
+    refs.search = h('input.input', {
+      placeholder: '搜索样品名 / 批次…',
+      onchange: (e) => {
+        const next = { ...S.filter };
+        if (e.target.value.trim()) next.q = e.target.value.trim();
+        else delete next.q;
+        setFilter(next);
+      },
+    });
+  }
+  // 值由 S.filter 来定，但**别在用户正打字的时候改它** ——
+  // 那会把光标弹到末尾。
+  if (document.activeElement !== refs.search) refs.search.value = S.filter.q || '';
+  return refs.search;
+}
+
 function drawFacets() {
   if (!refs.facetHost) return;
   if (!S.facets) { mount(refs.facetHost, skeletonRows(6)); return; }
+
+  // 光留住节点还不够：mount() 会把它摘下来再插回去，而**移动一个带焦点的元素
+  // 会让它失焦**。所以插完再把焦点和选区放回去。
+  const box = searchBox();
+  const hadFocus = document.activeElement === box;
+  const caret = hadFocus ? [box.selectionStart, box.selectionEnd] : null;
+
   mount(refs.facetHost,
     h('div.row-between',
       h('div.panel-title', '筛选'),
       h('span.small.muted', `${fmtInt(S.facets.total)} 个样品`)),
-    h('div.mt-3',
-      h('input.input', {
-        placeholder: '搜索样品名 / 批次…', value: S.filter.q || '',
-        onchange: (e) => {
-          const next = { ...S.filter };
-          if (e.target.value.trim()) next.q = e.target.value.trim();
-          else delete next.q;
-          setFilter(next);
-        },
-      })),
+    h('div.mt-3', box),
     S.sets.length ? savedSets() : null,
     h('div.divider'),
     facetPanel({ facets: S.facets, filter: S.filter, onChange: setFilter }));
+
+  if (hadFocus) {
+    box.focus({ preventScroll: true });
+    try { box.setSelectionRange(caret[0], caret[1]); } catch { /* 有些类型不支持选区 */ }
+  }
 }
 
 function savedSets() {
