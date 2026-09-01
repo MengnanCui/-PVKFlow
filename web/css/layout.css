@@ -137,29 +137,15 @@
 .panel-body.flush { padding: 0; }
 .panel-foot { padding: var(--s3x) var(--s4x); border-top: 1px solid var(--line); }
 
-/* 数据处理页的三栏 */
-.workbench {
-  display: grid;
-  grid-template-columns: 300px minmax(420px, 1fr) 320px;
-  gap: var(--s4x);
-  align-items: start;
-  height: calc(100vh - var(--topbar-h) - var(--s10x));
-}
-.workbench > .panel { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-.workbench .panel-body { overflow: auto; flex: 1; min-height: 0; }
+/* 注：这里原来有一整块 .workbench 三栏布局（含一个 max-width:1360px 的断点），
+   但 JS 里一处都没有用到 —— 数据处理页走的是下面的 .select-layout（两栏，
+   断点 1100px）。留着的话，下次调小屏的人会对着一个不生效的断点改半天。 */
 
-@media (max-width: 1360px) {
-  .workbench { grid-template-columns: 270px 1fr; height: auto; }
-  .workbench > .panel:last-child { grid-column: 1 / -1; height: auto; }
-  .workbench > .panel { height: 70vh; }
-}
 @media (max-width: 1000px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar { display: none; }
   /* 窄屏放不下三栏，抽屉改成盖在上面 */
   .ai-drawer { position: fixed; inset: 0 0 0 auto; width: min(92vw, 420px); z-index: var(--z-drawer); }
-  .workbench { grid-template-columns: 1fr; }
-  .workbench > .panel { height: auto; }
 }
 
 /* 选择页：左分面 + 右列表 */

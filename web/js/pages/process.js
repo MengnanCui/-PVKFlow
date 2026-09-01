@@ -281,7 +281,7 @@ function drawList() {
             // 先看到东西再改，改完重跑就是新的一次对比。
             onclick: (e) => startCompare(e.target),
           }, batchLabel()))),
-      h('div.panel-body.flush#tableHost')));
+      h('div.panel-body.flush.vlist-container#tableHost')));
 
   drawTable();
 }

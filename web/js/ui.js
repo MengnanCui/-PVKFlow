@@ -119,7 +119,11 @@ export function modal({ title, body, foot, width, onClose, flush = false }) {
   const panel = h('div.modal', { style: width ? { width } : null },
     h('div.modal-head',
       h('h3', title),
-      h('button.btn.btn-ghost.btn-sm', { onclick: close, title: '关闭 (Esc)' }, '关闭')),
+      // 右上角是「关掉这个窗」的通用手势，用 × 图标；
+      // 底部那排才是这个窗自己的动作（取消 / 确定 / 关闭）。
+      // 以前两处都是文字「关闭」，看起来像有两种不同的关闭方式。
+      h('button.icon-btn', { onclick: close, title: '关闭 (Esc)',
+                             'aria-label': '关闭' }, '✕')),
     h('div.modal-body' + (flush ? '.flush' : ''), body),
     foot ? h('div.modal-foot', foot) : null);
 
@@ -153,10 +157,18 @@ export function empty(text, action) {
   return h('div.empty', h('div.empty-text', text), action ? h('div.empty-action', action) : null);
 }
 
+/**
+ * 加载占位。
+ *
+ * 形状要像它将要变成的东西 —— 以前是三根随机宽度的细灰条，
+ * 换成整页内容时跳变很大，像闪了一下。现在给一个标题条 + 几个内容块，
+ * 起码「这里要出现一段有标题的内容」这件事是对的。
+ */
 export function skeletonRows(n = 5) {
-  return h('div.col.gap-3', { style: { padding: 'var(--s4x)' } },
-    ...Array.from({ length: n }, (_, i) =>
-      h('div.skeleton', { style: { width: `${92 - (i % 3) * 18}%` } })));
+  return h('div.skeleton-stack',
+    h('div.skeleton.skeleton-title'),
+    ...Array.from({ length: Math.max(1, n - 1) }, (_, i) =>
+      h('div.skeleton.skeleton-block', { style: { width: `${100 - (i % 3) * 12}%` } })));
 }
 
 export function errorBox(err, retry) {

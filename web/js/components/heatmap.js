@@ -19,7 +19,12 @@ export function heatmap(opts) {
   let props = { height: 300, xLabel: '时间 (s)', yLabel: '', cmapLabel: '', ...opts };
   let state = { loading: true, error: null, hover: null };
 
-  const M = { t: 10, r: 96, b: 40, l: 62 };   // 右边留给色标条 + 数值 + 说明
+  // 右边留给色标条 + 数值 + 说明。
+  // 96 是当年在 900 单位的 viewBox 里定的 —— 那时候它被 0.59 倍缩放，
+  // 落到屏幕上其实只有 57px。现在坐标系是真实像素，照抄 96 等于把色标区
+  // 凭空放大七成、从图里抢走 40px。按实际需要重算：
+  //   色标条 12 + 间隙 4 + 数值标签约 30 + 竖排说明约 21 = 67，留一点余量。
+  const M = { t: 10, r: 78, b: 40, l: 62 };
   // ★ 和 chart.js 同一条规矩：绘图坐标系 = CSS 像素。
   // 以前写死 900，而容器只有 530px 宽 —— 0.59 倍缩放，11px 的刻度
   // 实际渲染成 6.5px，是全平台最小的字。

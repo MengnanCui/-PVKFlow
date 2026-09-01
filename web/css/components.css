@@ -179,10 +179,16 @@ table.data tr:last-child td { border-bottom: 0; }
               background: var(--surface-2); flex: none; border: 1px solid var(--line); }
 
 /* ---------------------------------------------------------------- 空 / 加载 / 错误 */
-.empty { padding: var(--s8x) var(--s4x); text-align: center; }
-.empty-text { font-size: var(--t-sm); color: var(--ink-3); }
-.empty-action { margin-top: var(--s3x); }
-.empty-sm { padding: var(--s5x) var(--s3x); }
+/* 空态。给它一点上下留白和一条虚线边，让「这里是空的」看起来是**有意如此**，
+   而不是内容没加载出来。 */
+.empty {
+  padding: var(--s10x) var(--s5x);
+  text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: var(--s3x);
+}
+.empty-text { font-size: var(--t-sm); color: var(--ink-3); max-width: 46ch; }
+.empty-action { margin-top: 0; }
+.empty-sm { padding: var(--s6x) var(--s3x); gap: var(--s2x); }
 
 .skeleton {
   background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-sunk) 37%, var(--surface-2) 63%);
@@ -191,6 +197,12 @@ table.data tr:last-child td { border-bottom: 0; }
   border-radius: var(--r-sm);
   height: 11px;
 }
+/* 骨架屏的形状要贴近它将要变成的东西：一条标题 + 几块内容。
+   三根等高的细灰条换成整页内容时，跳变大得像闪了一下。 */
+.skeleton-stack { display: flex; flex-direction: column; gap: var(--s4x);
+                  padding: var(--s5x) var(--s4x); }
+.skeleton-title { height: 18px; width: 32%; border-radius: var(--r); }
+.skeleton-block { height: 56px; border-radius: var(--r); }
 @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 
 .notice {
@@ -1008,3 +1020,33 @@ tr.is-clickable {
  */
 @keyframes fade-in { from { opacity: 0; } }
 .ai-drawer:not([hidden]) { animation: fade-in var(--dur) var(--ease-out) backwards; }
+
+/* ------------------------------------------------------------------ 窄的样品列表
+ *
+ * 这一行有 7 列，其中 5 列是固定宽（28 + 88 + 132 + 78 + 70）加上 6 个 12px 的
+ * 间距，光固定部分就要 468px。容器一旦窄过它，两个 fr 列就被压到 0 ——
+ * 样品名变成「Z…」，表头「光谱矩阵」竖着排成四个字。
+ *
+ * 打开 AI 抽屉就会触发（1440 屏上主区只剩 860px），所以这不是小屏才有的事，
+ * 是每天都会遇到的。视口断点管不了它 —— 抽屉不改变视口宽度 —— 所以用容器查询。
+ * 不支持容器查询的浏览器会忽略这几条，退回今天的行为，不会更糟。
+ */
+.vlist-container { container-type: inline-size; }
+
+@container (max-width: 700px) {
+  /* 先让「光谱矩阵」下岗：文件名在样品页里看得到，这里不是非有不可 */
+  .vrow { grid-template-columns: 28px minmax(0, 3fr) 88px 132px 78px 70px; }
+  .vrow > :nth-child(5) { display: none; }
+}
+@container (max-width: 560px) {
+  /* 再让「大小」下岗。名字和时间是认样品用的，留到最后 */
+  .vrow { grid-template-columns: 28px minmax(0, 3fr) 88px 132px 70px; }
+  .vrow > :nth-child(6) { display: none; }
+}
+@container (max-width: 430px) {
+  .vrow { grid-template-columns: 28px minmax(0, 3fr) 88px 70px; }
+  .vrow > :nth-child(4) { display: none; }     /* 测量时间 */
+}
+
+/* 表头和工具条里的短标签不该被挤成竖排 */
+.vrow-head > *, .check .small, .panel-head .btn { white-space: nowrap; }
