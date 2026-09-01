@@ -239,7 +239,7 @@ function drawSpectra() {
     src: api.heatmapUrl(S.artifactId, { axis: 'wavelength', norm: S.norm, cmap: S.cmap }),
     xMin: S.meta.time_min, xMax: S.meta.time_max,
     yMin: S.meta.lambda_min, yMax: S.meta.lambda_max,
-    xLabel: '时间 (s)', yLabel: '波长 (nm)', height: 340,
+    xLabel: '时间 (s)', yLabel: '波长 (nm)', height: 280,
     cmap: S.cmap, ...colorScale(),
     caption: `${fmtInt(S.meta.n_lambda)}×${fmtInt(S.meta.n_time)} 服务端渲染为 PNG，坐标轴是矢量的`,
   });
@@ -353,7 +353,7 @@ function drawOverlay() {
   const spec = { x_label: '波长 (nm)', y_label: '归一化强度', series };
   refs.overlayHost.__spec = spec;      // 下载菜单从这儿取当前数据
   mount(refs.overlayHost,
-    xyChart(spec, { height: 340 }),
+    xyChart(spec, { height: 280 }),
     h('div.chart-caption',
       `${n} 条 · ${from.toFixed(2)}–${to.toFixed(2)} s · `,
       `${lo.toFixed(0)}–${hi.toFixed(0)} nm · 颜色由浅到深 = 由早到晚 · `,

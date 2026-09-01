@@ -25,6 +25,10 @@ import { runOp } from '../ops.js';
 // 两处都是「拖动中不打后端」的同一个决定。
 const SETTLE_MS = 300;
 
+// 后端没给高度时的兜底。正常情况下 Panel.height 总会带过来（默认也是 250）。
+// **这是真实像素** —— 自从 chart.js 的 viewBox 跟着容器宽度走，写多少就是多少。
+const CHART_H = 250;
+
 /**
  * 渲染一个模块。
  *
@@ -205,7 +209,7 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品' 
     host.__spec = chartSpec;
     const nPts = Math.max(...series.map((sr) => sr.x?.length || 0), 0);
     mount(host,
-      xyChart(chartSpec, { height: panel.height || 300 }),
+      xyChart(chartSpec, { height: panel.height || CHART_H, width: host.clientWidth }),
       caption(panel, d, exact, nPts),
       noticeBox(d));
   }
@@ -233,7 +237,8 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品' 
         xMin: x0, xMax: x1, yMin: y0, yMax: y1,
         vMin: v0, vMax: v1, vLabel: d.v_label || '',
         xLabel: panel.x_label || '时间 (s)', yLabel: d.y_label || panel.y_label || '',
-        height: panel.height || 300, cmap: d.cmap || 'gray',
+        height: panel.height || CHART_H, cmap: d.cmap || 'gray',
+        width: host.clientWidth,
       }),
       caption(panel, d, true, null),
       noticeBox(d));

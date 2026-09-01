@@ -363,7 +363,7 @@ function sliceBody(d) {
         })),
         seriesLabels: labels,
         yLabel: '平均光学厚度 (nm)', unit: 'nm',
-      }, { height: 340 })
+      }, { height: 300 })
     : h('div.notice',
         h('div.grow',
           h('div.small', `${fmtInt(n)} 个样品，柱状图挤不下（超过 ${BAR_LIMIT} 个就没法读了）`),
@@ -499,7 +499,7 @@ function paintCurve(col, data) {
     chart = xyChart({
       x_label: '时间 (s)', y_label: Y_LABEL[col], band,
       series: reps.map((s) => ({ ...s, style: 'line' })),
-    }, { height: 320 });
+    }, { height: 300 });
     caption = `${fmtInt(n)} 条曲线 —— 显示中位数与四分位区间，另叠了 ${reps.length} 条代表曲线。`
       + `超过 ${SPAGHETTI_LIMIT} 条自动降级，因为上千条叠一起是噪声不是图。`;
   } else {
@@ -507,7 +507,7 @@ function paintCurve(col, data) {
       x_label: '时间 (s)', y_label: Y_LABEL[col],
       series: all.map((s) => ({ ...s, style: 'line',
         group: S.groupBy === 'batch' ? s.group : undefined })),
-    }, { height: 320 });
+    }, { height: 300 });
     caption = `${fmtInt(n)} 条曲线`
       + (S.groupBy === 'batch' ? '，按样品号着色（最多 12 组）' : '');
   }

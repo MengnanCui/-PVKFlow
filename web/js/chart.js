@@ -22,6 +22,54 @@ let uid = 0;
 // 一个比图还高的读数框不是信息，是遮挡。
 const HOVER_ROWS = 8;
 
+// 图还没进文档时量不到宽度，先用这个画一版，ResizeObserver 回调里立刻校正。
+const FALLBACK_W = 760;
+
+/**
+ * 一条轴上放几个刻度。`per` 是每个刻度想占多少像素。
+ *
+ * ★ 下限不能太低。niceTicks 会把轴的两端扩到步长的整数倍，
+ * 刻度少 → 步长粗 → 轴被撑得远超数据范围。实测波长轴 422–1120：
+ * 6 个刻度时步长 200、轴 400–1200，画布只浪费 13%；
+ * 掉到 3 个刻度时步长变 500、轴变成 0–1500，**一半以上的画布是空的**。
+ * 所以这个函数只用来给宽图**加**刻度，不用来给窄图减。
+ */
+export function tickCount(px, per, lo = 5, hi = 9) {
+  return Math.max(lo, Math.min(hi, Math.round(px / per)));
+}
+
+/**
+ * 让 svg 的绘图坐标系跟着容器的实际像素宽走。
+ *
+ * 这是「写 11px 就渲染成 11px」的全部机制：viewBox 宽 = 容器宽 → 缩放 1:1。
+ * chart.js 和 heatmap.js 共用这一份，别各写各的。
+ *
+ * @param host  要量的元素
+ * @param apply (w) => void  宽度变了时调它重画
+ * @returns 立刻可用的初始宽度
+ */
+export function trackWidth(host, apply, hint = 0) {
+  const measure = () => Math.max(320, Math.round(host.clientWidth || hint || FALLBACK_W));
+  // `hint` = 调用方已经知道的宽度。给了它，挂 observer 时那一下回调就落在
+  // 阈值内、不会触发重画 —— 否则每张图都要画两遍（先按兜底值 760 画一次，
+  // 进文档后再按真实宽度画一次）。拖控件时图是每帧重建的，那就是每帧两遍。
+  let last = hint || measure();
+  if (typeof ResizeObserver === 'function') {
+    // 挂上去会立刻回调一次 —— 构造时的兜底值就是在那一下被校正的。
+    const ro = new ResizeObserver(() => {
+      const w = measure();
+      // 8px 以内不重画：滚动条出现/消失会让宽度抖一两个像素，
+      // 跟着抖就是每帧重建一次骨架。
+      if (Math.abs(w - last) < 8) return;
+      last = w;
+      apply(w);
+    });
+    ro.observe(host);
+    host.__stopWidthTrack = () => ro.disconnect();
+  }
+  return last;
+}
+
 export const seriesColor = (i) => `var(${PALETTE[i % PALETTE.length]})`;
 
 /** 「好看」的刻度：1 / 2 / 5 × 10^n。热力图的坐标轴也用它，保持一致。 */
@@ -55,7 +103,7 @@ export function tickLabel(v, step) {
  * spec: { series: [{label, x[], y[], style}], x_label, y_label }
  * 返回一个可直接插入 DOM 的元素。
  */
-export function xyChart(spec, { height = 300, onSelect = null } = {}) {
+export function xyChart(spec, { height = 300, onSelect = null, width = 0 } = {}) {
   const host = document.createElement('div');
   host.className = 'chart-host';
 
@@ -67,9 +115,23 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
     return host;
   }
 
-  const W = 760, H = height;
+  // ★ 绘图坐标系 = CSS 像素，1:1。
+  //
+  // 以前这里写死 W = 760，而 CSS 是 .chart-host svg { width: 100% } ——
+  // 整张图连字一起被容器宽度缩放。同一句 font-size: 11：样品页的图容器
+  // 530px 宽，缩放 0.70 倍，刻度真正渲染成 7.7px；对比页容器 1190px，
+  // 放大 1.57 倍，同一个 11 变成 17.2px。而图注是 HTML、在 SVG 外面，
+  // 真的是 11px —— 所以一张图里，下面的图注和上面的刻度差了三分之一。
+  //
+  // 把 viewBox 的宽度设成容器的实际像素宽，缩放就恒等于 1，
+  // 写 11 就是 11，在哪个页面、哪个屏宽下都一样。
+  // 调用方知道容器多宽就直接给（拖动时每帧都重建图，省掉一次白画）；
+  // 不给就先用兜底值，进文档后由 ResizeObserver 校正。
+  let W = width || FALLBACK_W;
+  const H = height;
   const M = { t: 14, r: 16, b: 42, l: 62 };
-  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  let iw = W - M.l - M.r;
+  const ih = H - M.t - M.b;
 
   let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
   const scan = (xs, ys) => {
@@ -85,7 +147,7 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
   if (!Number.isFinite(xmin)) { xmin = 0; xmax = 1; ymin = 0; ymax = 1; }
 
   let view = { xmin, xmax };
-  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
+  const svg = el('svg', { role: 'img',
                           'aria-label': `${spec.y_label || 'Y'} vs ${spec.x_label || 'X'}` });
   host.appendChild(svg);
 
@@ -101,7 +163,8 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
   const defs = el('defs');
   const clipId = `plotclip-${++uid}`;      // 同页多张图时 id 不能撞
   const clip = el('clipPath', { id: clipId });
-  clip.appendChild(el('rect', { x: M.l, y: M.t, width: iw, height: ih }));
+  const clipRect = el('rect', { x: M.l, y: M.t, height: ih });
+  clip.appendChild(clipRect);
   defs.appendChild(clip);
   svg.appendChild(defs);
   const clipRef = `url(#${clipId})`;
@@ -120,6 +183,9 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
   /** 骨架：网格、分位带、曲线、散点、坐标轴、刻度。**贵，别挂在 mousemove 上。** */
   function drawStructure() {
     while (structRoot.firstChild) structRoot.removeChild(structRoot.firstChild);
+    iw = W - M.l - M.r;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    clipRect.setAttribute('width', iw);
 
     // 只按当前 X 视窗重算 Y 范围，放大后曲线才撑得满
     let ylo = Infinity, yhi = -Infinity;
@@ -133,8 +199,10 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
     }
     if (!Number.isFinite(ylo)) { ylo = ymin; yhi = ymax; }
 
-    const gx = niceTicks(view.xmin, view.xmax, 6);
-    const gy = niceTicks(ylo, yhi, 5);
+    // 刻度数量跟着实际宽度走。写死 6 个的话，窄图上标签会挤到一起，
+    // 宽图上又疏得像没画。约 130px 一个刻度是舒服的密度。
+    const gx = niceTicks(view.xmin, view.xmax, tickCount(iw, 130));
+    const gy = niceTicks(ylo, yhi, tickCount(ih, 60, 5, 8));
     const sx = (v) => M.l + ((v - gx.lo) / (gx.hi - gx.lo || 1)) * iw;
     const sy = (v) => M.t + ih - ((v - gy.lo) / (gy.hi - gy.lo || 1)) * ih;
 
@@ -414,6 +482,16 @@ export function xyChart(spec, { height = 300, onSelect = null } = {}) {
 
   draw();
 
+  // 挂到文档里之后量真实宽度并重画骨架。**只重画骨架** ——
+  // 浮层里那点东西没必要跟着，而且宽度变化和悬停是两回事。
+  // 用 rAF 合并：窗口拖动时 resize 会连着来很多次。
+  let sizeRaf = 0;
+  trackWidth(host, (w) => {
+    W = w;
+    if (sizeRaf) return;
+    sizeRaf = requestAnimationFrame(() => { sizeRaf = 0; drawStructure(); drawOverlay(); });
+  }, width);
+
   const groups = [...new Set(series.map((s) => s.group).filter(Boolean))];
   if (groups.length > 1 || (series.length > 1 && series.length <= 14 && !groups.length)) {
     const legend = document.createElement('div');
@@ -521,9 +599,13 @@ export function barChart({ groups = [], seriesLabels = [], yLabel = '', unit = '
     return host;
   }
 
-  const W = 760, H = height;
+  // 和另外两个图一样：绘图坐标系 = CSS 像素。对比页容器约 1190px 宽，
+  // 以前 760 的 viewBox 被放大 1.57 倍，11px 的刻度渲染成 17px —— 太大了。
+  let W = FALLBACK_W;
+  const H = height;
   const M = { t: 14, r: 16, b: 64, l: 68 };
-  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  let iw = W - M.l - M.r;
+  const ih = H - M.t - M.b;
 
   const all = groups.flatMap((g) => g.values.map((v) => v?.value))
     .filter((v) => Number.isFinite(v));
@@ -532,95 +614,107 @@ export function barChart({ groups = [], seriesLabels = [], yLabel = '', unit = '
   const top = Math.max(gy.hi, ymax) || 1;
   const sy = (v) => M.t + ih - (v / top) * ih;
 
-  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
+  const svg = el('svg', { role: 'img',
                           preserveAspectRatio: 'xMidYMid meet' });
+  svg.style.width = '100%';
+  svg.style.height = 'auto';
+  svg.style.display = 'block';
 
-  // 横向网格线。柱状图比折线更需要它 —— 比高度全靠这几条线
-  const grid = el('g', { stroke: 'var(--line)', 'stroke-width': 1 });
-  for (const t of gy.ticks) {
-    grid.appendChild(el('line', { x1: M.l, x2: M.l + iw, y1: sy(t), y2: sy(t) }));
-  }
-  svg.appendChild(grid);
+  /** 整张重画。柱状图没有悬停和框选，所以不用拆骨架/浮层。 */
+  function draw() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    iw = W - M.l - M.r;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
-  const nS = seriesLabels.length;
-  const gw = iw / groups.length;
-  const pad = Math.min(14, gw * 0.16);
-  const bw = Math.max(3, (gw - pad * 2) / nS - 3);
+    // 横向网格线。柱状图比折线更需要它 —— 比高度全靠这几条线
+    const grid = el('g', { stroke: 'var(--line)', 'stroke-width': 1 });
+    for (const t of gy.ticks) {
+      grid.appendChild(el('line', { x1: M.l, x2: M.l + iw, y1: sy(t), y2: sy(t) }));
+    }
+    svg.appendChild(grid);
 
-  groups.forEach((g, gi) => {
-    const x0 = M.l + gi * gw + pad;
-    g.values.forEach((v, si) => {
-      const x = x0 + si * (bw + 3);
-      if (!Number.isFinite(v?.value)) {
-        // 没有数据的位置：一个淡淡的「—」。画成 0 高的柱子会被读成「测出来是 0」
-        const dash = Object.assign(
-          el('text', { x: x + bw / 2, y: M.t + ih - 6, 'text-anchor': 'middle',
-                       fill: 'var(--ink-4)', 'font-size': 13 }),
-          { textContent: '—' });
-        dash.appendChild(Object.assign(el('title'), {
-          textContent: `${g.label} · ${seriesLabels[si]}：${v?.note || '没有数据'}` }));
-        svg.appendChild(dash);
-        return;
-      }
-      const yTop = sy(v.value);
-      const hAll = M.t + ih - yTop;
-      const color = seriesColor(si);
+    const nS = seriesLabels.length;
+    const gw = iw / groups.length;
+    const pad = Math.min(14, gw * 0.16);
+    const bw = Math.max(3, (gw - pad * 2) / nS - 3);
 
-      // 整根：淡色 = 全部帧的均值
-      const bar = el('rect', { x, y: yTop, width: bw, height: hAll,
-                               fill: color, opacity: 0.32, rx: 2 });
-      svg.appendChild(bar);
-      // 可信那一截：深色实心，高度按可信比例
-      const r = Number.isFinite(v.ratio) ? Math.max(0, Math.min(1, v.ratio)) : 0;
-      if (r > 0) {
-        svg.appendChild(el('rect', {
-          x, y: M.t + ih - hAll * r, width: bw, height: hAll * r,
-          fill: color, rx: 2 }));
-      }
-      bar.appendChild(Object.assign(el('title'), {
-        textContent: `${g.label} · ${seriesLabels[si]}\n`
-          + `${v.value} ${unit}（${v.n_frames ?? '?'} 帧的平均）\n`
-          + `其中 ${v.n_ok ?? 0} 帧可信（${Math.round(r * 100)}%）` }));
+    groups.forEach((g, gi) => {
+      const x0 = M.l + gi * gw + pad;
+      g.values.forEach((v, si) => {
+        const x = x0 + si * (bw + 3);
+        if (!Number.isFinite(v?.value)) {
+          // 没有数据的位置：一个淡淡的「—」。画成 0 高的柱子会被读成「测出来是 0」
+          const dash = Object.assign(
+            el('text', { x: x + bw / 2, y: M.t + ih - 6, 'text-anchor': 'middle',
+                         fill: 'var(--ink-4)', 'font-size': 13 }),
+            { textContent: '—' });
+          dash.appendChild(Object.assign(el('title'), {
+            textContent: `${g.label} · ${seriesLabels[si]}：${v?.note || '没有数据'}` }));
+          svg.appendChild(dash);
+          return;
+        }
+        const yTop = sy(v.value);
+        const hAll = M.t + ih - yTop;
+        const color = seriesColor(si);
+
+        // 整根：淡色 = 全部帧的均值
+        const bar = el('rect', { x, y: yTop, width: bw, height: hAll,
+                                 fill: color, opacity: 0.32, rx: 2 });
+        svg.appendChild(bar);
+        // 可信那一截：深色实心，高度按可信比例
+        const r = Number.isFinite(v.ratio) ? Math.max(0, Math.min(1, v.ratio)) : 0;
+        if (r > 0) {
+          svg.appendChild(el('rect', {
+            x, y: M.t + ih - hAll * r, width: bw, height: hAll * r,
+            fill: color, rx: 2 }));
+        }
+        bar.appendChild(Object.assign(el('title'), {
+          textContent: `${g.label} · ${seriesLabels[si]}\n`
+            + `${v.value} ${unit}（${v.n_frames ?? '?'} 帧的平均）\n`
+            + `其中 ${v.n_ok ?? 0} 帧可信（${Math.round(r * 100)}%）` }));
+      });
+
+      // 组名。样品名很长，斜着放，放不下就截断（tooltip 里给全名）
+      const label = String(g.label);
+      const short = label.length > 16 ? label.slice(0, 15) + '…' : label;
+      const tx = M.l + gi * gw + gw / 2;
+      const txt = Object.assign(
+        el('text', { x: tx, y: M.t + ih + 14, 'text-anchor': 'end',
+                     fill: 'var(--ink-2)', 'font-size': 11,
+                     transform: `rotate(-28 ${tx} ${M.t + ih + 14})` }),
+        { textContent: short });
+      txt.appendChild(Object.assign(el('title'), { textContent: label }));
+      svg.appendChild(txt);
     });
 
-    // 组名。样品名很长，斜着放，放不下就截断（tooltip 里给全名）
-    const label = String(g.label);
-    const short = label.length > 16 ? label.slice(0, 15) + '…' : label;
-    const tx = M.l + gi * gw + gw / 2;
-    const txt = Object.assign(
-      el('text', { x: tx, y: M.t + ih + 14, 'text-anchor': 'end',
-                   fill: 'var(--ink-2)', 'font-size': 11,
-                   transform: `rotate(-28 ${tx} ${M.t + ih + 14})` }),
-      { textContent: short });
-    txt.appendChild(Object.assign(el('title'), { textContent: label }));
-    svg.appendChild(txt);
-  });
+    const axis = el('g', { stroke: 'var(--ink-3)', 'stroke-width': 2 });
+    axis.appendChild(el('line', { x1: M.l, y1: M.t, x2: M.l, y2: M.t + ih }));
+    axis.appendChild(el('line', { x1: M.l, y1: M.t + ih, x2: M.l + iw, y2: M.t + ih }));
+    for (const t of gy.ticks) {
+      axis.appendChild(el('line', { x1: M.l, x2: M.l + 6, y1: sy(t), y2: sy(t) }));
+    }
+    svg.appendChild(axis);
 
-  const axis = el('g', { stroke: 'var(--ink-3)', 'stroke-width': 2 });
-  axis.appendChild(el('line', { x1: M.l, y1: M.t, x2: M.l, y2: M.t + ih }));
-  axis.appendChild(el('line', { x1: M.l, y1: M.t + ih, x2: M.l + iw, y2: M.t + ih }));
-  for (const t of gy.ticks) {
-    axis.appendChild(el('line', { x1: M.l, x2: M.l + 6, y1: sy(t), y2: sy(t) }));
-  }
-  svg.appendChild(axis);
+    const labels = el('g', { fill: 'var(--ink-3)', 'font-size': 11,
+                             'font-family': 'var(--font-mono)' });
+    for (const t of gy.ticks) {
+      labels.appendChild(Object.assign(
+        el('text', { x: M.l - 8, y: sy(t) + 3.5, 'text-anchor': 'end' }),
+        { textContent: tickLabel(t, gy.step) }));
+    }
+    svg.appendChild(labels);
 
-  const labels = el('g', { fill: 'var(--ink-3)', 'font-size': 11,
-                           'font-family': 'var(--font-mono)' });
-  for (const t of gy.ticks) {
-    labels.appendChild(Object.assign(
-      el('text', { x: M.l - 8, y: sy(t) + 3.5, 'text-anchor': 'end' }),
-      { textContent: tickLabel(t, gy.step) }));
+    if (yLabel) {
+      svg.appendChild(Object.assign(
+        el('text', { x: 13, y: M.t + ih / 2, 'text-anchor': 'middle',
+                     fill: 'var(--ink-2)', 'font-size': 12,
+                     'font-family': 'var(--font)',
+                     transform: `rotate(-90 13 ${M.t + ih / 2})` }),
+        { textContent: yLabel }));
+    }
   }
-  svg.appendChild(labels);
 
-  if (yLabel) {
-    svg.appendChild(Object.assign(
-      el('text', { x: 13, y: M.t + ih / 2, 'text-anchor': 'middle',
-                   fill: 'var(--ink-2)', 'font-size': 12,
-                   'font-family': 'var(--font)',
-                   transform: `rotate(-90 13 ${M.t + ih / 2})` }),
-      { textContent: yLabel }));
-  }
+  draw();
 
   host.appendChild(svg);
 
@@ -637,5 +731,12 @@ export function barChart({ groups = [], seriesLabels = [], yLabel = '', unit = '
   hint.textContent = '深色 = 其中可信的比例';
   legend.appendChild(hint);
   host.appendChild(legend);
+
+  let sizeRaf = 0;
+  trackWidth(host, (w) => {
+    W = w;
+    if (sizeRaf) return;
+    sizeRaf = requestAnimationFrame(() => { sizeRaf = 0; draw(); });
+  });
   return host;
 }

@@ -226,7 +226,10 @@ class Panel:
     x_label: str = "时间 (s)"
     info: str = ""                     # glossary.js 里的术语 id，会变成标题旁的 ⓘ
     caption: str = ""
-    height: int = 300
+    # 图有多高，单位是**真实像素**。
+    # （chart.js 的 viewBox 现在跟着容器宽度走，写多少就渲染多少；
+    #   以前写 300 实际只有 209px，被缩放吞掉了三成。）
+    height: int = 250
     # 占几列。0 = 跟着模块的 columns 走；1 = 独占一整行（报告这种整幅宽的用）
     span: int = 0
 

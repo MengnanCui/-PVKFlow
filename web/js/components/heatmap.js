@@ -5,7 +5,7 @@
 // 这样文字清晰、跟随明暗主题、缩放不糊。
 
 import { h, mount } from '../ui.js';
-import { niceTicks, tickLabel, svgEl as el } from '../chart.js';
+import { niceTicks, tickCount, tickLabel, svgEl as el, trackWidth } from '../chart.js';
 
 /**
  * heatmap({src, xMin, xMax, yMin, yMax, xLabel, yLabel, height, ...})
@@ -20,7 +20,10 @@ export function heatmap(opts) {
   let state = { loading: true, error: null, hover: null };
 
   const M = { t: 10, r: 96, b: 40, l: 62 };   // 右边留给色标条 + 数值 + 说明
-  const W = 900;
+  // ★ 和 chart.js 同一条规矩：绘图坐标系 = CSS 像素。
+  // 以前写死 900，而容器只有 530px 宽 —— 0.59 倍缩放，11px 的刻度
+  // 实际渲染成 6.5px，是全平台最小的字。
+  let W = opts.width || 900;
   const uid = ++hmUid;
 
   // ── 常驻结构。**位图节点绝不能跟着指针重建。**
@@ -73,8 +76,8 @@ export function heatmap(opts) {
                                         fill: 'none', stroke: 'var(--ink-3)', 'stroke-width': 2 }));
 
     // --- 坐标轴。刻度朝内，2px —— 和 matplotlib 规范一致 ---
-    const gx = niceTicks(props.xMin, props.xMax, 6);
-    const gy = niceTicks(props.yMin, props.yMax, 5);
+    const gx = niceTicks(props.xMin, props.xMax, tickCount(iw, 130));
+    const gy = niceTicks(props.yMin, props.yMax, tickCount(ih, 60, 5, 8));
 
     const axis = el('g', { stroke: 'var(--ink-3)', 'stroke-width': 2 });
     const labels = el('g', { fill: 'var(--ink-3)', 'font-size': 11,
@@ -243,6 +246,15 @@ export function heatmap(opts) {
   };
 
   loadImage();
+
+  // 进文档之后量真实宽度重画。只重画骨架，浮层跟着走一遍就够。
+  let sizeRaf = 0;
+  trackWidth(host, (w) => {
+    W = w;
+    if (sizeRaf) return;
+    sizeRaf = requestAnimationFrame(() => { sizeRaf = 0; drawStructure(); drawOverlay(); });
+  }, opts.width || 0);
+
   return host;
 }
 
