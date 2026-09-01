@@ -163,6 +163,22 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品' 
   }
 
   /**
+   * 这一格第一次画出来时淡入一下，之后再也不淡。
+   *
+   * 拖控件时每一帧都会走 draw()，那条路上一帧都不能多花 ——
+   * 而且拖着拖着曲线一直在闪烁地淡入，那不是精致，是烦人。
+   */
+  function firstPaint(host) {
+    if (!host || host.__drawn) return;
+    host.__drawn = true;
+    host.classList.add('enter');
+    // 跑完就把类摘掉。留着的话每一格身上会一直挂着一个已完成的动画对象，
+    // 「拖动时有没有动画在跑」这种检查就再也问不清楚了。
+    host.addEventListener('animationend', () => host.classList.remove('enter'),
+                          { once: true });
+  }
+
+  /**
    * 画一格。三种 kind 各走各的，但**图注、提示块、stats 是共用的** ——
    * 那些是「这一格在说什么」，跟画的是曲线还是位图无关。
    */
@@ -170,6 +186,7 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品' 
     const host = hosts[panel.id];
     if (!host) return;
 
+    firstPaint(host);
     if (panel.kind === 'text') return drawText(host, panel, d);
     if (panel.kind === 'heatmap') return drawHeatmap(host, panel, d);
 

@@ -23,6 +23,15 @@ h3 { font-size: var(--t-md); }
 h4 { font-size: var(--t-base); }
 p  { margin: 0; }
 
+/* 断行更讲究一点：浏览器会多看几行，尽量不在括号、数字这些
+   本该连着的地方断开。实测存储页那句「原图不动（0 个）。」——
+   以前断成「…（0」/「个）。」，现在整个括号一起挪到下一行。
+   它**不能**消掉所有孤字行（「记录。」这种还是单独一行，那是 CJK
+   断行本来就允许的），但至少不再把一个词劈成两半。
+   不支持的浏览器自动退回普通断行，没有代价。 */
+p, .field-help, .section-note, .topbar-desc, .fn-tab-desc,
+.chart-caption, .empty-text, .notice { text-wrap: pretty; }
+
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
@@ -61,5 +70,13 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 .mt-4 { margin-top: var(--s4x); } .mt-6 { margin-top: var(--s6x); }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  /* 光把时长压到 .01ms 是不够的：spin / shimmer / ai-blink 三个是 infinite，
+     压时长只会让它们从「转」变成每秒上万次的高频闪 —— 对需要这个设置的人
+     来说比不处理更糟。iteration-count: 1 才是真的停下来。 */
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

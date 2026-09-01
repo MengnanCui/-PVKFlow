@@ -1,11 +1,23 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
 <title>HTE Studio</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232470a0'/><path d='M9 22V10h2.6v4.7h5.1V10h2.6v12h-2.6v-5H11.6v5H9z' fill='white'/></svg>" />
+<!-- 主题要在样式表生效之前就定下来，否则暗色用户会先看到一帧白屏。
+     放在这儿（内联、同步、在 CSS 之前）是唯一能做到这件事的位置。
+     app.js 里那份 applyTheme 逻辑一致，它负责后续的切换。 -->
+<script>
+  try {
+    var t = localStorage.getItem('hte.theme');
+    if (t !== 'light' && t !== 'dark') {
+      t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', t);
+  } catch (e) { document.documentElement.setAttribute('data-theme', 'light'); }
+</script>
 <link rel="stylesheet" href="/assets/css/tokens.css" />
 <link rel="stylesheet" href="/assets/css/base.css" />
 <link rel="stylesheet" href="/assets/css/layout.css" />

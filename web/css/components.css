@@ -57,10 +57,23 @@
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 .input::placeholder, .textarea::placeholder { color: var(--ink-4); }
-.input:focus, .select:focus, .textarea:focus {
+.input:focus-visible, .select:focus-visible, .textarea:focus-visible,
+.input:focus-within, .textarea:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-wash);
+}
+/* 鼠标点进输入框也该有个「在这儿」的记号，但比键盘焦点弱一档：
+   只加深边框，不亮环。环留给键盘走位 —— 那时候你确实需要一眼找到它。 */
+.input:focus, .select:focus { outline: none; border-color: var(--line-strong); }
+.input:disabled, .select:disabled, .textarea:disabled {
+  background: var(--surface-2); color: var(--ink-4); cursor: not-allowed;
+}
+.input[aria-invalid="true"], .textarea[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+.input[aria-invalid="true"]:focus-visible, .textarea[aria-invalid="true"]:focus-visible {
+  box-shadow: 0 0 0 3px var(--danger-wash);
 }
 .textarea { resize: vertical; min-height: 76px; line-height: 1.5; }
 .input.mono, .textarea.mono { font-family: var(--mono); }
@@ -137,7 +150,7 @@
 .table-wrap { overflow: auto; }
 table.data { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
 table.data th {
-  position: sticky; top: 0; z-index: 1;
+  position: sticky; top: 0; z-index: var(--z-sticky);
   background: var(--surface-2); color: var(--ink-3);
   font-weight: 500; text-align: left; white-space: nowrap;
   padding: 7px var(--s3x); border-bottom: 1px solid var(--line);
@@ -193,7 +206,7 @@ table.data tr:last-child td { border-bottom: 0; }
 
 /* ---------------------------------------------------------------- 浮层 */
 .toast-stack {
-  position: fixed; right: var(--s5x); bottom: var(--s5x); z-index: 90;
+  position: fixed; right: var(--s5x); bottom: var(--s5x); z-index: var(--z-toast);
   display: flex; flex-direction: column; gap: var(--s2x); max-width: 380px;
 }
 .toast {
@@ -213,8 +226,9 @@ table.data tr:last-child td { border-bottom: 0; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 
 .modal-backdrop {
-  position: fixed; inset: 0; z-index: 80;
-  background: rgb(20 20 22 / .34);
+  position: fixed; inset: 0; z-index: var(--z-modal);
+  /* 遮罩跟着主题走。写死一个浅灰在深色页面上等于没遮。 */
+  background: var(--scrim);
   display: grid; place-items: center; padding: var(--s6x);
   animation: fade var(--dur) var(--ease);
 }
@@ -259,7 +273,7 @@ table.data tr:last-child td { border-bottom: 0; }
 .drop-target { position: relative; }
 .drop-target.is-dragover::after {
   content: "松开即可导入（会复制进工作区）";
-  position: absolute; inset: 0; z-index: 5;
+  position: absolute; inset: 0; z-index: var(--z-sticky);
   display: grid; place-items: center;
   font-size: var(--t-sm); color: var(--accent);
   background: var(--accent-wash); border: 1.5px dashed var(--accent);
@@ -333,18 +347,39 @@ table.data tr:last-child td { border-bottom: 0; }
 .inline-field { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .input-sm, .select-sm { padding: 3px 7px; font-size: var(--t-xs); }
 .range { -webkit-appearance: none; appearance: none; width: 118px; height: 3px;
-         border-radius: 2px; background: var(--line-2); outline: none; }
+         border-radius: 2px; background: var(--line-2); outline: none;
+         transition: background var(--dur-fast) var(--ease); }
+.range:hover { background: var(--line-strong); }
+/* 滑块本体。hover 时长大 1px、按下时套一圈 accent-wash ——
+   这是「我抓住它了」唯一的视觉反馈，没有的话拖动全靠猜。 */
 .range::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
   width: 13px; height: 13px; border-radius: 50%;
   background: var(--accent-solid); border: 2px solid var(--paper); cursor: grab;
   box-shadow: 0 0 0 1px var(--line-2);
+  transition: box-shadow var(--dur-fast) var(--ease),
+              transform var(--dur-fast) var(--ease);
 }
-.range::-webkit-slider-thumb:active { cursor: grabbing; }
+.range:hover::-webkit-slider-thumb { transform: scale(1.12); }
+.range:active::-webkit-slider-thumb {
+  cursor: grabbing; transform: scale(1.12);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 5px var(--accent-wash);
+}
+.range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 5px var(--accent-wash);
+}
 .range::-moz-range-thumb {
   width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--paper);
   background: var(--accent-solid); cursor: grab; box-shadow: 0 0 0 1px var(--line-2);
+  transition: box-shadow var(--dur-fast) var(--ease),
+              transform var(--dur-fast) var(--ease);
 }
+.range:hover::-moz-range-thumb { transform: scale(1.12); }
+.range:active::-moz-range-thumb {
+  cursor: grabbing; transform: scale(1.12);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 5px var(--accent-wash);
+}
+.range:disabled { opacity: .5; cursor: not-allowed; }
 .band-control { display: flex; flex-direction: column; gap: 5px; }
 .band-sliders { display: flex; gap: var(--s2x); }
 .band-sliders .range { width: 100px; }
@@ -431,11 +466,15 @@ tr.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset
 .vlist-canvas { position: absolute; top: 0; left: 0; right: 0; will-change: transform; }
 .vrow { display: grid; align-items: center; gap: var(--s3x);
         padding: 0 var(--s3x); border-bottom: 1px solid var(--line);
-        grid-template-columns: 28px 1fr 84px 124px 1fr 78px 70px; cursor: pointer; }
+        /* 样品名和「光谱矩阵」那一列原来都是 1fr —— 于是一个 40 字的样品名
+           被截成「ZG0013_2026…Mod…」，而旁边「Data.csv」八个字符独占同样的宽度。
+           名字是你认样品的唯一凭据，该给它最多的地方。 */
+        grid-template-columns: 28px minmax(0, 3fr) 88px 132px minmax(0, 1fr) 78px 70px;
+        cursor: pointer; }
 .vrow:hover { background: var(--surface-2); }
 .vrow[aria-selected="true"] { background: var(--accent-wash);
                               box-shadow: inset 2px 0 0 var(--accent); }
-.vrow-head { position: sticky; top: 0; z-index: 2; background: var(--surface-2);
+.vrow-head { position: sticky; top: 0; z-index: var(--z-sticky); background: var(--surface-2);
              color: var(--ink-3); font-size: var(--t-xs); cursor: default;
              border-bottom: 1px solid var(--line); height: 34px; }
 .vrow-head:hover { background: var(--surface-2); }
@@ -484,7 +523,7 @@ tr.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset
 .ai-drawer.is-full {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--z-drawer);
   border-left: none;
 }
 /* 全屏时一行拉到 1600px 是没法读的，把消息区收进可读行长 */
@@ -497,7 +536,7 @@ tr.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset
   left: 0; top: 0; bottom: 0;
   width: 4px;
   cursor: col-resize;
-  z-index: 2;
+  z-index: var(--z-sticky);
 }
 .ai-grip::after { content: ''; position: absolute; inset: 0 -7px 0 0; }
 .ai-grip:hover { background: var(--accent-line); }
@@ -714,12 +753,16 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   padding: var(--s2x);
   max-height: 160px;
 }
+.ai-input:focus-visible {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);      /* 和 .input 用同一种焦点环 */
+}
 .ai-input:focus { outline: none; border-color: var(--accent); }
 
 /* ---------------------------------------------------------------- 菜单 */
 .ai-menu {
   position: fixed;
-  z-index: 70;
+  z-index: var(--z-dropdown);
   min-width: 170px;
   padding: 4px;
   background: var(--paper);
@@ -773,8 +816,13 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   vertical-align: baseline; flex: none;
   transition: color .12s, background .12s;
 }
-.info-dot:hover, .info-dot:focus-visible {
-  color: var(--accent); background: var(--surface-2); outline: none;
+.info-dot:hover { color: var(--accent); background: var(--surface-2); }
+/* 键盘焦点不能和 hover 长一样。以前这里 outline: none 把全局焦点环也关掉了，
+   剩下的只是一个和 hover 相同的换色 —— 用键盘走到这个 1em 的小圆点上时，
+   根本看不出焦点在哪。 */
+.info-dot:focus-visible {
+  color: var(--accent); background: var(--accent-wash);
+  outline: 2px solid var(--accent); outline-offset: 1px;
 }
 .with-info { display: inline-flex; align-items: baseline; gap: 0; }
 
@@ -785,19 +833,20 @@ body.is-resizing { cursor: col-resize; user-select: none; }
    定义，全屏弹窗把图盖住了就是逼你二选一。
    position:fixed + JS 定位：锚点在滚动容器里，纯 CSS 定位跟不住。 */
 .info-pop {
-  position: fixed; z-index: 70;
+  position: fixed; z-index: var(--z-popover);
   width: min(420px, 92vw);
   max-height: min(70vh, 560px);
   display: flex; flex-direction: column;
   background: var(--surface); color: var(--ink);
   border: 1px solid var(--line-strong, var(--line));
   border-radius: var(--r-lg);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .16), 0 2px 6px rgba(0, 0, 0, .08);
+  /* 用统一的那一档。以前这里自造了一份，还要靠下面一个
+     @media (prefers-color-scheme: dark) 去补深色 —— 而那个媒体查询看的是
+     **系统**主题：你手动切到暗色但系统是亮色时，浮层用的还是亮色阴影。 */
+  box-shadow: var(--shadow-3);
   overflow: hidden;
 }
-@media (prefers-color-scheme: dark) {
-  .info-pop { box-shadow: 0 10px 34px rgba(0, 0, 0, .55); }
-}
+
 .info-pop-head {
   display: flex; align-items: center; justify-content: space-between; gap: var(--s3x);
   padding: var(--s2x) var(--s2x) var(--s2x) var(--s4x);
@@ -862,6 +911,10 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   background: var(--surface); color: var(--ink);
   padding: 6px 10px; font: inherit; font-size: var(--t-sm); line-height: 1.5;
 }
+.info-input:focus-visible {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
 .info-input:focus { outline: none; border-color: var(--accent); }
 
 /* 对比页的时刻切片、配方面板用到的几个小工具类 */
@@ -890,3 +943,68 @@ body.is-resizing { cursor: col-resize; user-select: none; }
                 border: 1px solid var(--line); border-radius: var(--r-sm);
                 background: var(--surface); padding: 2px 6px; max-width: 190px; }
 .model-switch:hover { color: var(--ink); border-color: var(--line-strong); }
+
+/* ------------------------------------------------------------------ 补齐过渡
+ *
+ * 这些选择器本来都有 :hover 样式，但没有 transition —— 鼠标扫过去是硬跳。
+ * 十几个地方硬跳、十几个地方平滑，那种不一致比全都硬跳更明显。
+ *
+ * 用 --dur-fast（100ms）：原地变个底色不该慢慢来，慢了反而像卡住。
+ * 只过渡 background / color / border-color / opacity 这几样 —— 它们由合成器
+ * 处理，不触发重排。**虚拟列表的行也在这里面**，所以刻意不碰位移和尺寸。
+ */
+.suggestion,
+.ai-hint,
+.ai-histrow,
+.ai-menu-item,
+.ai-act,
+.ai-grip,
+.model-switch,
+.kind-option,
+.crumbs button,
+.facet-clear,
+.filter-chip,
+.filter-chip-x,
+.vrow,
+.list-thumb,
+table.data tbody tr td,
+tr.is-clickable {
+  transition: background var(--dur-fast) var(--ease),
+              color var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+
+/* ------------------------------------------------------------------ 进场
+ *
+ * 一条动画，一个类，全平台就这一种进场方式 —— 图、面板、页面、结果列表
+ * 都是它。多几种「各有特色」的进场，界面就散了。
+ *
+ * 3px 的位移是刻意压到几乎看不见的：你应该觉得东西「到位了」，
+ * 而不是看见它在动。数据工具里，看得见的动画就是在浪费你的时间。
+ *
+ * ★ 只在**第一次出现**时加这个类。拖控件重画不加 —— 拖动路径上一帧都不能多花。
+ */
+@keyframes enter {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: none; }
+}
+/* backwards 而不是 both：动画跑完就还给元素本来的样式，不留一个
+   fill 住的终态挂在那儿（那会让每一格永远带着一个已完成的动画对象
+   和一条 transform，白占着合成层）。 */
+.enter { animation: enter var(--dur) var(--ease-out) backwards; }
+
+/* 页面切换。display:none ↔ block 本身没法过渡，所以让新页跑一遍进场。
+   滚动重置和 scroll-spy 都不受影响 —— 它们看的是 display，不是动画。 */
+.page.is-active { animation: enter var(--dur) var(--ease-out) backwards; }
+
+/* AI 抽屉：**宽度不做过渡。**
+ *
+ * 试过了，实测：抽屉是 .shell 网格的第三列，动它的宽度等于主区每帧重排，
+ * 里面所有图跟着重新布局。112 帧里有 22 帧超过 20 ms（不加过渡只有 2 帧），
+ * p95 从 17 ms 涨到 27 ms，最差一帧 63 ms。为一个开合动画让整个主区卡一下，
+ * 这笔买卖不划算。
+ *
+ * 所以宽度瞬时到位 —— 读起来反而是干脆 —— 只让内容淡进来。
+ */
+@keyframes fade-in { from { opacity: 0; } }
+.ai-drawer:not([hidden]) { animation: fade-in var(--dur) var(--ease-out) backwards; }

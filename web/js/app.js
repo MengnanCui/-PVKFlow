@@ -35,11 +35,9 @@ function applyTheme(mode) {
   document.documentElement.setAttribute('data-theme', mode);
   try { localStorage.setItem(THEME_KEY, mode); } catch { /* 隐私模式下会抛，忽略 */ }
 }
-(function initTheme() {
-  let saved = null;
-  try { saved = localStorage.getItem(THEME_KEY); } catch { /* 同上 */ }
-  applyTheme(saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-})();
+// 首屏的主题由 index.html 里那段内联脚本定（必须在样式表之前，否则闪一帧）。
+// 这里不再重复设一遍，**也不再在首次访问时就把值写进 localStorage** ——
+// 写了的话系统主题以后再变，界面就不跟了。只有你自己点了切换才记住。
 $('#themeToggle').addEventListener('click', () => {
   applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
 });

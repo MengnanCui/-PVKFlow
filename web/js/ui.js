@@ -173,7 +173,10 @@ export async function render(host, loader, view) {
   mount(host, skeletonRows(4));
   try {
     const data = await loader();
-    mount(host, view(data));
+    // 骨架屏（四根灰条）换成整页内容，跳变很大 —— 让内容淡入进来，
+    // 眼睛就有个「换了」的交代，不是凭空闪一下。
+    const body = h('div.enter', view(data));
+    mount(host, body);
     return data;
   } catch (err) {
     mount(host, errorBox(err, () => render(host, loader, view)));
