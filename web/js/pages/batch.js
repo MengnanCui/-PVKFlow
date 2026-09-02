@@ -10,6 +10,7 @@ import {
   fmtInt, fmtNum, fmtTime, modal, sampleLabel,
 } from '../ui.js';
 import { xyChart, quantileBand, seriesColor, barChart } from '../chart.js';
+import { figure, numberControl } from '../components/figure.js';
 
 export const meta = {
   id: 'batch',
@@ -21,13 +22,26 @@ export const meta = {
 // 超过这么多条就降级成分位数带。可以手动切回去。
 const SPAGHETTI_LIMIT = 60;
 
-// 时刻切片的默认窗口。你举的两个例子：「1s 内」= 0–1 s，「28s」= 27.5–28.5 s。
-// 超出样品时间范围的窗口不会被悄悄丢掉 —— 它会显示「超出范围」，
-// 而「这批数据根本没测到 28 秒」本身就是你需要知道的信息。
-const DEFAULT_WINDOWS = [[0, 1], [27.5, 28.5]];
+// 第一张膜厚图固定看「刚开始那一秒」。这是每次都要看的那一格，不给控件。
+const WIN_HEAD = [0, 1];
+
+// 第二张图的窗口宽度。一秒是一个自然的读数单位，也和第一张对得起来。
+const WIN_SPAN = 1;
+
+// 第二张图默认落在**倒数第三秒**。
+//
+// 上一版把它写死成 27.5–28.5 s，而这批数据只测到 21.082 s ——
+// 一打开就是一根空柱加一行「3 个样品在这个窗口里都没有数据」。
+// 默认值不该是猜的：先看这批数据实际测到哪儿，再往回数三秒。
+const TAIL_BACK = 3;
 
 // 柱状图超过这么多个样品就没法读了，换成排序表格。照旧：降级要说出来。
 const BAR_LIMIT = 24;
+
+// 按批次着色时，同一批次的几片样品**必然同色** —— 颜色这个维度已经被批次
+// 用掉了。线型是第二个维度，把同批次内的样品分开。
+// 没有它，三条曲线两个批次时图上就是「两条一模一样的线」，这正是你看到的。
+const DASHES = [null, '7 3', '2 3', '9 3 2 3'];
 
 const S = {
   runId: null, taskId: null, detail: null, error: null,
@@ -36,7 +50,9 @@ const S = {
   curves: { integral: null, slope: null, ot: null },
   mode: 'auto', groupBy: 'batch',
   // 时刻切片：窗口是**查询参数**，改一下不用重跑（膜厚曲线整条都存着了）
-  windows: DEFAULT_WINDOWS.map((w) => [...w]),
+  win2: null,            // 第二张图的窗口。要先知道数据测到哪儿才定得下来
+  win2Resolved: false,   // 已经按实际时间范围定过一次默认值了
+  tMax: null,            // 这批数据里最晚的一帧
   slices: null, sliceErr: null, sliceBusy: false,
 };
 
@@ -53,7 +69,7 @@ export async function view(host, ctx) {
   S.detail = S.error = null;
   S.curves = { integral: null, slope: null, ot: null };
   S.slices = S.sliceErr = null;
-  S.windows = DEFAULT_WINDOWS.map((w) => [...w]);
+  S.win2 = null; S.win2Resolved = false; S.tMax = null;
   S.pins = [];
   refs = { host, nav: ctx.nav };
 
@@ -277,14 +293,45 @@ async function loadSlices() {
   S.sliceBusy = true;
   S.sliceErr = null;
   drawSlices();
+  const wins = S.win2 ? [WIN_HEAD, S.win2] : [WIN_HEAD];
   try {
-    S.slices = await api.batchSlices(S.runId, S.windows);
+    S.slices = await api.batchSlices(S.runId, wins);
+    S.tMax = maxT(S.slices.rows);
+    // 第二张图的默认时刻要等这一步 —— 只有拿到数据才知道它测到哪儿。
+    // 所以首屏是两次请求：第一张图先出来，第二张图紧接着补上。
+    if (!S.win2Resolved) {
+      S.win2Resolved = true;
+      const w = tailWindow(S.tMax);
+      if (w) { S.win2 = w; return loadSlices(); }
+    }
   } catch (err) {
     S.sliceErr = err;
     S.slices = null;
   }
   S.sliceBusy = false;
   drawSlices();
+}
+
+const maxT = (rows) => {
+  const ts = (rows || []).map((r) => r.t_max).filter(Number.isFinite);
+  return ts.length ? Math.max(...ts) : null;
+};
+
+const r3 = (v) => Math.round(v * 1000) / 1000;
+
+/**
+ * 倒数第三秒的那一秒窗口。t_max = 21.082 → 最后一整秒是 20–21 s，
+ * 往前数第三个就是 18–19 s。
+ *
+ * 数据不到四秒时退到「最后一秒」—— 硬套倒数第三会掉到负数上去，
+ * 那就又变成一根空柱了。
+ */
+function tailWindow(tmax) {
+  if (!Number.isFinite(tmax) || tmax <= 0) return null;
+  const lo = Math.floor(tmax) - TAIL_BACK;
+  if (lo > 0 && lo + WIN_SPAN <= tmax) return [lo, lo + WIN_SPAN];
+  const a = r3(Math.max(0, tmax - WIN_SPAN));
+  return a < tmax ? [a, r3(tmax)] : null;
 }
 
 const fmtWin = ([a, b]) => (a === b ? `${a} s` : `${a}–${b} s`);
@@ -295,93 +342,141 @@ function drawSlices() {
 
   const head = h('div.section-head',
     h('div.section-title', '不同时刻的平均膜厚'),
-    h('span.xsmall.dim', '加减时间窗不用重跑'));
+    h('span.xsmall.dim', '换时刻不用重跑'));
 
   if (S.sliceErr) {
     mount(host, head, errorBox(S.sliceErr, loadSlices));
     return;
   }
-
-  mount(host, head, windowEditor(),
-    S.sliceBusy && !S.slices ? skeletonRows(3)
-      : S.slices ? sliceBody(S.slices) : null);
+  if (!S.slices) {
+    mount(host, head, skeletonRows(3));
+    return;
+  }
+  mount(host, head, sliceBody(S.slices));
 }
 
-/** 时间窗编辑器。每个窗两个数字框，能加能删。 */
-function windowEditor() {
-  const row = ([lo, hi], i) => h('div.row.gap-1.items-center',
-    h('input.input.input-sm', {
-      type: 'number', step: 'any', value: lo, style: { width: '68px' },
-      onchange: (e) => { S.windows[i][0] = Number(e.target.value); loadSlices(); },
-    }),
-    h('span.small.dim', '–'),
-    h('input.input.input-sm', {
-      type: 'number', step: 'any', value: hi, style: { width: '68px' },
-      onchange: (e) => { S.windows[i][1] = Number(e.target.value); loadSlices(); },
-    }),
-    h('span.small.dim', 's'),
-    S.windows.length > 1
-      ? h('button.btn.btn-ghost.btn-xs', {
-          title: '删掉这个时间窗',
-          onclick: () => { S.windows.splice(i, 1); loadSlices(); },
-        }, '✕')
-      : null);
-
-  return h('div.figure-ctl', { style: { display: 'block' } },
-    h('div.row.gap-4.wrap.items-center',
-      h('span.small.muted', '时间窗'),
-      ...S.windows.map(row),
-      h('button.btn.btn-sm', {
-        disabled: S.windows.length >= 12,
-        onclick: () => {
-          // 新窗口接着最后一个往后排，省得每次都要从头改两个数
-          const last = S.windows[S.windows.length - 1] || [0, 1];
-          const span = Math.max(1, last[1] - last[0]);
-          S.windows.push([last[1], last[1] + span]);
-          loadSlices();
-        },
-      }, '+ 加一个时刻'),
-      S.sliceBusy ? h('span.xsmall.dim', '算…') : null));
-}
-
+/**
+ * 两张图，不是一张。
+ *
+ * 「1 秒内」和「快干完时」问的是两件事：一个是刚铺上去的膜有多厚，
+ * 一个是它干到最后剩多少。挤在同一张图里，同一根样品的两根柱子并排，
+ * 你要在两个量级之间来回跳着读 —— 而它们本来就该各自有一条基线。
+ */
 function sliceBody(d) {
-  const labels = d.windows.map((w) => fmtWin([w.from, w.to]));
   const n = d.rows.length;
+  // 柱子下面只写样品名。所有样品同批次时，标签里那截重复的 `ZG0013/` 前缀
+  // 每根柱子写一遍，占掉的横向空间正是「名字被截断」的原因。
+  const names = shortLabels(d.rows.map((r) => r.label));
 
-  // 每个窗口里「有几个样品根本没数据」—— 这句必须显眼。
-  // 你的数据只测到 21 秒，问 28 秒时整列是空的，而那正是要告诉你的事。
-  const missing = d.windows.map((_, si) =>
-    d.rows.filter((r) => r.values[si]?.mean === null).length);
+  return h('div',
+    h('div.fig-grid-2',
+      sliceFigure(d, 0, '刚铺上去（0–1 s）', null, names),
+      d.windows.length > 1
+        ? sliceFigure(d, 1, `快干完时（${fmtWin([d.windows[1].from, d.windows[1].to])}）`,
+                      timeControl(), names)
+        : figure('快干完时', {
+            body: h('div.notice',
+              h('div.grow', h('div.small',
+                S.tMax === null ? '这批数据里没有膜厚曲线，定不出第二个时刻。'
+                                : '正在按这批数据的实际时间范围定第二个时刻…'))) })),
+    sliceTable(d, d.windows.map((w) => fmtWin([w.from, w.to]))));
+}
 
-  const chart = n <= BAR_LIMIT
+/** 一张时刻图。标题 / 控件 / 图 三行结构和样品页共用同一份版式。 */
+function sliceFigure(d, si, title, ctl, names) {
+  const n = d.rows.length;
+  const missing = d.rows.filter((r) => r.values[si]?.mean === null).length;
+  const win = fmtWin([d.windows[si].from, d.windows[si].to]);
+
+  const body = n <= BAR_LIMIT
     ? barChart({
-        groups: d.rows.map((r) => ({
-          label: r.label,
-          values: r.values.map((v) => ({
-            value: v.mean, ratio: v.ok_ratio, note: v.note,
-            n_frames: v.n_frames, n_ok: v.n_ok })),
+        groups: d.rows.map((r, i) => ({
+          label: names[i],
+          values: [{
+            value: r.values[si]?.mean ?? null, ratio: r.values[si]?.ok_ratio,
+            note: r.values[si]?.note, n_frames: r.values[si]?.n_frames,
+            n_ok: r.values[si]?.n_ok,
+          }],
         })),
-        seriesLabels: labels,
+        seriesLabels: [win],
         yLabel: '平均光学厚度 (nm)', unit: 'nm',
-      }, { height: 300 })
+        // 两张图各用一个颜色 —— 同色的话，扫一眼很容易把两张当成同一张的两半
+        colorFrom: si,
+      }, { height: 250 })
     : h('div.notice',
         h('div.grow',
           h('div.small', `${fmtInt(n)} 个样品，柱状图挤不下（超过 ${BAR_LIMIT} 个就没法读了）`),
           h('p.xsmall.dim.mt-2', '下面的表格按第一个时间窗排序，一样能比。')));
 
-  return h('div',
-    chart,
+  const note = h('div',
     h('div.chart-caption',
-      `${fmtInt(n)} 个样品 × ${d.windows.length} 个时间窗　窗口内`,
-      h('span.strong', '全部帧'),
-      '都参与平均，深色那截是其中可信的比例',
-      infoDot('ot_status')),
-    ...missing.map((m, si) => (m
+      `${fmtInt(n)} 个样品　窗口内`, h('span.strong', '全部帧'),
+      '都参与平均，深色那截是其中可信的比例', infoDot('ot_status')),
+    missing
       ? h('div.chart-caption.dim',
-          `${labels[si]}：${fmtInt(m)} 个样品在这个窗口里没有数据`,
-          m === n ? '（整批都没测到这个时刻 —— 不是算不出来，是数据里就没有）' : '')
-      : null)),
-    sliceTable(d, labels));
+          `${fmtInt(missing)} 个样品在这个窗口里没有数据`,
+          missing === n ? '（整批都没测到这个时刻 —— 不是算不出来，是数据里就没有）' : '')
+      : null);
+
+  return figure(title, { ctl, body, note });
+}
+
+/**
+ * 第二张图的时刻控件。
+ *
+ * 上界卡在 `t_max - 1 s`：**滑到头也出不了数据范围**。上一版把窗口写死在
+ * 28 s、而数据只到 21 s，就是因为这个数没有任何东西管着它。
+ * 拖动时只动滑块，松手才打后端 —— 否则拖一次发几十个请求，
+ * 而且每个响应回来都会把正在拖的那根滑块换掉。
+ */
+function timeControl() {
+  if (!Number.isFinite(S.tMax) || S.tMax <= WIN_SPAN) return null;
+  const max = r3(S.tMax - WIN_SPAN);
+  const readout = h('span.xsmall.dim', fmtWin(S.win2));
+  let pending = S.win2[0];
+  return [
+    numberControl('时刻起点', S.win2[0], 0, max, 0.5,
+      (v) => { pending = v; readout.textContent = fmtWin([v, r3(v + WIN_SPAN)]); },
+      (v) => { S.win2 = [v, r3(v + WIN_SPAN)]; pending = v; loadSlices(); }),
+    h('span.row.gap-2.items-center',
+      readout,
+      h('span.xsmall.dim', `窗宽 ${WIN_SPAN} s · 这批数据测到 ${fmtNum(S.tMax, 2)} s`)),
+  ];
+}
+
+/**
+ * 把柱子下面的名字压到「真正区分这几个样品的那截」。
+ *
+ * 原样是 `ZG0013/ZG0013_2026072918354709_Mode5_202607291932_SPS100` —— 58 个字符，
+ * 其中 `ZG0013/` 在同一个标签里就重复了一遍，`_SPS100` 三个样品全都一样。
+ * 这些字符不区分任何东西，只是把要读的那截挤出画面（上一版就是这么被截断的）。
+ *
+ * 两刀都只在**能证明是冗余**的地方下：
+ *   1. `批次/样品名` 里样品名本身就以批次开头 → 去掉前面那个 `批次/`
+ *   2. 所有标签共有的结尾段（按 `_` 切）→ 一起去掉，至少留一段
+ * 去完要是撞了名（本来就同名），就退回原样 —— 宁可长，不能指错样品。
+ */
+function shortLabels(labels) {
+  const raw = labels.map((l) => String(l));
+  if (raw.length < 2) return raw;
+
+  let out = raw.map((l) => {
+    const i = l.indexOf('/');
+    if (i < 0) return l;
+    const [batch, name] = [l.slice(0, i), l.slice(i + 1)];
+    return name.startsWith(batch) ? name : l;
+  });
+
+  // 共有的结尾段。`_SPS100` 每根柱子写一遍，它不告诉你任何事。
+  const parts = out.map((l) => l.split('_'));
+  let tail = 0;
+  while (parts.every((p) => p.length > tail + 1)
+         && new Set(parts.map((p) => p[p.length - 1 - tail])).size === 1) {
+    tail++;
+  }
+  if (tail) out = parts.map((p) => p.slice(0, p.length - tail).join('_'));
+
+  return new Set(out).size === raw.length ? out : raw;
 }
 
 function sliceTable(d, labels) {
@@ -453,7 +548,7 @@ function drawChart() {
              ['band', '强制分位数带']],
             (v) => { S.mode = v; drawChart(); }),
           infoDot('quantile_band')),
-        select('着色', S.groupBy, [['batch', '按样品号'], ['none', '逐条']],
+        select('着色', S.groupBy, [['batch', '按批次'], ['none', '逐条']],
           (v) => { S.groupBy = v; drawChart(); }))),
     h('div.fig-grid-2',
       curveFigure('ot', '光学厚度 vs 时间'),
@@ -505,11 +600,12 @@ function paintCurve(col, data) {
   } else {
     chart = xyChart({
       x_label: '时间 (s)', y_label: Y_LABEL[col],
-      series: all.map((s) => ({ ...s, style: 'line',
-        group: S.groupBy === 'batch' ? s.group : undefined })),
+      series: styled(all),
     }, { height: 300 });
     caption = `${fmtInt(n)} 条曲线`
-      + (S.groupBy === 'batch' ? '，按样品号着色（最多 12 组）' : '');
+      + (S.groupBy === 'batch'
+          ? `，颜色分批次（${fmtInt(batchCount(all))} 个），同批次内按线型分样品`
+          : '，逐条一色');
   }
 
   if (data.truncated) {
@@ -518,6 +614,26 @@ function paintCurve(col, data) {
   }
   return h('div', chart, h('div.chart-caption', caption));
 }
+
+/**
+ * 给每条曲线定颜色维度和线型维度。
+ *
+ * 按批次着色时，`group` 交给 chart.js 去分配颜色（它对齐 matplotlib 的 12 色），
+ * 线型在这里按「同批次内第几条」分配。两个维度合起来才能让 ZG0014 的两片样品
+ * 在图上分得开 —— 只给颜色的话它俩是同一条线。
+ */
+function styled(series) {
+  const seen = new Map();
+  return series.map((s) => {
+    if (S.groupBy !== 'batch') return { ...s, style: 'line', group: undefined, dash: null };
+    const g = s.group || '';
+    const n = seen.get(g) || 0;
+    seen.set(g, n + 1);
+    return { ...s, style: 'line', group: s.group, dash: DASHES[n % DASHES.length] };
+  });
+}
+
+const batchCount = (series) => new Set(series.map((s) => s.group || '')).size;
 
 const Y_LABEL = { integral: '积分强度 (a.u.·nm)', slope: 'dI/dλ (a.u./nm)',
                   ot: '光学厚度 OT = n·d·cosθ (nm)' };
@@ -635,6 +751,11 @@ function exportDialog(col) {
         '当前导出：', h('span.mono', `${Y_LABEL[col]} · `
           + (mode === 'band' ? '分位数带' : '叠图')
           + ` · 按${S.groupBy === 'batch' ? '批次' : '逐条'}着色`),
+        S.groupBy === 'batch'
+          ? h('div.xsmall.dim.mt-1',
+              '导出脚本按批次分色，同批次内按 matplotlib 规范的线型循环区分样品 —— '
+              + '和屏幕上这张一致。')
+          : null,
         mode === 'band' && S.mode === 'auto'
           ? '（跟图上一样，因为曲线超过阈值已经降级）' : null)),
     foot: [

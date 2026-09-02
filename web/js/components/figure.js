@@ -43,7 +43,15 @@ export function selectControl(label, value, options, onChange) {
       ...options.map(([v, t]) => h('option', { value: v, selected: v === value }, t))));
 }
 
-export function numberControl(label, value, min, max, step, onChange) {
+/**
+ * 一个数字 + 一根滑块。
+ *
+ * `onCommit` 和 bandControl 里那对是同一个约定：拖动过程中连续触发 onChange
+ * （前端算得起的事跟着走），松手/失焦才触发 onCommit（要打后端的等这一下）。
+ * 不分开的话，拖一次滑块会发几十个请求，而且每个响应回来都重建一次界面 ——
+ * 正在拖的那根滑块被换掉，拖动当场断掉。
+ */
+export function numberControl(label, value, min, max, step, onChange, onCommit = null) {
   // 边界取整。`<input type=range>` 的合法值是 **min + n×step**：光谱仪给的
   // lambda_min 是 330.276、step 是 1，于是 950 被吸附成 950.276 —— 数字框
   // 写 950、滑块停在 950.276，一碰就跳。和 bandControl 里是同一个坑。
@@ -67,6 +75,11 @@ export function numberControl(label, value, min, max, step, onChange) {
   };
   num.oninput = (e) => push(e.target.value);
   range.oninput = (e) => push(e.target.value);       // 拖动时连续触发 —— 这才叫实时
+  if (onCommit) {
+    // range 的 change 在**松手时**才触发，正是「这一下要打后端」的时机
+    num.onchange = () => onCommit(Number(num.value));
+    range.onchange = () => onCommit(Number(range.value));
+  }
   return h('label.inline-field', h('span.small.muted', label), num, range);
 }
 

@@ -255,6 +255,9 @@ export function xyChart(spec, { height = 300, onSelect = null, width = 0 } = {})
       const color = s.color
         || (s.group ? seriesColor(groupIndex.get(s.group) + shift)
                     : seriesColor(i + shift));
+      // 线型是第二个维度。同一批次的几片样品颜色必然相同（颜色分组用掉了），
+      // 只有线型能把它们分开 —— 没有它，图上就是几条一模一样的线。
+      const dash = s.dash || null;
       const pts = [];
       let d = '', pen = false;
       for (let k = 0; k < s.x.length; k++) {
@@ -268,7 +271,11 @@ export function xyChart(spec, { height = 300, onSelect = null, width = 0 } = {})
       if (s.style !== 'scatter' && d) {
         structRoot.appendChild(el('path', {
           d, fill: 'none', stroke: color, 'stroke-width': 2,
-          'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          // 虚线要用平头端点：round 会把每一段的两头各撑出 1px，
+          // `2 3` 这种细虚线会被撑成一条实线。
+          'stroke-linecap': dash ? 'butt' : 'round',
+          'stroke-dasharray': dash,
           'clip-path': clipRef,
         }));
       }
@@ -283,6 +290,7 @@ export function xyChart(spec, { height = 300, onSelect = null, width = 0 } = {})
       }
       s._pts = pts;
       s._color = color;        // 悬停读数要用同一个颜色，别再算一遍
+      s._dash = dash;
     }
 
     // 坐标轴：2px、刻度朝内 —— 对齐 matplotlib 规范
@@ -377,7 +385,15 @@ export function xyChart(spec, { height = 300, onSelect = null, width = 0 } = {})
                      'font-family': 'var(--font)' }),
         { textContent: `${spec.x_label || 'x'} = ${fmtT(state.hover.x)}` }));
       shown.forEach((it, i) => {
-        g.appendChild(el('rect', { x: bx + 8, y: by + 22 + i * 14, width: 8, height: 2.5, fill: it.color }));
+        // 同色不同线型的两条曲线，读数框里也得分得出来 —— 画成一小段线而不是
+        // 实心块，线型才带得上。
+        g.appendChild(el('line', {
+          x1: bx + 8, x2: bx + 17,
+          y1: by + 23 + i * 14, y2: by + 23 + i * 14,
+          stroke: it.color, 'stroke-width': 2.5,
+          'stroke-linecap': it.dash ? 'butt' : 'round',
+          'stroke-dasharray': it.dash,
+        }));
         g.appendChild(Object.assign(
           el('text', { x: bx + 20, y: by + 26 + i * 14, 'font-size': 11, fill: 'var(--ink)',
                        'font-family': 'var(--font)', 'font-variant-numeric': 'tabular-nums' }),
@@ -441,7 +457,8 @@ export function xyChart(spec, { height = 300, onSelect = null, width = 0 } = {})
       }
       if (best && bd < 40) {
         items.push({ label: s.label, px: best[0], py: best[1], y: best[3],
-                     color: s._color || s.color || seriesColor(i + shift) });
+                     color: s._color || s.color || seriesColor(i + shift),
+                     dash: s._dash || s.dash || null });
         hoverX = best[2];
       }
     }
@@ -493,17 +510,24 @@ export function xyChart(spec, { height = 300, onSelect = null, width = 0 } = {})
   }, width);
 
   const groups = [...new Set(series.map((s) => s.group).filter(Boolean))];
-  if (groups.length > 1 || (series.length > 1 && series.length <= 14 && !groups.length)) {
+  // ★ 有分组时也要列到**序列级**。
+  //
+  // 以前只列组名 —— 可颜色是按组分的，同一组里的几条本来就同色，
+  // 图例上只有一行「ZG0014」，图上却有两条线，你没法说出哪条是哪片样品。
+  // 现在颜色分组、线型分序列（调用方给 s.dash），图例把两者一起画出来，
+  // 逐条对得上。条数多了图例本身会变成一堵墙，那时才退回组级。
+  const perSeries = series.length > 1 && series.length <= 14;
+  const items = perSeries
+    ? series.map((s, i) => [s.label, s._color || s.color || seriesColor(i + shift), s._dash || s.dash])
+    : groups.length > 1
+      ? groups.map((g, i) => [g, seriesColor(i + shift), null])
+      : null;
+  if (items) {
     const legend = document.createElement('div');
     legend.className = 'chart-legend';
-    const items = groups.length
-      ? groups.map((g, i) => [g, seriesColor(i + shift)])
-      : series.map((s, i) => [s.label, s.color || seriesColor(i + shift)]);
-    for (const [label, color] of items) {
+    for (const [label, color, dash] of items) {
       const span = document.createElement('span');
-      const swatch = document.createElement('i');
-      swatch.style.background = color;
-      span.append(swatch, document.createTextNode(label));
+      span.append(legendMark(color, dash), document.createTextNode(label));
       legend.appendChild(span);
     }
     host.appendChild(legend);
@@ -512,6 +536,48 @@ export function xyChart(spec, { height = 300, onSelect = null, width = 0 } = {})
   host.reset = () => { view = { xmin, xmax }; draw(); };
   host.toSVG = () => new XMLSerializer().serializeToString(svg);
   return host;
+}
+
+/**
+ * 图例前面那一小段线。
+ *
+ * 以前是 `<i>` 加个背景色 —— 一个实心小方块画不出虚线。改成一段 svg 线之后，
+ * 图例上的线型和图上的线型是同一套属性，对得上。
+ */
+export function legendMark(color, dash = null) {
+  const s = svgEl('svg', { class: 'legend-mark', width: 20, height: 10,
+                           viewBox: '0 0 20 10', 'aria-hidden': 'true' });
+  s.appendChild(svgEl('line', {
+    x1: 1, y1: 5, x2: 19, y2: 5, stroke: color, 'stroke-width': 2.5,
+    'stroke-linecap': dash ? 'butt' : 'round', 'stroke-dasharray': dash || null,
+  }));
+  return s;
+}
+
+/**
+ * 把一个标签折成最多 `maxLines` 行，每行不超过 `budget` 个字符。
+ *
+ * 优先在分隔符处断开：`ZG0013_2` 断成 `ZG0013` / `_2` 比从中间硬切好读得多。
+ * 实在放不下才在最后一行加省略号 —— 全名始终在 <title> 里。
+ */
+function wrapLabel(text, budget, maxLines = 2) {
+  const lines = [];
+  let rest = String(text);
+  while (rest && lines.length < maxLines) {
+    if (rest.length <= budget) { lines.push(rest); rest = ''; break; }
+    let cut = -1;
+    for (let i = Math.min(budget, rest.length - 1); i > budget * 0.4; i--) {
+      if ('_-/ .'.includes(rest[i])) { cut = i; break; }
+    }
+    if (cut < 0) cut = budget;
+    lines.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  if (rest && lines.length) {
+    const last = lines[lines.length - 1];
+    lines[lines.length - 1] = last.slice(0, Math.max(1, budget - 1)) + '…';
+  }
+  return lines.length ? lines : [''];
 }
 
 /**
@@ -589,7 +655,8 @@ export function quantileBand(series, { gridPoints = 240 } = {}) {
  *     一眼看得出这个数有多少是靠得住的
  * `seriesLabels`: 每根柱的名字（时间窗），进图例
  */
-export function barChart({ groups = [], seriesLabels = [], yLabel = '', unit = '' },
+export function barChart({ groups = [], seriesLabels = [], yLabel = '', unit = '',
+                           colorFrom = 0 },
                          { height = 320 } = {}) {
   const host = document.createElement('div');
   host.className = 'chart-host';
@@ -655,7 +722,7 @@ export function barChart({ groups = [], seriesLabels = [], yLabel = '', unit = '
         }
         const yTop = sy(v.value);
         const hAll = M.t + ih - yTop;
-        const color = seriesColor(si);
+        const color = seriesColor(si + colorFrom);
 
         // 整根：淡色 = 全部帧的均值
         const bar = el('rect', { x, y: yTop, width: bw, height: hAll,
@@ -674,15 +741,26 @@ export function barChart({ groups = [], seriesLabels = [], yLabel = '', unit = '
             + `其中 ${v.n_ok ?? 0} 帧可信（${Math.round(r * 100)}%）` }));
       });
 
-      // 组名。样品名很长，斜着放，放不下就截断（tooltip 里给全名）
+      // 组名。以前是斜排 + 一刀截断 —— 斜的字本来就难读，截断之后
+      // `ZG0013/ZG0013_2…` 和 `ZG0013/ZG0013_3…` 在图上长得一模一样，
+      // 而那正是你要分辨的两个样品。现在横排，放不下就换行，
+      // 只有窄到一行连四个字都放不下时才退回斜排。
       const label = String(g.label);
-      const short = label.length > 16 ? label.slice(0, 15) + '…' : label;
       const tx = M.l + gi * gw + gw / 2;
-      const txt = Object.assign(
-        el('text', { x: tx, y: M.t + ih + 14, 'text-anchor': 'end',
-                     fill: 'var(--ink-2)', 'font-size': 11,
-                     transform: `rotate(-28 ${tx} ${M.t + ih + 14})` }),
-        { textContent: short });
+      const ty = M.t + ih + 15;
+      const txt = el('text', { x: tx, y: ty, 'text-anchor': 'middle',
+                               fill: 'var(--ink-2)', 'font-size': 11 });
+      const budget = Math.max(1, Math.floor((gw - 4) / 6.2));   // 11px 字约 6.2px 宽
+      if (budget < 4) {
+        txt.setAttribute('text-anchor', 'end');
+        txt.setAttribute('transform', `rotate(-28 ${tx} ${ty})`);
+        txt.textContent = label.length > 16 ? label.slice(0, 15) + '…' : label;
+      } else {
+        wrapLabel(label, budget, 2).forEach((line, li) => {
+          txt.appendChild(Object.assign(
+            el('tspan', { x: tx, dy: li ? 13 : 0 }), { textContent: line }));
+        });
+      }
       txt.appendChild(Object.assign(el('title'), { textContent: label }));
       svg.appendChild(txt);
     });
@@ -722,8 +800,9 @@ export function barChart({ groups = [], seriesLabels = [], yLabel = '', unit = '
   legend.className = 'chart-legend';
   seriesLabels.forEach((name, i) => {
     const span = document.createElement('span');
-    span.innerHTML = `<i style="background:${seriesColor(i)}"></i>`;
-    span.appendChild(document.createTextNode(name));
+    const swatch = document.createElement('i');
+    swatch.style.background = seriesColor(i + colorFrom);
+    span.append(swatch, document.createTextNode(name));
     legend.appendChild(span);
   });
   const hint = document.createElement('span');

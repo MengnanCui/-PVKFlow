@@ -281,6 +281,8 @@ table.data tr:last-child td { border-bottom: 0; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: var(--s3x); margin-top: var(--s2x); }
 .chart-legend span { display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-xs); color: var(--ink-2); }
 .chart-legend i { width: 12px; height: 2.5px; border-radius: 2px; flex: none; }
+/* 图例里的线型标记。实心块画不出虚线，所以是一小段 svg 线。 */
+.chart-legend .legend-mark { flex: none; width: 20px; height: 10px; }
 
 .drop-target { position: relative; }
 .drop-target.is-dragover::after {
