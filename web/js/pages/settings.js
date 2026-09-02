@@ -348,18 +348,67 @@ function simpleForm(providers, presets) {
     h('label.field-label', label), node,
     help ? h('div.field-help', help) : null);
 
+  // ── 地址候选
+  //
+  // 原来这份清单写死在 openai_compat.py 里，你**没有任何办法**把自己的网关
+  // 加进去 —— 每次配都得重新贴一遍地址。现在自己存的排在最前面，
+  // 存在 workspace/config/providers.json（和密钥同一个文件、同一条 .gitignore），
+  // **内网地址不进仓库**。
+  let presetList = [...(presets || [])];
+
   // 预设只是**填进地址栏**，不锁死 —— 填完照样能改
-  const presetPick = h('select.select', {
-    onchange: (e) => {
-      if (!e.target.value) return;
-      url.value = e.target.value;
-      e.target.value = '';
-      drawModels();
-    },
-  },
-    h('option', { value: '' }, '常见地址…'),
-    ...(presets || []).map((p) => h('option', { value: p.base_url },
-      `${p.name} — ${p.base_url}`)));
+  const presetPick = h('select.select', { style: { maxWidth: '380px' } });
+  presetPick.onchange = (e) => {
+    if (!e.target.value) return;
+    url.value = e.target.value;
+    e.target.value = '';
+    drawModels();
+    drawPresetBtn();
+  };
+
+  const isSaved = () => {
+    const u = url.value.trim().replace(/\/+$/, '');
+    return presetList.some((p) => p.origin === 'user'
+                                  && p.base_url.replace(/\/+$/, '') === u);
+  };
+
+  const presetBtn = h('button.btn.btn-sm');
+  function drawPresetBtn() {
+    const saved = isSaved();
+    presetBtn.textContent = saved ? '从候选里移除' : '存成候选';
+    presetBtn.title = saved
+      ? '把这个地址从下拉里去掉'
+      : '存进本机的候选清单，以后从上面的下拉里直接选';
+  }
+  presetBtn.onclick = async (e) => {
+    const u = url.value.trim();
+    if (!u) { toast('先填接口地址', 'err'); return; }
+    busy(e.target, true);
+    try {
+      const r = isSaved()
+        ? await api.deletePreset(u)
+        : await api.savePreset({ name: name.value.trim() || u, base_url: u });
+      presetList = r.presets || [];
+      drawPresetOptions();
+      drawPresetBtn();
+      toast(isSaved() ? '已存进候选' : '已从候选里移除', 'ok');
+    } catch (err) { toast(err.message, 'err', 6000); }
+    busy(e.target, false);
+  };
+
+  function drawPresetOptions() {
+    mount(presetPick,
+      h('option', { value: '' }, '常见地址…'),
+      // 没起名字时就只写地址 —— 「★ http://…/v1 — http://…/v1」把同一个地址
+      // 写两遍，读起来像是两个不同的东西
+      ...presetList.map((p) => h('option', { value: p.base_url },
+        (p.origin === 'user' ? '★ ' : '')
+        + (p.name && p.name !== p.base_url ? `${p.name} — ${p.base_url}`
+                                           : p.base_url))));
+  }
+  drawPresetOptions();
+  drawPresetBtn();
+  url.addEventListener('input', drawPresetBtn);
 
   function drawModels() {
     if (!F.found.length) {
@@ -441,9 +490,12 @@ function simpleForm(providers, presets) {
     h('div.small.strong.mb-2', providers.length ? '改一个 / 加一个' : '填完就能用'),
     h('div.col.gap-3',
       field('接口地址（baseUrl）',
-        h('div.row.gap-2', h('div.grow', url), presetPick),
+        h('div.col.gap-2', url, h('div.row.gap-2.wrap', presetPick, presetBtn)),
         ['结尾要带 ', h('span.mono', '/v1'), '。',
-         '你自己的网关地址填过一次就会一直留在这儿 —— 它存在本机的 ',
+         'http:// 和 https:// 都收，内网地址（',
+         h('span.mono', 'http://网关/v1'), '）照样能存。',
+         '你自己的地址填过一次就会一直留在这儿，还可以「存成候选」放进上面那个下拉 —— ',
+         '这些都存在本机的 ',
          h('span.mono', 'workspace/config/providers.json'), '，不会进仓库。']),
       field('密钥（apiKey）', key,
         providers.length && first.has_key
@@ -465,7 +517,6 @@ function simpleForm(providers, presets) {
           const u = url.value.trim();
           const ids = chosenIds();
           if (!u) { toast('接口地址要填', 'err'); return; }
-          if (!ids.length) { toast('至少选或填一个模型', 'err'); return; }
           const k = key.value.trim();
           if (!k && !(providers.length && first.has_key)) {
             toast('还没有存过密钥，这次要填', 'err'); return;
@@ -476,7 +527,13 @@ function simpleForm(providers, presets) {
               name: name.value.trim() || first.name || '我的模型',
               base_url: u, api_key: k, model_ids: ids,
             });
-            toast(`已保存 ${ids.length} 个模型。右上角「AI 助手」就能用了`, 'ok');
+            // 一个模型都没选也让存 —— 自建网关很多不实现 /models，
+            // 拉不到列表就卡住、连地址都存不下来，那是最没道理的一种拦法。
+            // 但要说清楚现在还用不了，别让人以为配好了。
+            toast(ids.length
+              ? `已保存 ${ids.length} 个模型。右上角「AI 助手」就能用了`
+              : '地址和密钥已存下。还没有模型 —— 手填一个模型名再保存才能开始对话',
+              ids.length ? 'ok' : 'warn', ids.length ? 3000 : 7000);
             setTimeout(() => window.dispatchEvent(
               new CustomEvent('hte:nav', { detail: 'settings' })), 500);
           } catch (err) { toast(err.message, 'err', 6000); }

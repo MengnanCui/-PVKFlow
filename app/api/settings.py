@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Query
 
 from app import config
 from app.ai import openai_compat
@@ -60,13 +60,37 @@ def cache_clear() -> dict:
 def models() -> dict:
     """模型配置概览。密钥在这里被打码，绝不原样回传前端。
 
-    `presets` 是几个**公共**服务商的地址，给第一次打开设置页的人用。
-    你自己的网关地址不在这里 —— 它和密钥一样属于本机配置，
-    填过一次就存在 workspace/config/providers.json（已 gitignore）并一直回填。
+    `presets` 是下拉里那份候选地址：**自己存的排在前面**，
+    几个公共服务商跟在后面（给第一次打开设置页的人用）。
+
+    自己那份存在 workspace/config/providers.json 里，和密钥同一个文件、
+    同一条 .gitignore —— **内网地址不进仓库**，仓库里那份只有公共网关。
     """
     out = openai_compat.describe_config()
-    out["presets"] = openai_compat.PRESETS
+    out["presets"] = openai_compat.all_presets()
     return out
+
+
+@router.post("/models/presets")
+def add_preset(payload: dict = Body(...)) -> dict:
+    """把当前这个地址存成候选。
+
+    原来候选清单是写死在代码里的六条，你没有任何办法把自己的网关加进去 ——
+    每次配都得重新贴一遍地址。现在填一次，以后下拉里就有。
+    """
+    try:
+        openai_compat.save_preset(payload.get("name") or "",
+                                  payload.get("base_url") or "")
+    except ValueError as exc:
+        raise ApiError(str(exc), 400) from exc
+    return {"presets": openai_compat.all_presets()}
+
+
+@router.delete("/models/presets")
+def remove_preset(base_url: str = Query(..., description="要去掉的地址")) -> dict:
+    """从本机名单里去掉一个地址。内置的那几条去不掉 —— 它们不在这个文件里。"""
+    openai_compat.delete_preset(base_url)
+    return {"presets": openai_compat.all_presets()}
 
 
 @router.post("/models/discover")
@@ -155,8 +179,6 @@ def save_simple_model(payload: dict = Body(...)) -> dict:
 
     if not base_url:
         raise ApiError("请填接口地址（baseUrl）", 400)
-    if not model_ids:
-        raise ApiError("请至少选一个模型", 400)
     if not base_url.startswith(("http://", "https://")):
         raise ApiError("接口地址要以 http:// 或 https:// 开头", 400)
 
@@ -175,6 +197,18 @@ def save_simple_model(payload: dict = Body(...)) -> dict:
         if not api_key:
             raise ApiError("这是第一次配置，密钥不能留空", 400)
 
+    # **模型列表留空 = 不改**，和密钥同一条规则。
+    #
+    # 原来这里要求「至少选一个模型」才让保存 —— 可自建网关很多不实现
+    # /models，拉不到列表就卡在这儿，地址想先存下来都不行。
+    # 而改地址、改名字的时候更没道理被迫把模型再勾一遍。
+    if not model_ids:
+        old = providers.get(name) or next(
+            (p for p in providers.values()
+             if (p.get("baseUrl") or "").rstrip("/") == base_url), None)
+        model_ids = [m.get("id") for m in ((old or {}).get("models") or [])
+                     if m.get("id")]
+
     providers[name] = {
         "baseUrl": base_url,
         "api": "openai-completions",
@@ -185,7 +219,9 @@ def save_simple_model(payload: dict = Body(...)) -> dict:
     }
 
     config.ensure_dirs()
-    openai_compat.save_config({"providers": providers})
+    # 连同 providers 之外的顶层键一起写回 —— 地址预设就存在那儿，
+    # 只写 {"providers": ...} 会把它们一并抹掉。
+    openai_compat.save_config({**current, "providers": providers})
     return openai_compat.describe_config()
 
 

@@ -343,6 +343,81 @@ PRESETS = [
     {"name": "本地 Ollama", "base_url": "http://127.0.0.1:11434/v1"},
 ]
 
+# 一份本机名单最多存这么多条。这道闸挡的是「点错了按钮攒出几百条」，
+# 不是功能限制 —— 一个人手上的网关不会有二十个。
+MAX_USER_PRESETS = 20
+
+
+def user_presets(path: Path | None = None) -> list[dict]:
+    """用户自己存下来的地址预设。
+
+    存在 workspace/config/providers.json 的 `presets` 里 —— 和密钥同一个文件、
+    同一条 .gitignore。**内网地址不进仓库**，仓库里那份 PRESETS 只有公共网关。
+    """
+    try:
+        cfg = load_config(path)
+    except ProviderUnavailable:
+        return []
+    out = []
+    for item in (cfg.get("presets") or []):
+        if not isinstance(item, dict):
+            continue
+        url = (item.get("base_url") or "").strip().rstrip("/")
+        if url:
+            out.append({"name": (item.get("name") or url).strip()[:60],
+                        "base_url": url, "origin": "user"})
+    return out[:MAX_USER_PRESETS]
+
+
+def all_presets(path: Path | None = None) -> list[dict]:
+    """下拉里那份候选地址：**自己存的排在前面**，内置公共网关跟在后面。
+
+    自己存的排前面，是因为那才是你每天要用的那个；
+    公共的留在后面，第一次打开设置页的人还是有东西可选。
+    地址相同的算同一条，用户那份的名字胜出。
+    """
+    out, seen = [], set()
+    for item in user_presets(path) + [{**p, "origin": "builtin"} for p in PRESETS]:
+        key = item["base_url"].rstrip("/")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def save_preset(name: str, base_url: str, path: Path | None = None) -> list[dict]:
+    """把一个地址存进本机名单。地址相同就换个名字，不新增一条。"""
+    url = (base_url or "").strip().rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("接口地址要以 http:// 或 https:// 开头")
+    name = (name or url).strip()[:60]
+
+    try:
+        cfg = load_config(path)
+    except ProviderUnavailable:
+        cfg = {"providers": {}}
+    keep = [x for x in (cfg.get("presets") or [])
+            if isinstance(x, dict)
+            and (x.get("base_url") or "").rstrip("/") != url]
+    cfg["presets"] = ([{"name": name, "base_url": url}] + keep)[:MAX_USER_PRESETS]
+    save_config(cfg, path)
+    return user_presets(path)
+
+
+def delete_preset(base_url: str, path: Path | None = None) -> list[dict]:
+    """从本机名单里去掉一个地址。内置的那几条去不掉 —— 它们不在这个文件里。"""
+    url = (base_url or "").strip().rstrip("/")
+    try:
+        cfg = load_config(path)
+    except ProviderUnavailable:
+        return []
+    cfg["presets"] = [x for x in (cfg.get("presets") or [])
+                      if isinstance(x, dict)
+                      and (x.get("base_url") or "").rstrip("/") != url]
+    save_config(cfg, path)
+    return user_presets(path)
+
 
 def list_remote_models(base_url: str, api_key: str = "",
                        timeout: float = 20.0) -> list[dict]:

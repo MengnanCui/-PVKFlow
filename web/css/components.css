@@ -229,12 +229,17 @@ table.data tr:last-child td { border-bottom: 0; }
   font-size: var(--t-sm); color: var(--ink);
   animation: toast-in var(--dur) var(--ease);
 }
-.toast-ok::before, .toast-err::before, .toast-info::before {
+.toast-ok::before, .toast-err::before, .toast-info::before,
+.toast-warn::before, .toast-danger::before {
   content: ""; width: 6px; height: 6px; border-radius: 50%; margin-top: 6px; flex: none;
 }
 .toast-ok::before  { background: var(--ok); }
 .toast-err::before { background: var(--danger); }
 .toast-info::before{ background: var(--accent); }
+.toast-warn::before { background: var(--warn); }
+/* 页面上有几处写的是 'danger'（和 notice-danger 一套叫法）。
+   两个名字都认，免得点了按钮却弹出一个没有小圆点的 toast。 */
+.toast-danger::before { background: var(--danger); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 
 .modal-backdrop {

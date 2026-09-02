@@ -321,8 +321,14 @@ def test_first_time_without_a_key_is_refused(client):
 def test_simple_model_form_rejects_junk(client):
     bad = [
         {"base_url": "", "model_id": "m", "api_key": "k"},
-        {"base_url": "https://x/v1", "model_id": "", "api_key": "k"},
         {"base_url": "不是个网址", "model_id": "m", "api_key": "k"},
     ]
     for body in bad:
         assert client.post("/api/settings/models/simple", json=body).status_code == 400
+
+    # 「一个模型都没选」**不再**是错误。自建网关很多不实现 /models，
+    # 拉不到列表就连地址都存不下来，是最没道理的一种拦法。
+    # 详见 test_an_address_can_be_saved_before_any_model_is_picked。
+    ok = client.post("/api/settings/models/simple",
+                     json={"base_url": "https://x/v1", "model_id": "", "api_key": "k"})
+    assert ok.status_code == 200

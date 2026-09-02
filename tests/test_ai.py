@@ -306,3 +306,128 @@ def test_several_models_can_be_saved_at_once(workspace):
     ids = [m["id"] for m in r.json()["providers"][0]["models"]]
     assert ids == ["a", "b", "c"]            # 去重且保序
     assert "sk-abcdef123456" not in r.text   # 存进去了，但不回传
+
+
+# ------------------------------------------------------------------ 内网 http 网关
+#
+# Mengnan 的网关是 `http://…/v1`（公司内网，没有 TLS）。这一族盯的是
+# 「这样一个地址能不能一路走通」：存得下、拉得到列表、真能发出请求。
+def _fake_gateway():
+    """一个最小的 OpenAI 兼容网关，起在 127.0.0.1 上的 **http**（不是 https）。"""
+    import http.server
+    import threading
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def _json(self, code, obj):
+            body = json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):                                   # noqa: N802
+            if self.path.endswith("/models"):
+                seen.append(self.headers.get("Authorization"))
+                return self._json(200, {"data": [{"id": "qwen3"}, {"id": "glm4"}]})
+            self._json(404, {"error": "no"})
+
+        def do_POST(self):                                  # noqa: N802
+            n = int(self.headers.get("Content-Length") or 0)
+            seen.append(json.loads(self.rfile.read(n) or b"{}"))
+            self._json(200, {"choices": [{"message": {"content": "收到"}}]})
+
+        def log_message(self, *a):                          # 别把测试输出刷满
+            pass
+
+    seen: list = []
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{srv.server_port}/v1", seen
+
+
+def test_a_plain_http_gateway_works_end_to_end(workspace):
+    """内网 http:// 网关：保存 → 拉模型列表 → 真发一次请求。
+
+    公司内网的网关没有 TLS。要求 https 的话，Mengnan 的地址一个字都填不进来。
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    srv, base, seen = _fake_gateway()
+    try:
+        with TestClient(app) as c:
+            saved = c.post("/api/settings/models/simple", json={
+                "name": "内网", "base_url": base, "api_key": "sk-local-test",
+                "model_ids": ["qwen3"]})
+            assert saved.status_code == 200, saved.text
+            assert saved.json()["providers"][0]["base_url"] == base
+
+            found = c.post("/api/settings/models/discover",
+                           json={"base_url": base}).json()
+            assert [m["id"] for m in found["models"]] == ["glm4", "qwen3"]
+            assert found["used_saved_key"] is True
+            assert "sk-local-test" not in json.dumps(found)   # 密钥绝不回传
+
+            r = c.post("/api/settings/models/test",
+                       json={"provider": "内网", "model": "qwen3"}).json()
+            assert r["ok"] is True, r
+            assert r["reply"] == "收到"
+    finally:
+        srv.shutdown()
+
+    assert "Bearer sk-local-test" in seen        # 密钥确实带上了
+
+
+def test_an_address_can_be_saved_before_any_model_is_picked(workspace):
+    """自建网关很多不实现 /models。拉不到列表就连地址都存不下来，
+    是最没道理的一种拦法 —— 先存地址，模型以后再补。"""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as c:
+        r = c.post("/api/settings/models/simple", json={
+            "base_url": "http://gw.internal.example/v1",
+            "api_key": "sk-x", "model_ids": []})
+        assert r.status_code == 200, r.text
+        assert r.json()["providers"][0]["models"] == []
+
+        # 之后补上模型：**密钥留空 = 不改**，不用再贴一遍
+        r2 = c.post("/api/settings/models/simple", json={
+            "base_url": "http://gw.internal.example/v1", "model_ids": ["m1"]})
+        assert [m["id"] for m in r2.json()["providers"][0]["models"]] == ["m1"]
+
+        # 反过来：改地址时不勾模型，已经存着的那些**不能**被清掉
+        r3 = c.post("/api/settings/models/simple", json={
+            "base_url": "http://gw2.internal.example/v1", "model_ids": []})
+        assert [m["id"] for m in r3.json()["providers"][0]["models"]] == ["m1"]
+
+
+def test_user_presets_live_in_the_workspace_and_survive_saving_a_provider(workspace):
+    """自己存的地址候选存在本机配置里 —— 仓库里那份只有公共网关。"""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as c:
+        r = c.post("/api/settings/models/presets",
+                   json={"name": "内网网关", "base_url": "http://gw.internal.example/v1/"})
+        assert r.status_code == 200
+        got = r.json()["presets"]
+        assert got[0] == {"name": "内网网关",
+                          "base_url": "http://gw.internal.example/v1",
+                          "origin": "user"}          # 自己的排最前面
+        assert any(p["origin"] == "builtin" for p in got)
+
+        # 存一个 provider 不能把候选清单一起抹掉（同一个文件的两个顶层键）
+        c.post("/api/settings/models/simple", json={
+            "base_url": "http://gw.internal.example/v1",
+            "api_key": "sk-x", "model_ids": ["m"]})
+        assert c.get("/api/settings/models").json()["presets"][0]["origin"] == "user"
+
+        c.request("DELETE", "/api/settings/models/presets",
+                  params={"base_url": "http://gw.internal.example/v1"})
+        assert all(p["origin"] == "builtin"
+                   for p in c.get("/api/settings/models").json()["presets"])
