@@ -304,6 +304,7 @@ SKILL = MyThickness()
 run.bat / run.sh     一键启动
 app/                 后端（FastAPI + SQLite + Parquet，无 ORM）
 web/                 前端（原生 ES Module，零构建）
+tools/               开发用小工具（见下）
 docs/                架构、数据模型、Skill 契约
 sample_data/         可以直接拿来试的样例数据
 workspace/           你的全部数据（gitignore）
@@ -311,10 +312,28 @@ workspace/           你的全部数据（gitignore）
 
 ```bash
 ./run.sh                                # 起服务
-.venv/bin/python -m pytest -q           # 跑测试（247 个）
+.venv/bin/python -m pytest -q           # 跑测试
 ```
 
 前端改完刷新页面即可，没有构建步骤。
+
+### 把界面烤成一个 .html
+
+```bash
+.venv/bin/python tools/bake_offline.py              # 烤到 dist/hte-studio.offline.html
+.venv/bin/python tools/bake_offline.py --skip-record  # 只改了前端代码时，复用上次录的数据，几秒钟
+```
+
+产出**一个自包含的 html**：CSS / 字体 / JS 全部内联，后端每个接口的真实响应
+也录在里面。双击就开，不用装 Python、不用起服务 —— 想在没环境的机器上看一眼界面、
+想把它发给别人指指点点、想留一份「这一版长什么样」，都靠它。
+图能悬停、滑块能拖、ⓘ 能点开、明暗能切、页面能来回走。
+
+重跑批处理 / 存模型配置 / 导入文件 / AI 对话这几件事真的需要后端，
+离线版里点了会**明说做不到**，不是点了没反应。
+
+录接口要 Playwright（`npm i playwright`，或者用 `PLAYWRIGHT_DIR=` 指到已经装了的目录）。
+产物在 `dist/`，不进仓库 —— 它是工作区数据的快照。
 
 - [架构](docs/ARCHITECTURE.md) —— 模块划分与设计原则
 - [数据模型](docs/DATA_MODEL.md) —— 为什么 `key_result` 是长表

@@ -16,7 +16,8 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
-# 打包产物
+# 打包产物。dist/ 里还有 tools/bake_offline.py 烤出来的离线版 html ——
+# 那里面是工作区数据的快照，几 MB，不进仓库。
 build/
 dist/
 *.spec
