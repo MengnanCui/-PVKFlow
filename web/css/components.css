@@ -394,6 +394,13 @@ table.data tr:last-child td { border-bottom: 0; }
   box-shadow: 0 0 0 1px var(--accent), 0 0 0 5px var(--accent-wash);
 }
 .range:disabled { opacity: .5; cursor: not-allowed; }
+/* 对比页的参数面板。控件按模块分组，每组一栏；栏数跟着容器宽度走 ——
+   同事再装两个模块，这里自动多两组，不用改布局。 */
+.recipe-grid { display: grid; gap: var(--s3x) var(--s5x);
+               grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.recipe-group { min-width: 0; padding-top: var(--s2x);
+                border-top: 1px solid var(--line); }
+
 .band-control { display: flex; flex-direction: column; gap: 5px; }
 .band-sliders { display: flex; gap: var(--s2x); }
 .band-sliders .range { width: 100px; }

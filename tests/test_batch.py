@@ -789,3 +789,95 @@ def test_batch_extra_is_how_undrawn_numbers_reach_the_batch(imported):
     assert d.column("nope") is None
     assert PanelData().column() is None
     assert Curve("ot_ok", from_panel="ot_band", key="ot_ok").as_dict()["key"] == "ot_ok"
+
+
+# ------------------------------------------------------------------ 配方 ←→ 模块参数
+#
+# 对比页的参数面板现在照模块声明生成，值写进 recipe.module_params。
+# 这几条盯的是「面板上改了、跑出来的真是那个值」这条链。
+def test_module_params_sync_back_to_flat_fields():
+    """从控件改的值要同步回扁平字段。
+
+    生效的本来就是 module_params（_params_for 里它排在最后）。不同步的话，
+    存下来的配方里 band_min 是旧值、module_params.band 是新值，
+    下次打开这次对比，参数面板和实际算出来的结果对不上。
+    """
+    r = batch.Recipe.from_dict({
+        "band_min": 780, "band_max": 1050,
+        "module_params": {
+            "thickness.fringe_ot": {"band": [820, 1100]},
+            "special.slope_integral": {"slope_half": 25, "integ": [830, 940]},
+        },
+    })
+    assert (r.band_min, r.band_max) == (820.0, 1100.0)
+    assert (r.integral_min, r.integral_max) == (830.0, 940.0)
+    assert r.slope_half_width == 25.0
+    assert r.slope_center == 950.0          # 没给的那个不动
+
+
+def test_module_params_still_go_through_validation():
+    """从控件也能把值改坏，校验一样要拦住。"""
+    with pytest.raises(ValueError, match="膜厚窗口不合法"):
+        batch.Recipe.from_dict(
+            {"module_params": {"thickness.fringe_ot": {"band": [1100, 820]}}})
+
+
+def test_legacy_flat_recipe_still_reaches_modules():
+    """存了几个月的老配方（只有扁平字段）不能因为迁移就读不出来。"""
+    r = batch.Recipe.from_dict({"band_min": 700, "band_max": 900,
+                                "slope_center": 940, "slope_half_width": 12})
+    eff = batch.effective_params(r)
+    assert eff["thickness.fringe_ot"]["band"] == [700.0, 900.0]
+    assert eff["special.slope_integral"]["slope_center"] == 940.0
+    assert eff["special.slope_integral"]["slope_half"] == 12.0
+
+
+def test_effective_params_covers_every_installed_module():
+    """参数面板照这份结果画控件 —— 少一个模块，它的参数在对比页上就够不着。"""
+    from app.modules.registry import registry
+
+    if not registry.all():
+        registry.load_all()
+    eff = batch.effective_params(batch.Recipe.from_dict({}))
+    assert set(eff) == {m.spec.id for m in registry.all()}
+    for m in registry.all():
+        assert set(eff[m.spec.id]) >= set(m.spec.defaults())
+
+
+def test_detail_carries_the_values_the_recipe_panel_should_show(
+        batch_client, imported):
+    """对比页照模块声明画控件，控件里填什么值由后端给。
+
+    「默认值 ← 老配方 ← 显式指定」只有 _params_for 一份实现。前端自己再算一遍
+    迟早会对不上 —— 那时候面板上显示的参数和真正跑出来的结果是两回事。
+    """
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20"]},
+        "recipe": {"band_min": 800, "band_max": 1090, "slope_half_width": 15},
+    })["task_id"])
+    run_id = t["result"]["parent_run_id"]
+
+    d = batch_client.get(f"/api/batch/runs/{run_id}").json()
+    eff = d["module_params"]
+    assert eff["thickness.fringe_ot"]["band"] == [800.0, 1090.0]
+    assert eff["special.slope_integral"]["slope_half"] == 15.0
+
+
+def test_axes_gives_the_range_the_sliders_need(batch_client, imported):
+    """控件声明 range_from="lambda" 时滑块的上下限从这儿来。
+
+    拿不到就退回控件自己声明的 min/max —— 所以这个接口**不抛错**，
+    只说 available=false。为了画一根滑块而让整页报错是本末倒置。
+    """
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20"]}, "recipe": {"band_min": 775, "band_max": 1100},
+    })["task_id"])
+    run_id = t["result"]["parent_run_id"]
+
+    a = batch_client.get(f"/api/batch/runs/{run_id}/axes").json()
+    assert a["available"] is True
+    assert a["lambda"][0] < a["lambda"][1]
+    assert a["time"][0] <= a["time"][1]
+
+    miss = batch_client.get("/api/batch/runs/run_nope/axes")
+    assert miss.status_code == 404          # 批处理本身不存在还是要说清楚

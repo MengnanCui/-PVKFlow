@@ -56,6 +56,7 @@ class Recipe:
         d = d or {}
         r = cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__
                    and v is not None})
+        r._sync_legacy()
         if r.band_max <= r.band_min:
             raise ValueError(f"膜厚窗口不合法：{r.band_min}–{r.band_max} nm")
         if r.integral_max <= r.integral_min:
@@ -63,6 +64,31 @@ class Recipe:
         if r.slope_half_width <= 0:
             raise ValueError("斜率窗口半宽必须大于 0")
         return r
+
+    def _sync_legacy(self) -> None:
+        """module_params 里显式给了的，覆盖对应的扁平字段。
+
+        生效的本来就是 module_params（`_params_for` 里它排在最后），
+        所以扁平字段跟着它走才是**如实记录**。不同步的话，存下来的配方里
+        `band_min` 是旧值、`module_params.band` 是新值，而重跑用的是后者 ——
+        下次打开这次对比，参数面板和实际算出来的结果对不上。
+
+        校验（波段起止不能反）在这之后跑，所以从控件改坏的值一样拦得住。
+        """
+        for module_id, keys in _LEGACY_MAP.items():
+            given = (self.module_params or {}).get(module_id) or {}
+            for key, fields in keys.items():
+                if key not in given:
+                    continue
+                v = given[key]
+                vals = list(v) if len(fields) > 1 else [v]
+                if len(vals) != len(fields):
+                    continue                  # 形状不对就不动，交给下面的校验说话
+                for f, val in zip(fields, vals):
+                    try:
+                        setattr(self, f, float(val))
+                    except (TypeError, ValueError):
+                        pass
 
     def as_dict(self) -> dict:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
@@ -101,16 +127,22 @@ class SampleOutcome:
 # 同事放一个模块进 workspace/modules/，它的曲线就自动出现在长表、对比页叠图、
 # 时刻切片和导出脚本里 —— 这个文件一个字都不用改。
 
-# 老配方的扁平字段 → 特殊处理模块的控件。
-# 界面上存了几个月的配方不能因为迁移就读不出来了。
+# 老配方的扁平字段 ←→ 模块控件。**两个方向都要通。**
+#
+# 往前：界面上存了几个月的配方（只有扁平字段）不能因为迁移就读不出来。
+# 往回：对比页现在直接改模块控件，改完得把扁平字段同步过去 ——
+# 否则存下来的这次配方里，`band_min` 写着旧值、`module_params.band` 写着新值，
+# 谁看谁懵。生效的是后者，那前者就该跟着它走。
+#
+# 写成字段名而不是 lambda，就是为了这个反方向 —— lambda 没有逆。
 _LEGACY_MAP = {
     "thickness.fringe_ot": {
-        "band": lambda r: [r.band_min, r.band_max],
+        "band": ("band_min", "band_max"),
     },
     "special.slope_integral": {
-        "integ": lambda r: [r.integral_min, r.integral_max],
-        "slope_center": lambda r: r.slope_center,
-        "slope_half": lambda r: r.slope_half_width,
+        "integ": ("integral_min", "integral_max"),
+        "slope_center": ("slope_center",),
+        "slope_half": ("slope_half_width",),
     },
 }
 
@@ -118,13 +150,29 @@ _LEGACY_MAP = {
 def _params_for(module_id: str, spec, recipe: "Recipe") -> dict:
     """一个模块这一次批处理用什么参数：默认值 ← 老配方映射 ← 显式指定。"""
     params = dict(spec.defaults())
-    for key, pick in (_LEGACY_MAP.get(module_id) or {}).items():
+    for key, fields in (_LEGACY_MAP.get(module_id) or {}).items():
         try:
-            params[key] = pick(recipe)
+            vals = [getattr(recipe, f) for f in fields]
         except AttributeError:
-            pass
+            continue
+        params[key] = vals if len(vals) > 1 else vals[0]
     params.update((recipe.module_params or {}).get(module_id) or {})
     return params
+
+
+def effective_params(recipe: "Recipe") -> dict[str, dict]:
+    """每个已装模块这一次实际会用的参数。
+
+    对比页要照着模块声明画控件，控件里填什么值就得问这里 ——
+    「默认值 ← 老配方 ← 显式指定」这条规则只有一份实现，
+    前端再抄一遍是迟早要对不上的。
+    """
+    from app.modules.registry import registry as module_registry
+
+    if not module_registry.all():
+        module_registry.load_all()
+    return {m.spec.id: _params_for(m.spec.id, m.spec, recipe)
+            for m in module_registry.all()}
 
 
 def _run_modules(lam, M, t, recipe: "Recipe", warnings: list[str], *,

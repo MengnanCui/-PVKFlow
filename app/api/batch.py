@@ -70,7 +70,58 @@ def runs(limit: int = Query(20, le=100)) -> dict:
 
 @router.get("/runs/{parent_run_id}")
 def detail(parent_run_id: str) -> dict:
-    return guard(batch_mod.batch_detail, parent_run_id)
+    d = guard(batch_mod.batch_detail, parent_run_id)
+    # 对比页要照着模块声明画参数控件，每个控件填什么值由后端算 ——
+    # 「默认值 ← 老配方映射 ← 显式指定」这条规则只有 _params_for 一份实现，
+    # 前端再抄一遍迟早对不上。
+    try:
+        recipe = batch_mod.Recipe.from_dict((d.get("run") or {}).get("params", {}).get("recipe"))
+        d["module_params"] = batch_mod.effective_params(recipe)
+    except (ValueError, KeyError, AttributeError):
+        # 老配方读不出来不该把整页拖垮 —— 参数面板退回模块自己的默认值
+        d["module_params"] = {}
+    return d
+
+
+@router.get("/runs/{parent_run_id}/axes")
+def axes(parent_run_id: str) -> dict:
+    """这批数据的波长轴和时间轴范围。
+
+    模块的控件可以声明 `range_from="lambda"` —— 意思是「上下限跟着这份数据的
+    波长范围走」。样品页上那份范围来自当前打开的矩阵；对比页没有「当前矩阵」，
+    所以在这里给：拿这批里**一个**样品的元信息代表整批。
+
+    同一批样品出自同一台光谱仪，波长轴是一样的，一个就够；
+    真要每个样品都读一遍，光是为了画一根滑块就得解析上千个文件。
+
+    读不到不是故障 —— 界面会退回控件自己声明的 min/max，滑块照样能用，
+    只是范围不跟着数据。所以这里**不抛错**，返回 available=false。
+    """
+    detail = guard(batch_mod.batch_detail, parent_run_id)
+    sample_ids = [c["sample_id"] for c in detail["children"] if c.get("sample_id")]
+    if not sample_ids:
+        return {"available": False, "reason": "这次批处理没有样品"}
+
+    from app.parsers import matrix
+    from app.storage import artifacts, db
+
+    row = db.query_one(
+        "SELECT artifact_id FROM artifact WHERE sample_id=? AND is_matrix=1"
+        " ORDER BY size DESC LIMIT 1", (sample_ids[0],))
+    if not row:
+        return {"available": False, "reason": "找不到这批样品的光谱矩阵"}
+
+    try:
+        sm = matrix.load_cached(artifacts.local_path(row["artifact_id"]))
+    except Exception as exc:                      # noqa: BLE001 —— 读不到就降级
+        return {"available": False, "reason": f"读不出光谱矩阵：{exc}"}
+
+    return {
+        "available": True,
+        "from_sample": sample_ids[0],
+        "lambda": [float(sm.lam[0]), float(sm.lam[-1])],
+        "time": [float(sm.t[0]), float(sm.t[-1])],
+    }
 
 
 # 膜厚在**另一张**表里：它的时间轴是全部帧，integral / slope 那张可能被

@@ -136,6 +136,8 @@ export const api = {
   batchRuns: () => get('/api/batch/runs'),
   batchDetail: (id) => get(`/api/batch/runs/${id}`),
   batchCurves: (id, params) => get(`/api/batch/runs/${id}/curves`, params),
+  // 这批数据的波长轴/时间轴范围。模块控件声明 range_from 时要用
+  batchAxes: (id) => get(`/api/batch/runs/${id}/axes`),
   // 时刻切片：窗口写成 `0:1,27.5:28.5`。这是查询不是配方 —— 改窗口不用重跑
   batchSlices: (id, windows) =>
     get(`/api/batch/runs/${id}/slices`,
