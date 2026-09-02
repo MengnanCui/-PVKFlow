@@ -14,7 +14,7 @@ from fastapi import APIRouter, Query, Response
 
 from app.api.common import ApiError, guard
 from app.parsers import matrix, render
-from app.storage import artifacts
+from app.storage import artifacts, db
 
 router = APIRouter(prefix="/api/spectra", tags=["spectra"])
 
@@ -25,7 +25,29 @@ FRAMES_BUDGET_BYTES = 1_000_000
 MIN_LAMBDA_STEP_NM = 2.0
 
 
+def _resolve(artifact_id: str) -> str:
+    """允许直接用**样品 id**。
+
+    页面地址长这样：`#sample/art_xxx`。可从界面上能复制到的 id 常常是
+    `smp_xxx`（样品列表、失败样品表里显示的都是它）—— 一个叫 `sample/` 的地址
+    收不了样品 id，只回一句「文件不存在：smp_xxx」，那句话根本没说到点子上。
+    这里把它翻成那个样品的光谱矩阵。
+    """
+    if not artifact_id.startswith("smp_"):
+        return artifact_id
+    row = db.query_one(
+        "SELECT artifact_id FROM artifact WHERE sample_id=? AND is_matrix=1"
+        " ORDER BY size DESC LIMIT 1", (artifact_id,))
+    if row:
+        return row["artifact_id"]
+    exists = db.query_one("SELECT 1 FROM sample WHERE sample_id=?", (artifact_id,))
+    raise ApiError(
+        f"这个样品没有光谱矩阵：{artifact_id}" if exists
+        else f"没有这个样品：{artifact_id}", 404, "not_found")
+
+
 def _load(artifact_id: str) -> matrix.SpectralMatrix:
+    artifact_id = _resolve(artifact_id)
     row = artifacts.get(artifact_id)
     if not row:
         raise ApiError(f"文件不存在：{artifact_id}", 404, "not_found")
@@ -42,8 +64,9 @@ def _load(artifact_id: str) -> matrix.SpectralMatrix:
 def meta(artifact_id: str) -> dict:
     """矩阵尺寸、采样率、值域，外加它属于哪个样品。界面上把这些如实显示出来 ——
     用户第一次跑就知道自己的数据到底多大。"""
-    from app.storage import db
-
+    # 传进来的可能是样品 id。回传**翻译之后**的那个 —— 界面拿它去拉热力图、
+    # 拉帧、算模块面板，回一个它认不出来的 id 等于后面每一步都要再翻译一次。
+    artifact_id = _resolve(artifact_id)
     sm = _load(artifact_id)
     d = sm.describe()
 

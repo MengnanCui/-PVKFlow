@@ -11,6 +11,7 @@ import webbrowser
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -73,6 +74,47 @@ for router in (files.router, skills.router, results.router, artifacts.router,
 @app.exception_handler(HTTPException)
 async def http_error(_: Request, exc: HTTPException):
     return error_response(exc)
+
+
+# pydantic 的边界报错原文是英文（"Input should be greater than or equal to 1"）。
+_BOUND = {"greater_than_equal": ("不小于", "ge"), "less_than_equal": ("不大于", "le"),
+          "greater_than": ("大于", "gt"), "less_than": ("小于", "lt")}
+
+
+@app.exception_handler(RequestValidationError)
+async def bad_request(_: Request, exc: RequestValidationError):
+    """参数不合法。**翻成这个平台自己那套错误结构。**
+
+    FastAPI 默认吐的是 pydantic 的原始结构（`{"detail":[{"type":"string_pattern_
+    mismatch","loc":[...],"msg":"String should match pattern '^(integral|slope)$'"}]}`）——
+    前端认的是 `{"error":{message,kind,detail}}`，认不出来就只能显示
+    「请求失败（422）」外加一坨英文 JSON。
+
+    整个平台只有这一处说英语，而它偏偏是「你哪里填错了」这种最需要说人话的地方。
+    """
+    parts = []
+    for e in exc.errors():
+        where = ".".join(str(x) for x in (e.get("loc") or [])[1:]) or "参数"
+        ctx, kind, got = e.get("ctx") or {}, e.get("type", ""), e.get("input")
+        if ctx.get("pattern"):
+            # `^(integral|slope|ot)$` → `integral / slope / ot`，
+            # 正则本身对用户没有意义，能选哪几个才有
+            opts = ctx["pattern"].strip("^$()").replace("|", " / ")
+            parts.append(f"{where} 只能是 {opts}，给的是 {got!r}")
+        elif kind == "missing":
+            parts.append(f"少了一个参数：{where}")
+        elif kind.endswith("_parsing"):
+            parts.append(f"{where} 要是数字，给的是 {got!r}")
+        elif kind in _BOUND:
+            sign, key = _BOUND[kind]
+            parts.append(f"{where} 要{sign} {ctx.get(key)}，给的是 {got!r}")
+        else:
+            parts.append(f"{where}：{e.get('msg') or '不合法'}")
+    return JSONResponse(
+        status_code=400,
+        content={"error": {"message": "；".join(parts) or "参数不合法",
+                           "kind": "bad_request", "detail": ""}},
+    )
 
 
 @app.exception_handler(Exception)

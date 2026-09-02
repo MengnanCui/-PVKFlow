@@ -89,6 +89,9 @@ export async function view(host, ctx) {
   mount(host, skeletonRows(8));
   try {
     S.meta = await api.spectraMeta(S.artifactId);
+    // 地址里给的可能是样品 id（`#sample/smp_xxx`）。后端翻译成了矩阵 id，
+    // 从这里开始一律用翻译后的那个 —— 热力图、拉帧、模块面板都吃它。
+    if (S.meta.artifact_id) S.artifactId = S.meta.artifact_id;
   } catch (err) {
     mount(host, errorBox(err, () => view(host, ctx)));
     return;

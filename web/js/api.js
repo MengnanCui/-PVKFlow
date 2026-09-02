@@ -35,8 +35,16 @@ async function request(path, { method = 'GET', body, signal, raw = false } = {})
 
   if (!res.ok) {
     const e = data?.error || {};
+    // ★ 原始响应体只在**看不懂**的时候才当 detail 用。
+    //
+    // 以前写的是 `e.detail || text.slice(0, 500)`：后端给的 detail 绝大多数
+    // 是空串，于是每一个正常的报错都会在消息底下再糊一坨
+    // `{"error":{"message":"没有这次批处理：run_x",…}}` —— 同一句话说两遍，
+    // 第二遍还是给机器看的。
+    // 真正需要原始文本的是另一种情况：返回的根本不是这个平台的错误结构
+    // （公司代理的 HTML 登录页、网关自己的 502），那时候它是唯一的线索。
     throw new ApiError(e.message || `请求失败（${res.status}）`, e.kind || 'http',
-                       e.detail || text.slice(0, 500), res.status);
+                       e.detail || (e.message ? '' : text.slice(0, 500)), res.status);
   }
   return data;
 }

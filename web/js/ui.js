@@ -171,13 +171,18 @@ export function skeletonRows(n = 5) {
       h('div.skeleton.skeleton-block', { style: { width: `${100 - (i % 3) * 12}%` } })));
 }
 
-export function errorBox(err, retry) {
+/**
+ * @param label 按钮上写什么。默认「重试」—— 但**只有真的会重来一次时才叫重试**。
+ *   有几处传进来的回调其实是「回到上一页」，还写着重试就是骗人：
+ *   点下去发现跑到别的页面去了。
+ */
+export function errorBox(err, retry, label = '重试') {
   const msg = err?.message || String(err);
   return h('div.notice.notice-danger',
     h('div.grow',
       h('div', msg),
       err?.detail ? h('pre', err.detail) : null,
-      retry ? h('div.mt-2', h('button.btn.btn-sm', { onclick: retry }, '重试')) : null));
+      retry ? h('div.mt-2', h('button.btn.btn-sm', { onclick: retry }, label)) : null));
 }
 
 /** 异步渲染的统一包装：加载 → 成功 / 失败，三种状态都有交代。 */

@@ -320,7 +320,10 @@ def test_export_rejects_unknown_column(batch_client, imported):
                            {"filter": {"batch": ["B20"]}, "recipe": {}})["task_id"])
     r = batch_client.get(f"/api/batch/runs/{t['result']['parent_run_id']}/export",
                          params={"column": "rm -rf"})
-    assert r.status_code == 422
+    # 400 + 这个平台自己那套错误结构。以前是 FastAPI 默认的 422 加一坨英文
+    # pydantic 结构，前端认不出来，只能显示「请求失败（422）」。
+    assert r.status_code == 400
+    assert "只能是" in r.json()["error"]["message"]
 
 
 @pytest.mark.parametrize("mode,group_by", [("overlay", "batch"),
@@ -881,3 +884,25 @@ def test_axes_gives_the_range_the_sliders_need(batch_client, imported):
 
     miss = batch_client.get("/api/batch/runs/run_nope/axes")
     assert miss.status_code == 404          # 批处理本身不存在还是要说清楚
+
+
+def test_sample_page_accepts_a_sample_id_not_just_a_matrix_id(batch_client, imported):
+    """`#sample/smp_xxx` 要能打开。
+
+    页面地址叫 `sample/`，而界面上能复制到的 id 常常就是 `smp_xxx`
+    （样品列表、失败样品表里显示的都是它）。原来只收矩阵 id，
+    回一句「文件不存在：smp_xxx」—— 那句话根本没说到点子上。
+    """
+    smp = batch_client.get("/api/spectra/samples").json()["samples"][0]
+    by_sample = batch_client.get(f"/api/spectra/{smp['sample_id']}/meta")
+    assert by_sample.status_code == 200, by_sample.text
+
+    d = by_sample.json()
+    # 回传**翻译之后**的 id：界面拿它去拉热力图、拉帧、算模块面板，
+    # 回一个它认不出来的 id 等于后面每一步都要再翻译一次
+    assert d["artifact_id"] == smp["matrices"][0]["artifact_id"]
+    assert d == batch_client.get(f"/api/spectra/{d['artifact_id']}/meta").json()
+
+    miss = batch_client.get("/api/spectra/smp_压根没有/meta")
+    assert miss.status_code == 404
+    assert "没有这个样品" in miss.json()["error"]["message"]

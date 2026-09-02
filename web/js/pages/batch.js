@@ -165,9 +165,12 @@ async function waitForTask(host, taskId, ctx) {
 
     if (t.status === 'ok') return t.result?.parent_run_id || null;
     if (t.status === 'failed' || t.status === 'cancelled') {
+      // 取消是你自己按的，不是「没跑成」—— 把它说成失败会让人以为出了问题。
       mount(host, errorBox(
-        { message: t.error || '这次对比没跑成', detail: t.message },
-        () => ctx.nav('process')));
+        { message: t.error
+            || (t.status === 'cancelled' ? '这次对比被取消了' : '这次对比没跑成'),
+          detail: t.message },
+        () => ctx.nav('process'), '回到样品列表'));
       return null;
     }
     await new Promise((r) => setTimeout(r, 400));
@@ -515,6 +518,12 @@ function sliceFigure(d, si, title, ctl, names) {
           h('div.small', `${fmtInt(n)} 个样品，柱状图挤不下（超过 ${BAR_LIMIT} 个就没法读了）`),
           h('p.xsmall.dim.mt-2', '下面的表格按第一个时间窗排序，一样能比。')));
 
+  // 「一根深色都没有」得说出来。图注写着「深色那截是其中可信的比例」，
+  // 而这个窗口里一帧都不可信 —— 柱子整根是淡的，不说的话看起来只是颜色浅，
+  // 不像是「这三个数一个都不能用」。
+  const measured = d.rows.filter((r) => r.values[si]?.mean !== null);
+  const noneOk = measured.length > 0 && measured.every((r) => !(r.values[si]?.ok_ratio > 0));
+
   const note = h('div',
     h('div.chart-caption',
       `${fmtInt(n)} 个样品　窗口内`, h('span.strong', '全部帧'),
@@ -523,6 +532,12 @@ function sliceFigure(d, si, title, ctl, names) {
       ? h('div.chart-caption.dim',
           `${fmtInt(missing)} 个样品在这个窗口里没有数据`,
           missing === n ? '（整批都没测到这个时刻 —— 不是算不出来，是数据里就没有）' : '')
+      : null,
+    noneOk
+      ? h('div.chart-caption.warn-text',
+          `${win} 这个窗口里`, h('span.strong', '一帧可信的都没有'),
+          '　—— 柱子是全部帧的平均，但这几个数都不该拿来下结论',
+          infoDot('ot_status'))
       : null);
 
   return figure(title, { ctl, body, note });
@@ -565,14 +580,17 @@ function timeControl() {
  */
 function shortLabels(labels) {
   const raw = labels.map((l) => String(l));
-  if (raw.length < 2) return raw;
-
+  // 第一刀（去掉标签里重复一遍的批次前缀）对**一个**标签也成立 ——
+  // `ZG1/ZG1_a` 里那个 `ZG1/` 不因为只有一根柱子就变得有信息。
   let out = raw.map((l) => {
     const i = l.indexOf('/');
     if (i < 0) return l;
     const [batch, name] = [l.slice(0, i), l.slice(i + 1)];
     return name.startsWith(batch) ? name : l;
   });
+
+  // 第二刀要看**所有**标签，一个标签谈不上「共有」，就到此为止。
+  if (raw.length < 2) return out;
 
   // 共有的结尾段。`_SPS100` 每根柱子写一遍，它不告诉你任何事。
   const parts = out.map((l) => l.split('_'));

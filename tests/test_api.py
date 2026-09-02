@@ -332,3 +332,27 @@ def test_simple_model_form_rejects_junk(client):
     ok = client.post("/api/settings/models/simple",
                      json={"base_url": "https://x/v1", "model_id": "", "api_key": "k"})
     assert ok.status_code == 200
+
+
+# ------------------------------------------------------------------ 报错说人话
+def test_bad_query_params_speak_the_same_language_as_everything_else(client):
+    """参数不合法要走**这个平台自己**那套错误结构，而且是中文。
+
+    FastAPI 默认吐的是 pydantic 的原始结构，前端认的是
+    `{"error":{message,kind,detail}}` —— 认不出来就只能显示「请求失败（422）」
+    外加一坨英文 JSON。整个平台只有这一处说英语，
+    而它偏偏是「你哪里填错了」这种最需要说人话的地方。
+    """
+    r = client.get("/api/spectra/art_x/heatmap.png", params={"cmap": "nope"})
+    assert r.status_code == 400
+    e = r.json()["error"]
+    assert e["kind"] == "bad_request"
+    assert "只能是" in e["message"] and "rainbow" in e["message"]
+
+    r = client.get("/api/spectra/art_x/frames", params={"max_time_points": -3})
+    assert r.status_code == 400
+    assert "要不小于" in r.json()["error"]["message"]
+
+    r = client.get("/api/spectra/art_x/frames", params={"max_time_points": "abc"})
+    assert r.status_code == 400
+    assert "要是数字" in r.json()["error"]["message"]

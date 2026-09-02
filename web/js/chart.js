@@ -750,13 +750,16 @@ export function barChart({ groups = [], seriesLabels = [], yLabel = '', unit = '
       const ty = M.t + ih + 15;
       const txt = el('text', { x: tx, y: ty, 'text-anchor': 'middle',
                                fill: 'var(--ink-2)', 'font-size': 11 });
-      const budget = Math.max(1, Math.floor((gw - 4) / 6.2));   // 11px 字约 6.2px 宽
+      // 每行留 10px 空当，字宽按 6.8px 估（数字比字母宽，估紧了两个标签会贴上）。
+      // 三行：一格 250px 高、b=64 的边距装得下 201/214/227 三条基线，
+      // 而 ZG 的样品名去完冗余还有 40 多个字符 —— 两行就得截，三行能写全。
+      const budget = Math.max(1, Math.floor((gw - 10) / 6.8));
       if (budget < 4) {
         txt.setAttribute('text-anchor', 'end');
         txt.setAttribute('transform', `rotate(-28 ${tx} ${ty})`);
         txt.textContent = label.length > 16 ? label.slice(0, 15) + '…' : label;
       } else {
-        wrapLabel(label, budget, 2).forEach((line, li) => {
+        wrapLabel(label, budget, 3).forEach((line, li) => {
           txt.appendChild(Object.assign(
             el('tspan', { x: tx, dy: li ? 13 : 0 }), { textContent: line }));
         });
