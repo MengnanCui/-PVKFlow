@@ -112,11 +112,18 @@ def messages(conversation_id: str, limit: int = 500) -> list[dict]:
     return [_msg(r) for r in rows]
 
 
-def history_for_model(conversation_id: str, turns: int = HISTORY_TURNS) -> list[dict]:
+def history_for_model(conversation_id: str, turns: int = HISTORY_TURNS,
+                      *, with_spot: bool = False) -> list[dict]:
     """喂给模型的历史：只要 user/assistant 的正文，去掉空的助手消息。
 
     空的助手消息是「上一轮被中途停掉、一个字都没出来」留下的。带上去只会
     让模型以为自己上次答了个空，不如当它没发生过。
+
+    `with_spot=True` 时，把每条提问当时**看的是哪一处**拼回它前面。
+
+    为什么需要它：术语 ⓘ 里那几个数是随消息走的（在 system 里给一次就完了，
+    不进正文）。所以「为什么？」这种追问回放到模型那儿时，上一轮的读数已经没了 ——
+    模型只看到一句光秃秃的「为什么这一秒全不可信」，不知道是哪一秒。
     """
     out = []
     for m in messages(conversation_id):
@@ -124,7 +131,12 @@ def history_for_model(conversation_id: str, turns: int = HISTORY_TURNS) -> list[
             continue
         if m["role"] == "assistant" and not m["content"].strip():
             continue
-        out.append({"role": m["role"], "content": m["content"]})
+        content = m["content"]
+        if with_spot and m["role"] == "user":
+            spot = (m.get("meta") or {}).get("spot")
+            if spot:
+                content = f"（当时看的：{spot}）\n{content}"
+        out.append({"role": m["role"], "content": content})
     return out[-turns * 2:] if turns else out
 
 

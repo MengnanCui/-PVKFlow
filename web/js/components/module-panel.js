@@ -39,12 +39,15 @@ const CHART_H = 250;
  *   - `compute`  (params) => Promise<{panel_id: {x, y, label, y_label, caption}}>
  *                后端精确计算
  *   - `sampleName` 下载文件名用
+ *   - `sampleId`   面板上的 ⓘ 提问时带给模型的身份
  */
-export function moduleView(host, spec, { frames, compute, sampleName = '样品' }) {
+export function moduleView(host, spec, { frames, compute, sampleName = '样品',
+                                         sampleId = '' }) {
   const params = { ...Object.fromEntries(
     (spec.controls || []).map((c) => [c.key, c.default])) };
 
   const hosts = {};          // panel_id → 画图的容器
+  const lastData = {};       // panel_id → 这一格最近一次算出来的结果（标题上的 ⓘ 要用）
   let settleTimer = 0;
   // 上一次取精确值之后又动过哪些控件。带给后端，它据此判断哪些面板要重算 ——
   // `uses=[]` 的面板（比如膜厚那格全波段对照）结果不可能变，
@@ -190,6 +193,9 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品' 
     const host = hosts[panel.id];
     if (!host) return;
 
+    // 标题上那个 ⓘ 是在图外面的，重画这一格不会重建它 ——
+    // 所以它取读数得靠这里存的最新一份，不能靠闭包捕获画图时的 d。
+    lastData[panel.id] = d;
     firstPaint(host);
     if (panel.kind === 'text') return drawText(host, panel, d);
     if (panel.kind === 'heatmap') return drawHeatmap(host, panel, d);
@@ -244,6 +250,39 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品' 
       noticeBox(d));
   }
 
+  /**
+   * 这一格图的读数，发给模型。
+   *
+   * `info_extra` 早就在契约里（`ModuleSpec` 那边注释写着「跟着当前数据走的内容」），
+   * 膜厚模块也一直在填它 —— 但它只被画进浮层给人看，从没进过发给模型的那段话。
+   * 人看得见、模型看不见，于是你点开「这张图上 DEGRADED 有 87 帧」旁边的 ⓘ
+   * 问「为什么这么多」，模型手上只有一段通用定义。
+   *
+   * 现在同一批数据两条路：`extra` 渲染成表格，这里拍平成文字。
+   * 控件当前值也一起带上 —— 判级不好多半就是窗口设窄了，那个数得在场。
+   */
+  function panelSpot(d) {
+    const rows = {};
+    for (const st of d?.stats || []) {
+      rows[st.label] = `${st.value}${st.unit ? ' ' + st.unit : ''}`
+        + (st.tone ? `（界面标成 ${st.tone}）` : '');
+    }
+    for (const c of spec.controls || []) {
+      const v = params[c.key];
+      rows[`控件 ${c.label}`] = (Array.isArray(v) ? v.join('–') : v)
+        + (c.unit ? ` ${c.unit}` : '');
+    }
+    for (const it of d?.info_extra?.items || []) {
+      rows[`${it.key} ${it.label}`] = it.count != null ? `${it.count} 帧` : (it.note || '');
+    }
+    return {
+      title: `模块「${spec.name}」这一格`,
+      rows,
+      note: [d?.caption, d?.notice?.body].filter(Boolean).join('　'),
+      scope: sampleId ? { filter: { ids: [sampleId] } } : {},
+    };
+  }
+
   /** 图注：预览/精确的标注 + stats 那串带 ⓘ 的数字 + 文字说明。三种 kind 共用。 */
   function caption(panel, d, exact, nPts) {
     const bits = [];
@@ -263,11 +302,13 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品' 
         ? fmtNum(st.value, Number.isInteger(st.value) ? 0 : undefined) : st.value}`
         + (st.unit ? ` ${st.unit}` : '');
       bits.push(h('span.xsmall' + (st.tone ? `.status.status-${st.tone}` : ''),
-        '　', st.info ? withInfo(text, st.info) : text));
+        '　', st.info ? withInfo(text, st.info, { spot: () => panelSpot(d) }) : text));
     }
-    // 面板的 ⓘ 附加段跟着当前数据走，挂在图注末尾那个 ⓘ 上
+    // 面板的 ⓘ 附加段跟着当前数据走，挂在图注末尾那个 ⓘ 上。
+    // `extra` 是画给人看的那一份，`spot` 是发给模型的那一份 —— 同一批数据，
+    // 一个渲染成表格、一个拍平成文字。
     if (d?.info_extra && panel.info) {
-      bits.push(infoDot(panel.info, { extra: d.info_extra }));
+      bits.push(infoDot(panel.info, { extra: d.info_extra, spot: () => panelSpot(d) }));
     }
     const extraCap = [d?.caption, panel.caption].filter(Boolean).join('　');
     if (extraCap) bits.push(h('span.xsmall.dim', `　${extraCap}`));
@@ -302,7 +343,12 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品' 
   const buildFigure = (p) => {
     const body = h('div.module-panel-body', skeletonRows(3));
     hosts[p.id] = body;
-    return figure(p.info ? withInfo(p.title, p.info) : p.title, {
+    // 标题上这个 ⓘ 是一格图里最显眼的那个 —— 它更得带上这格的读数。
+    // `lastData` 是这一格最近一次算出来的结果（点开的那一刻取，
+    // 所以拖完控件再点，拿到的是拖之后的数）。
+    return figure(p.info
+      ? withInfo(p.title, p.info, { spot: () => panelSpot(lastData[p.id]) })
+      : p.title, {
       head: p.kind === 'text' ? null : downloadMenu({
         // 热力图是服务端渲染的位图，下的就是那张图；曲线下 SVG / CSV
         svg: () => (p.kind === 'heatmap' ? null : body.querySelector('svg')),

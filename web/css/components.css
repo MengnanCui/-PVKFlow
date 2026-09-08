@@ -927,6 +927,9 @@ body.is-resizing { cursor: col-resize; user-select: none; }
 .info-msg.is-user .info-msg-body { background: var(--accent-wash); color: var(--ink); }
 .info-msg.is-assistant .info-msg-body { background: var(--surface-2); color: var(--ink); }
 .info-msg-time { font-size: var(--t-xs); }
+/* 「当时看的：18–19 s · 3 项读数」。比问题本身轻一档 ——
+   它是这一问的背景，不是这一问。 */
+.info-msg-spot { font-size: var(--t-xs); max-width: 88%; overflow-wrap: anywhere; }
 .info-p { margin: 0; }
 .info-p + .info-p { margin-top: .55em; }
 

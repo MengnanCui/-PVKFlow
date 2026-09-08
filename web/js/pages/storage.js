@@ -12,6 +12,23 @@ export const meta = {
   desc: '全部数据在这里。数据处理页是挑一批出来跑，这里是查它们都存到哪儿了',
 };
 
+/** 这块盘上到底存了什么。「为什么占这么多」「去重省了多少」都靠这几个数答。 */
+function storageSpot(d) {
+  const modes = Object.fromEntries(d.by_mode.map((m) => [m.storage_mode, m]));
+  const copied = modes.copied || { n: 0, bytes: 0 };
+  const referenced = modes.referenced || { n: 0, bytes: 0 };
+  return {
+    title: '这个工作区的存储现状',
+    rows: {
+      复制进工作区: `${fmtInt(copied.n)} 个文件 · ${fmtBytes(copied.bytes)}`,
+      原地引用: `${fmtInt(referenced.n)} 个文件 · ${fmtBytes(referenced.bytes)}（原图未搬动）`,
+      关键结果: `${fmtInt(d.counts.results)} 条 · ${d.fields.length} 个不同字段`,
+      数值表: `${d.tables.length} 张 Parquet`,
+    },
+    note: '复制进来的那部分按 sha256 内容寻址：同一份文件导入多次只占一份。',
+  };
+}
+
 export function view(host, ctx = {}) {
   return render(host, () => api.storageStats(), (d) => {
     const modes = Object.fromEntries(d.by_mode.map((m) => [m.storage_mode, m]));
@@ -23,8 +40,12 @@ export function view(host, ctx = {}) {
 
       h('div.section',
         h('div.metrics.metrics-4',
-          metric(withInfo('复制进工作区', 'storage_mode'), copied.n,
-                 h('span', fmtBytes(copied.bytes), ' · 内容寻址去重', infoDot('dedup'))),
+          // 「我这块盘为什么占了这么多」「去重到底省了多少」—— 这两问的答案
+          // 就是旁边这几个数，两个 ⓘ 共用同一份读数
+          metric(withInfo('复制进工作区', 'storage_mode', { spot: () => storageSpot(d) }),
+                 copied.n,
+                 h('span', fmtBytes(copied.bytes), ' · 内容寻址去重',
+                   infoDot('dedup', { spot: () => storageSpot(d) }))),
           metric('原地引用', referenced.n, fmtBytes(referenced.bytes) + ' · 原图未搬动'),
           metric('关键结果', d.counts.results, `${d.fields.length} 个不同字段`),
           metric('数值表', d.tables.length, 'Parquet 列式存储'))),

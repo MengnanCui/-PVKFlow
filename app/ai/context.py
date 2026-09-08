@@ -30,7 +30,7 @@ FACTS_BYTE_LIMIT = 60_000
 
 
 def build(scope: dict | None, *, detail_max: int = DETAIL_MAX,
-          overview_only: bool = False) -> dict:
+          overview_only: bool = False, run_id: str = "") -> dict:
     """按范围拼一份事实包。
 
     scope 形如 `{"mode": "selected"|"all", "filter": {...}, "label": "..."}`。
@@ -40,6 +40,9 @@ def build(scope: dict | None, *, detail_max: int = DETAIL_MAX,
     `overview_only=True` 时只给 L1 概览：不给逐样品明细，也不发「请先收窄」
     那句指令。术语 ⓘ 弹窗走这条 —— 问「LOW_CYCLES 是什么意思」的时候，
     一张 40 行的样品表帮不上忙，反而会把模型带去提议筛选式。
+
+    `run_id` 指定要带哪一次对比的诊断。在对比页上点开的 ⓘ 会带上它 ——
+    问的是眼前这一次，而「最近一次」未必是它。
 
     返回 `{"facts": {...}, "n_samples": int, "needs_narrowing": bool}`。
     """
@@ -71,9 +74,9 @@ def build(scope: dict | None, *, detail_max: int = DETAIL_MAX,
     else:
         facts["样品明细"] = _samples(flt, detail_max)
 
-    last = _last_comparison()
-    if last:
-        facts["最近一次对比"] = last
+    comp = _comparison(run_id)
+    if comp:
+        facts["你正在看的这次对比" if run_id else "最近一次对比"] = comp
 
     return {"facts": facts, "n_samples": n, "needs_narrowing": needs_narrowing,
             "mode": mode, "filter": flt}
@@ -165,19 +168,34 @@ def _scalars_for(sample_ids: list[str]) -> dict[str, dict]:
 
 
 # ---------------------------------------------------------------- 最近一次对比
-def _last_comparison() -> dict | None:
-    """带上最近一次批处理的诊断。
+def _comparison(run_id: str = "") -> dict | None:
+    """带上一次批处理的诊断。
 
     「这批膜厚为什么大半是 DEGRADED」是个很自然的问题，而答案
     （窗口太窄 → bin 太大 → 条纹数不够）全在这几个数里。不带上的话
     模型只能猜。
+
+    `run_id` 给了就取**那一次**。你站在对比页上点开 ⓘ 提问，问的显然是
+    眼前这一次 —— 而「最近一次」未必是它（你可能正翻着上周那次的结果）。
+    没给就退回最近一次，AI 抽屉那条路一直是这个行为。
     """
     from app import batch as batch_mod
 
-    runs = batch_mod.recent_batches(limit=1)
-    if not runs:
-        return None
-    r = runs[0]
+    r = None
+    if run_id:
+        r = db.query_one(
+            "SELECT analysis_run_id, params_json, started_at,"
+            "       (SELECT COUNT(*) FROM analysis_run c"
+            "         WHERE c.parent_run_id = p.analysis_run_id) AS n_children,"
+            "       (SELECT COUNT(*) FROM analysis_run c"
+            "         WHERE c.parent_run_id = p.analysis_run_id"
+            "           AND c.status = 'failed') AS n_failed"
+            "  FROM analysis_run p WHERE p.analysis_run_id = ?", (run_id,))
+    if r is None:
+        runs = batch_mod.recent_batches(limit=1)
+        if not runs:
+            return None
+        r = runs[0]
     try:
         params = json.loads(r.get("params_json") or "{}")
     except json.JSONDecodeError:

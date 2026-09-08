@@ -221,6 +221,29 @@ function observeScroll() {
 }
 
 
+// ------------------------------------------------------------------ 给 ⓘ 的读数
+//
+// 点开 ⓘ 提问时，模型除了术语表那段定义，还能看到这里给的东西。
+// `scope.filter.ids` 是这个样品的身份 —— 后端据此给出它自己那一行标量，
+// 而不是全库汇总。
+
+/** 这份矩阵是什么形状、当前怎么显示。所有样品页的 ⓘ 都带上它。 */
+function matrixSpot(extra = {}) {
+  const m = S.meta || {};
+  return {
+    rows: {
+      样品: m.sample?.name || m.filename || '（未命名）',
+      批次: m.sample?.batch || '（无）',
+      矩阵: `${fmtInt(m.n_lambda)} 个波长 × ${fmtInt(m.n_time)} 帧`,
+      波长范围: `${fmtNum(m.lambda_min, 3)}–${fmtNum(m.lambda_max, 3)} nm，步长 ${fmtNum(m.lambda_step, 3)} nm`,
+      时间范围: `0–${fmtNum(m.time_max, 3)} s，约 ${fmtNum(m.frame_rate_hz, 1)} Hz`,
+      值域: `${fmtNum(m.value_min, 2)}–${fmtNum(m.value_max, 2)}`,
+      ...extra,
+    },
+    scope: m.sample?.sample_id ? { filter: { ids: [m.sample.sample_id] } } : {},
+  };
+}
+
 /** 色标条的值域与说明，随归一化方式变化。 */
 function colorScale() {
   switch (S.norm) {
@@ -252,7 +275,18 @@ function drawSpectra() {
 
   mount(host,
     h('div.fig-grid-2',
-      figure(withInfo('全波长强度热力图', 'norm'), {
+      figure(withInfo('全波长强度热力图', 'norm', {
+        spot: () => ({
+          title: '这张热力图现在的显示设置',
+          ...matrixSpot({
+            当前归一化: { frame: '每帧归一化', wavelength: '每波长归一化',
+                          global: '全局', none: '原始值' }[S.norm],
+            色标: S.cmap,
+            色标当前值域: `${colorScale().vMin}–${colorScale().vMax}（${colorScale().vLabel}）`,
+          }),
+          note: '归一化只影响显示，不影响任何计算。',
+        }),
+      }), {
         head: [
           selectControl('归一化', S.norm, [
             ['frame', '每帧归一化'], ['wavelength', '每波长归一化'],
@@ -268,7 +302,20 @@ function drawSpectra() {
         body: hm,
       }),
 
-      figure(withInfo('不同时刻的光谱叠加', 'overlay_n'), {
+      figure(withInfo('不同时刻的光谱叠加', 'overlay_n', {
+        spot: () => ({
+          title: '这张叠加谱现在叠了哪几条',
+          ...matrixSpot({
+            叠了几条: S.nOverlay,
+            时间段: S.tFrom === null ? '（还没定）'
+              : `${fmtNum(S.tFrom, 2)}–${fmtNum(S.tTo, 2)} s`,
+            波长范围: S.lFrom === null ? '（还没定）'
+              : `${fmtNum(S.lFrom, 1)}–${fmtNum(S.lTo, 1)} nm`,
+            短波端说明: S.satNote || '',
+          }),
+          note: '每条在显示范围内按自身最大值归一化，颜色由浅到深 = 由早到晚。',
+        }),
+      }), {
         head: [
           h('span.small.muted', '条数'),
           h('input.range', {
@@ -361,7 +408,17 @@ function drawOverlay() {
       `${n} 条 · ${from.toFixed(2)}–${to.toFixed(2)} s · `,
       `${lo.toFixed(0)}–${hi.toFixed(0)} nm · 颜色由浅到深 = 由早到晚 · `,
       `每条在显示范围内按自身最大值归一化 · λ 抽样至 ${fmtNum(S.frames.lambda_step, 3)} nm`),
-    S.satNote ? h('div.chart-caption.dim', S.satNote, infoDot('saturated_head')) : null);
+    S.satNote
+      ? h('div.chart-caption.dim', S.satNote, infoDot('saturated_head', {
+          spot: () => ({
+            title: '这份数据的短波端饱和情况',
+            ...matrixSpot({
+              界面上这句话: S.satNote,
+              叠加谱起始波长: S.lFrom === null ? '（还没定）' : `${fmtNum(S.lFrom, 1)} nm`,
+            }),
+          }),
+        }))
+      : null);
 }
 
 /** 时间色阶：浅蓝 → 深蓝。u∈[0,1]，0 最早。 */
@@ -423,6 +480,9 @@ function drawModules() {
     moduleView(host, m, {
       frames: S.frames,
       sampleName: S.meta?.sample_name || '样品',
+      // 面板上的 ⓘ 提问时要说清是哪个样品 —— 后端据此给出它自己那一行标量，
+      // 而不是全库汇总
+      sampleId: S.meta?.sample?.sample_id || '',
       compute: (params, changed) =>
         api.moduleCompute(m.id, S.artifactId, params, changed).then((r) => r.panels),
     });

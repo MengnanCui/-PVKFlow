@@ -11,6 +11,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api import chat as chat_api
 from app.storage import conversations, db
 
 
@@ -486,3 +487,118 @@ def test_topic_is_a_label_not_a_place_to_stash_sample_ids(client, samples):
     assert scope["topic"] == "glossary:ot"
     assert "ids" not in scope
     assert scope["filter"] == {}
+
+
+# ------------------------------------------------------------------ 眼前这一处
+#
+# 「点开 ⓘ 之后模型到底知道什么」这条链路。以前它只知道术语表那段定义 ——
+# 你点开 18–19 s 那个「一帧可信的都没有」问「为什么」，它只能把定义换个说法重讲。
+def test_the_numbers_on_screen_reach_the_model(client, samples, monkeypatch):
+    """界面把眼前这一处的读数拼进 context_note，必须原样进 prompt。"""
+    p = _use(monkeypatch, _FakeProvider(["好"]))
+    cid = client.post("/api/chat/conversations",
+                      json={"scope": {"topic": "glossary:ot_status"}}).json()[
+        "conversation"]["conversation_id"]
+    note = ("可信度判级\n每一帧分三档。\n\n"
+            "「不同时刻的平均膜厚」里 18–19 s 这个窗口\n"
+            "  ZG0013_…1932　2204 nm　0/10 帧可信\n"
+            "  ZG0014_…1833　1732 nm　0/10 帧可信")
+    client.post(f"/api/chat/conversations/{cid}/messages",
+                json={"content": "为什么这一秒全都不可信？", "context_note": note})
+
+    system = p.seen[0].content
+    assert "2204 nm" in system and "0/10 帧可信" in system
+    assert "18–19 s 这个窗口" in system
+    # prompt 得告诉模型这一段是什么、以及不许编数
+    assert "眼前这一处" in system
+    assert "不要编" in system
+
+
+def test_a_long_note_is_capped_but_not_at_the_old_2000(client, samples, monkeypatch):
+    """读数比定义长得多。上限还在（不能让界面往 prompt 里灌任意长的东西），
+    但不能卡在只够放定义的那个数上。"""
+    p = _use(monkeypatch, _FakeProvider(["好"]))
+    cid = client.post("/api/chat/conversations",
+                      json={"scope": {"topic": "glossary:ot_status"}}).json()[
+        "conversation"]["conversation_id"]
+    # 用一个 prompt 里不会出现的字符当标记 —— 「数」在 GLOSSARY_PROMPT 里本来就有几个
+    client.post(f"/api/chat/conversations/{cid}/messages",
+                json={"content": "?", "context_note": "囧" * 9000})
+
+    system = p.seen[0].content
+    assert system.count("囧") == chat_api.CONTEXT_NOTE_MAX
+    assert chat_api.CONTEXT_NOTE_MAX > 2000
+
+
+def test_a_term_question_about_a_named_sample_does_get_its_row(client, samples,
+                                                               monkeypatch):
+    """ⓘ 说清了在看哪个样品时，那一行明细恰恰就是问题本身。
+
+    「术语对话不给样品明细」这条规矩的理由是「40 行帮不上忙」——
+    范围窄到一个样品时它不成立。
+    """
+    p = _use(monkeypatch, _FakeProvider(["好"]))
+    cid = client.post("/api/chat/conversations", json={
+        "scope": {"topic": "glossary:ot_status", "filter": {"ids": ["s1"]}}}).json()[
+        "conversation"]["conversation_id"]
+    client.post(f"/api/chat/conversations/{cid}/messages", json={"content": "这个样品呢"})
+
+    blob = "\n".join(str(m.content) for m in p.seen)
+    assert "样品明细" in blob
+    # 但仍然只有那一个样品，不是整库倒出来
+    assert blob.count("ZG00") < 6
+
+
+def test_a_follow_up_still_knows_which_spot_it_was_about(client, samples, monkeypatch):
+    """「为什么？」这种追问不能掉上下文。
+
+    读数只在 system 里给过一次、不进正文 —— 不把它拼回历史的话，
+    第二问到模型那儿是一句光秃秃的「为什么」，它不知道是哪一秒。
+    """
+    p = _use(monkeypatch, _FakeProvider(["因为条纹不够", "再说一遍"]))
+    cid = client.post("/api/chat/conversations",
+                      json={"scope": {"topic": "glossary:ot_status"}}).json()[
+        "conversation"]["conversation_id"]
+    client.post(f"/api/chat/conversations/{cid}/messages",
+                json={"content": "为什么全不可信", "spot": "18–19 s 这个窗口 · 3 项读数"})
+    client.post(f"/api/chat/conversations/{cid}/messages", json={"content": "为什么？"})
+
+    replay = "\n".join(str(m.content) for m in p.seen)
+    assert "18–19 s 这个窗口" in replay
+
+
+def test_the_run_id_picks_that_comparison_not_the_latest(client, samples, monkeypatch):
+    """在对比页上点开的 ⓘ 问的是**眼前这一次**，而「最近一次」未必是它
+    —— 你可能正翻着上周那次的结果。"""
+    with db.tx() as conn:
+        for rid, title, when in (("run_aaa111", "老的那次", "2026-01-01T00:00:00"),
+                                 ("run_bbb222", "新的那次", "2026-09-01T00:00:00")):
+            conn.execute(
+                "INSERT INTO analysis_run (analysis_run_id, skill_id, skill_version,"
+                "                          status, params_json, started_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (rid, "batch.abs_thickness", "0.2.0", "ok",
+                 json.dumps({"title": title}), when))
+
+    p = _use(monkeypatch, _FakeProvider(["好"]))
+    cid = client.post("/api/chat/conversations", json={
+        "scope": {"topic": "glossary:ot", "run_id": "run_aaa111"}}).json()[
+        "conversation"]["conversation_id"]
+    client.post(f"/api/chat/conversations/{cid}/messages", json={"content": "这次怎么样"})
+
+    blob = "\n".join(str(m.content) for m in p.seen)
+    assert "老的那次" in blob and "新的那次" not in blob
+    assert "你正在看的这次对比" in blob
+
+
+def test_run_id_must_look_like_a_run_id(client, samples):
+    """scope 里只放**能重新解析的 id**。乱写的要当场拒掉，
+    不能让它变成往范围里塞任意字符串的后门。"""
+    ok = client.post("/api/chat/conversations",
+                     json={"scope": {"topic": "glossary:ot", "run_id": "run_1ebd03b4c6f4"}})
+    assert ok.json()["conversation"]["scope"]["run_id"] == "run_1ebd03b4c6f4"
+
+    for bad in ("../../etc/passwd", "run_", "DROP TABLE", "smp_8bd0030642e6"):
+        r = client.post("/api/chat/conversations",
+                        json={"scope": {"topic": "glossary:ot", "run_id": bad}})
+        assert r.status_code == 400, bad

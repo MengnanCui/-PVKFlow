@@ -30,6 +30,9 @@ import { term } from '../glossary.js';
  *   - `extra`：附加段，形如 `{ title, items: [{ key, label, note, count }] }`。
  *     给「这张图上真的出现过哪几档判级」这种**跟着当前数据走**的内容用 ——
  *     固定定义是所有页面共用的，这一段只属于这一张图。
+ *   - `spot`：**你眼前这一处的读数**，见 `spotText()`。带上它，模型才答得了
+ *     「为什么这一秒全都不可信」——否则它手上只有一段通用定义，
+ *     只能把定义换个说法再讲一遍。
  * @returns {HTMLElement|null}  术语不存在时返回 null —— 宁可不显示，
  *   也不要显示一个点开是空的 ⓘ（那比没有更糟：用户会以为是坏了）
  */
@@ -50,17 +53,92 @@ export function infoDot(id, opts = {}) {
       e.stopPropagation();
       // 再点一次就收起来 —— 一个只能开不能关的按钮很讨厌
       if (btn.getAttribute('aria-expanded') === 'true') return closePop();
-      openInfo(id, { anchor: btn, extra: opts.extra });
+      // spot 可以是个函数：点开的**那一刻**才去取当前读数。
+      // 渲染时就固化的话，你拖完滑块再点 ⓘ，带上去的还是拖之前那组数。
+      const spot = typeof opts.spot === 'function' ? opts.spot() : opts.spot;
+      openInfo(id, { anchor: btn, extra: opts.extra, spot });
     },
   }, 'ⓘ');
   return btn;
 }
 
 /** 一行「词 + ⓘ」。给标题、图注、表头用，省得每处都写一遍 flex。 */
-export function withInfo(text, id) {
-  const dot = infoDot(id, { label: typeof text === 'string' ? text : undefined });
+export function withInfo(text, id, opts = {}) {
+  const dot = infoDot(id, { label: typeof text === 'string' ? text : undefined, ...opts });
   return dot ? h('span.with-info', text, dot) : h('span', text);
 }
+
+// ------------------------------------------------------------------ 眼前这一处
+//
+// ★ 这一段是「点了 ⓘ 之后模型到底知道什么」的全部答案。
+//
+// 以前往上带的只有术语表里那段固定定义。于是你点开 18–19 s 那个
+// 「一帧可信的都没有」旁边的 ⓘ，问「为什么全都不可信」，模型手上是
+// 「判级分三档」加上全库有几个样品 —— 它答不出这一秒的事。
+//
+// 现在多带两层：
+//   一、**读数**（这里）—— 你眼前这几个数，逐条写清楚
+//   二、**身份**（`spot.scope`）—— 哪个样品 / 哪次对比，让后端能顺着取更多
+//
+// 读数走 `context_note`（每条消息带一次、不落进会话范围），身份走 `scope`。
+// 这个分工是有原因的：`chat.py` 的 `_clean_scope` 明写着范围里只能放
+// 能重新解析的 id，不能塞快照 —— 否则几个月后点开历史对话，
+// 里面是一批早就不存在的数字。
+
+/** 一处读数最多列几行。24 个样品的柱状图不能把一次提问的额度全用光。 */
+const SPOT_ROWS = 12;
+
+/**
+ * 把一处读数拍平成给模型读的几行字。
+ *
+ * `spot` 形如：
+ * ```
+ * { title: '18–19 s 这个窗口',
+ *   rows:  [['ZG0013…', '2204 nm', '0/10 帧可信'], …],
+ *   note:  '这批数据测到 21.082 s',
+ *   scope: { filter: { ids: ['smp_…'] }, run_id: 'run_…' } }
+ * ```
+ * `rows` 也可以是 `{键: 值}`，一行一对 —— 参数面板那种场合写起来更顺。
+ */
+function spotText(spot) {
+  if (!spot) return '';
+  const out = [spot.title || '你正在看的这一处'];
+
+  let rows = spot.rows || [];
+  if (!Array.isArray(rows)) {
+    rows = Object.entries(rows).filter(([, v]) => v !== null && v !== undefined && v !== '');
+  }
+  const shown = rows.slice(0, SPOT_ROWS);
+  for (const r of shown) {
+    out.push('  ' + (Array.isArray(r) ? r.filter((x) => x !== null && x !== undefined
+                                                        && x !== '').join('　') : String(r)));
+  }
+  // 截断了要说出来。不说的话模型会把「12 个」当成全部，然后据此下结论。
+  if (rows.length > shown.length) {
+    out.push(`  …还有 ${rows.length - shown.length} 行没列出来（一次最多列 ${SPOT_ROWS} 行）`);
+  }
+  if (spot.note) out.push('  ' + spot.note);
+  return out.join('\n');
+}
+
+/** 附加段（模块声明的 `info_extra`）拍平。它一直只画给人看，从没发给过模型。 */
+function extraText(extra) {
+  if (!extra?.items?.length) return '';
+  const out = [extra.title || '这张图上的分布'];
+  for (const it of extra.items) {
+    out.push('  ' + [it.key, it.label, it.count != null ? `${it.count} 帧` : '', it.note]
+      .filter(Boolean).join('　'));
+  }
+  return out.join('\n');
+}
+
+/** 转录里那行小字：这一问当时看的是哪一处。 */
+const spotDigest = (spot) => {
+  if (!spot) return '';
+  const n = Array.isArray(spot.rows) ? spot.rows.length
+          : spot.rows ? Object.keys(spot.rows).length : 0;
+  return [spot.title, n ? `${n} 项读数` : ''].filter(Boolean).join(' · ');
+};
 
 // ------------------------------------------------------------------ 浮层
 const TOPIC = (id) => `glossary:${id}`;
@@ -108,7 +186,7 @@ function place(pop, anchor) {
   pop.style.left = `${Math.round(left)}px`;
 }
 
-export function openInfo(id, { anchor = null, extra = null } = {}) {
+export function openInfo(id, { anchor = null, extra = null, spot = null } = {}) {
   const t = term(id);
   if (!t) return;
   closePop();
@@ -273,7 +351,10 @@ export function openInfo(id, { anchor = null, extra = null } = {}) {
 
     input.value = '';
     grow();
-    S.messages.push({ role: 'user', content: text, meta: {} });
+    const digest = spotDigest(spot);
+    // 摘要跟着这条问题走：一条术语一条对话线，你问过 A 样品又问 B 样品时，
+    // 历史混在一起本来是看不出来的。写出来比假装没这回事强。
+    S.messages.push({ role: 'user', content: text, meta: digest ? { spot: digest } : {} });
     const a = { role: 'assistant', content: '', meta: {}, streaming: true };
     S.messages.push(a);
     paint();
@@ -285,11 +366,23 @@ export function openInfo(id, { anchor = null, extra = null } = {}) {
     try {
       await api.sendMessage(S.conv, {
         content: text,
-        scope: { topic: TOPIC(id), label: t.title },
+        // 身份（哪个样品 / 哪次对比）进 scope —— 那里只放能重新解析的 id，
+        // 后端据此还能去取更多。读数**不进这里**，见上面 spotText 的注释。
+        scope: { topic: TOPIC(id), label: t.title, ...(spot?.scope || {}) },
+        // 摘要落进这条消息的 meta。追问时后端会把它拼回历史 ——
+        // 读数只在 system 里给一次、不进正文，不拼回去「为什么？」就没了着落。
+        spot: digest,
         ...(S.model || {}),        // 没选就不带，后端按设置里的默认走
-        // 定义原文跟着走。术语表是界面文案，后端不该另存一份 ——
-        // 两份定义各自维护迟早对不上，那时候用户看到的和模型说的就是两回事了。
-        context_note: `${t.title}\n${t.what}\n${t.why}`,
+        // 三段，从通用到具体：
+        //   定义原文  —— 术语表是界面文案，后端不该另存一份（两份迟早对不上，
+        //                那时候用户看到的和模型说的就是两回事了）
+        //   附加段    —— 模块声明的 info_extra，一直只画给人看，这次一并发出去
+        //   眼前这处  —— 你正在看的那几个数
+        context_note: [
+          `${t.title}\n${t.what}\n${t.why}`,
+          extraText(extra),
+          spotText(spot),
+        ].filter(Boolean).join('\n\n'),
       }, {
         signal: S.abort.signal,
         onFrame: (event, data) => {
@@ -346,6 +439,9 @@ function bubble(m) {
   if (meta.noModel) body.push(h('div.small', '还没配模型。设置页里粘贴一份配置就能用。'));
   if (meta.error) body.push(h('div.small.danger', meta.error));
   return h(`div.info-msg.is-${m.role}`,
+    // 这一问当时看的是哪一处。一条术语一条对话线，问过 A 样品又问 B 样品时
+    // 历史是混在一起的 —— 不写出来，回头读这段对话会以为两问是同一处数据。
+    meta.spot ? h('div.info-msg-spot.dim', '当时看的：', meta.spot) : null,
     h('div.info-msg-body', ...body),
     m.created_at ? h('div.info-msg-time.dim', fmtTime(m.created_at)) : null);
 }

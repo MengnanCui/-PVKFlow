@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Iterator
 
 from fastapi import APIRouter, Body, Query
@@ -37,6 +38,14 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 # 模型可以吐的动作。写死成白名单 —— 模型编一个 "delete_everything" 出来时，
 # 界面应该当它没说，而不是照着渲染一个按钮。
 ACTIONS = ("none", "narrow", "select", "process")
+
+# 对比 run 的 id 形状（`db.new_id("run")`）。scope 里放 id 而不是快照，
+# 就得确认它真是个 id。
+_RUN_ID_RE = re.compile(r"run_[0-9a-f]{6,32}")
+
+# 界面带上来的那段说明能有多长。定义原文只有两三百字，
+# 加上「眼前这一处」的读数（最多 12 行）之后要留出余量。
+CONTEXT_NOTE_MAX = 4000
 
 SYSTEM_PROMPT = """\
 你是高通量实验数据平台 HTE Studio 里的分析助手。用户是钙钛矿/TCO 方向的研究者，\
@@ -73,13 +82,19 @@ GLOSSARY_PROMPT = """\
 你是 HTE Studio 里的术语解释助手。用户在界面上点开了某个术语旁边的 ⓘ，\
 想把这个概念弄明白。
 
-下面会给你两样东西：
+下面会给你三样东西：
 
 1. **平台里这条术语的权威定义** —— 这是界面上正在显示给用户看的原文。\
    你的回答必须和它一致。它没说的你可以补，它说了的不要改口，\
    更不要另编一套定义出来（用户会同时看到两份，对不上就没法用了）。
-2. **用户当前库里的汇总统计** —— 用来把抽象定义落到他自己的数据上。\
-   这里面没有的数字不要编。
+2. **用户眼前这一处的读数** —— 他点的那个 ⓘ 旁边正显示着的那几个数\
+   （哪个时间窗、哪几个样品、各是多少、多少帧可信…）。\
+   **他问的多半就是这几个数**，先看它再答，别只把定义换个说法重讲一遍。\
+   这一段没给的时候，就说明他点的是个纯概念的 ⓘ，旁边本来就没有数据。
+3. **用户当前库里的汇总统计** —— 用来把抽象定义落到他自己的数据上。
+
+这三样里没有的数字，一个都不要编。要是这几样都答不上他的问题，\
+就直说需要看什么才能答。
 
 回答用中文，直接，不要客套话。用户问的是概念，不是要你操作平台 ——\
 **不要输出 json 动作块。**
@@ -164,15 +179,26 @@ def post_message(conversation_id: str, payload: dict = Body(...)):
     # ★ 没配模型要在**开流之前**炸。开了流就再也改不了状态码了。
     provider, model = _resolve_or_501(payload.get("provider"), payload.get("model"))
 
-    # 术语对话不给逐样品明细：用户问的是「DEGRADED 是什么意思」，
+    # 术语对话默认不给逐样品明细：用户问的是「DEGRADED 是什么意思」，
     # 塞 40 行样品表既挤掉定义本身，又会诱着模型去提议收窄筛选式。
+    #
+    # **但 ⓘ 明确说了在看哪几个样品时例外。** 那条理由是「40 行帮不上忙」——
+    # 范围已经窄到一两个样品时它不成立，而那几行恰恰就是问题本身。
     topic = scope.get("topic") or ""
-    built = guard(ai_context.build, scope, overview_only=bool(topic))
+    narrowed = bool((scope.get("filter") or {}).get("ids"))
+    built = guard(ai_context.build, scope,
+                  overview_only=bool(topic) and not narrowed,
+                  run_id=scope.get("run_id") or "")
     facts = ai_context.to_prompt(built["facts"])
 
-    history = conversations.history_for_model(conversation_id)
-    conversations.add_message(conversation_id, "user", question,
-                              meta={"scope": scope, "n_samples": built["n_samples"]})
+    # 术语对话要把「当时看的是哪一处」一起回放。那几个数只在 system 里给过一次，
+    # 不进正文 —— 不拼回去的话，「为什么？」这种追问到模型那儿是一句
+    # 光秃秃的「为什么这一秒全不可信」，它不知道是哪一秒。
+    history = conversations.history_for_model(conversation_id, with_spot=bool(topic))
+    spot = str(payload.get("spot") or "").strip()[:200]
+    conversations.add_message(
+        conversation_id, "user", question,
+        meta={"scope": scope, "n_samples": built["n_samples"], **({"spot": spot} if spot else {})})
     if conv["title"] == "新对话":
         conversations.rename(conversation_id, question[:40])
 
@@ -180,7 +206,7 @@ def post_message(conversation_id: str, payload: dict = Body(...)):
     if topic:
         # 定义原文由前端带上来 —— 术语表是界面文案，跟界面放在一起才不会漂。
         # 两份定义各自维护迟早对不上，那时候用户看到的和模型说的就不是一回事了。
-        note = str(payload.get("context_note") or "").strip()[:2000]
+        note = str(payload.get("context_note") or "").strip()[:CONTEXT_NOTE_MAX]
         system = GLOSSARY_PROMPT
         if note:
             system += f"\n\n界面上这条术语的定义原文：\n{note}\n"
@@ -342,4 +368,14 @@ def _clean_scope(raw) -> dict:
     # 术语 ⓘ 弹窗：一条术语一条对话线。只是个标签，不参与查询。
     if raw.get("topic"):
         out["topic"] = str(raw["topic"])[:80]
+    # 在对比页上点开的 ⓘ 会带上**是哪一次**对比。
+    #
+    # 它是 id 不是快照 —— 每次读的时候重新去库里解析，那次对比要是被删了，
+    # 就是查不到，而不是拿着一份早就对不上的旧数字继续说话。
+    # 这正是上面那条规矩想要的形状，所以放行。
+    run_id = str(raw.get("run_id") or "").strip()
+    if run_id:
+        if not _RUN_ID_RE.fullmatch(run_id):
+            raise ApiError(f"不像是一次对比的 id：{run_id}", 400, "invalid")
+        out["run_id"] = run_id
     return out

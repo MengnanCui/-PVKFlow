@@ -263,7 +263,22 @@ function drawList() {
           S.total > all
             ? h('span.xsmall.dim',
                 `· 列表载入前 ${fmtInt(all)} 行，「批处理全部」按的是筛选式命中的 ${fmtInt(S.total)} 个`,
-                infoDot('filter_expr'))
+                // 「我到底选中了什么」是这一处最常见的问题，而答案就是
+                // 当前这个筛选式和它命中的数
+                infoDot('filter_expr', {
+                  spot: () => ({
+                    title: '当前的筛选式',
+                    rows: {
+                      筛选式: Object.keys(S.filter).length
+                        ? JSON.stringify(S.filter) : '（无筛选，全库）',
+                      命中样品数: fmtInt(S.total),
+                      列表已载入: `${fmtInt(all)} 行`,
+                      手工勾选: selectedCount ? `${fmtInt(selectedCount)} 个` : '（没有）',
+                    },
+                    note: '手工勾选优先于筛选式：勾了就只处理勾中的那些。',
+                    scope: { filter: S.filter },
+                  }),
+                }))
             : null),
         h('div.row.gap-2',
           h('button.btn.btn-sm#clearSelBtn', {

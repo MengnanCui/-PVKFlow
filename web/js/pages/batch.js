@@ -377,7 +377,20 @@ function moduleControl(m, c, recipe) {
  */
 function maxTimeControl(recipe) {
   return h('label.inline-field',
-    h('span.small.muted', withInfo('时间点上限', 'max_time_points')),
+    h('span.small.muted', withInfo('时间点上限', 'max_time_points', {
+      spot: () => ({
+        title: '这次对比的时间抽稀设置',
+        rows: {
+          当前值: recipe.max_time_points ? `${recipe.max_time_points} 个时间点`
+                                         : '0（全部帧，不抽稀）',
+          长表行数: fmtInt(S.detail?.tables?.[0]?.n_rows || 0),
+          样品数: fmtInt(S.detail?.children?.length || 0),
+          这批数据的时间范围: S.tMax ? `0–${fmtNum(S.tMax, 3)} s` : '（还没读到）',
+        },
+        note: '膜厚不受这个设置影响 —— 膜厚模块声明了要拿全部帧，存在另一张表里。',
+        scope: { run_id: S.runId },
+      }),
+    })),
     h('input.input.input-sm', {
       type: 'number', min: 0, step: 10, value: recipe.max_time_points ?? 0,
       style: { width: '84px' },
@@ -524,10 +537,15 @@ function sliceFigure(d, si, title, ctl, names) {
   const measured = d.rows.filter((r) => r.values[si]?.mean !== null);
   const noneOk = measured.length > 0 && measured.every((r) => !(r.values[si]?.ok_ratio > 0));
 
+  // 点这两个 ⓘ 提问时，把这个窗口里每个样品的读数一起带给模型 ——
+  // 「为什么这一秒全都不可信」的答案就在这几个数里，不带的话它只能把
+  // 「判级分三档」这段定义换个说法再讲一遍。
+  const spot = () => sliceSpot(d, si);
+
   const note = h('div',
     h('div.chart-caption',
       `${fmtInt(n)} 个样品　窗口内`, h('span.strong', '全部帧'),
-      '都参与平均，深色那截是其中可信的比例', infoDot('ot_status')),
+      '都参与平均，深色那截是其中可信的比例', infoDot('ot_status', { spot })),
     missing
       ? h('div.chart-caption.dim',
           `${fmtInt(missing)} 个样品在这个窗口里没有数据`,
@@ -537,10 +555,58 @@ function sliceFigure(d, si, title, ctl, names) {
       ? h('div.chart-caption.warn-text',
           `${win} 这个窗口里`, h('span.strong', '一帧可信的都没有'),
           '　—— 柱子是全部帧的平均，但这几个数都不该拿来下结论',
-          infoDot('ot_status'))
+          infoDot('ot_status', { spot }))
       : null);
 
   return figure(title, { ctl, body, note });
+}
+
+// ------------------------------------------------------------------ 给 ⓘ 的读数
+//
+// 点开 ⓘ 提问时，模型能看到的除了术语表那段定义，就是这里给的东西。
+// 每个函数都在**点开的那一刻**才跑（`infoDot` 收函数），所以拖完滑块再点，
+// 拿到的是拖之后的数，不是渲染时固化的那一份。
+//
+// `scope.run_id` 是这次对比的身份 —— 后端据此去取这一次的配方和标量分布，
+// 而不是「最近一次」（你可能正翻着上周那次的结果）。
+
+/** 一个时间窗里每个样品的读数。 */
+function sliceSpot(d, si) {
+  const w = d.windows[si];
+  return {
+    title: `「不同时刻的平均膜厚」里 ${fmtWin([w.from, w.to])} 这个窗口`,
+    rows: d.rows.map((r) => {
+      const v = r.values[si] || {};
+      return [r.label,
+              v.mean === null || v.mean === undefined ? '这个窗口里没有数据'
+                : `${fmtNum(v.mean, 0)} nm`,
+              v.n_frames ? `${v.n_ok}/${v.n_frames} 帧可信` : '',
+              v.note || ''];
+    }),
+    note: `这批数据每个样品各自测到的时间范围见上表；整批最晚 ${fmtNum(S.tMax, 3)} s。`,
+    scope: { run_id: S.runId },
+  };
+}
+
+/** 一张叠图的现状：几条曲线、有没有降级、怎么着色。 */
+function curveSpot(col, title) {
+  const data = S.curves[col];
+  const nSeries = data?.series?.length || 0;
+  return {
+    title: `「${title}」这张图`,
+    rows: {
+      曲线条数: nSeries,
+      当前画法: effectiveMode(col) === 'band'
+        ? `分位数带（超过 ${SPAGHETTI_LIMIT} 条自动降级，只显示中位数和四分位区间）`
+        : '每条都画出来',
+      着色: S.groupBy === 'batch'
+        ? `颜色分批次（${fmtInt(batchCount(data?.series || []))} 个），同批次内按线型分样品`
+        : '逐条一色',
+      纵轴: Y_LABEL[col],
+      服务端截断: data?.truncated ? `还有 ${data.truncated} 条没取` : '',
+    },
+    scope: { run_id: S.runId },
+  };
 }
 
 /**
@@ -672,7 +738,21 @@ function drawChart() {
             [['auto', `自动（>${SPAGHETTI_LIMIT} 条降级）`], ['all', '全部画出'],
              ['band', '强制分位数带']],
             (v) => { S.mode = v; drawChart(); }),
-          infoDot('quantile_band')),
+          // 「为什么我这张图变成了分位数带」—— 答案是当前条数和阈值，
+          // 那两个数就在这儿。三张图的现状一起带上，省得再问一遍。
+          infoDot('quantile_band', {
+            spot: () => ({
+              title: '「特殊处理对比」这三张叠图',
+              rows: ['ot', 'slope', 'integral'].map((c) => [
+                Y_LABEL[c],
+                `${fmtInt(S.curves[c]?.series?.length || 0)} 条`,
+                effectiveMode(c) === 'band' ? '已降级成分位数带' : '每条都画出来',
+              ]),
+              note: `当前显示模式：${S.mode === 'auto' ? `自动（超过 ${SPAGHETTI_LIMIT} 条降级）`
+                : S.mode === 'band' ? '强制分位数带' : '全部画出'}`,
+              scope: { run_id: S.runId },
+            }),
+          })),
         select('着色', S.groupBy, [['batch', '按批次'], ['none', '逐条']],
           (v) => { S.groupBy = v; drawChart(); }))),
     h('div.fig-grid-2',
@@ -695,7 +775,7 @@ function curveFigure(col, title) {
     : data ? paintCurve(col, data) : skeletonRows(4);
   return h('div.figure',
     h('div.figure-head', h('div.figure-title', COL_INFO[col]
-      ? withInfo(title, COL_INFO[col]) : title)),
+      ? withInfo(title, COL_INFO[col], { spot: () => curveSpot(col, title) }) : title)),
     h('div.figure-ctl', data && !data.error
       ? h('button.btn.btn-sm', { onclick: () => exportDialog(col) }, '导出脚本')
       : null),
