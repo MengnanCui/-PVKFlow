@@ -371,7 +371,8 @@ def samples() -> dict:
         if flag is None:
             flag = meta.get("matrix_like")
         if flag is None and r["status"] == "ok":
-            flag = _probe_and_remember(r["artifact_id"], meta)
+            # 导入时还没判过的老数据：现在补判。和导入时是同一份判断（ingest.mark_matrix）
+            flag, meta["columns_hint"] = _probe_lazily(r["artifact_id"])
 
         entry = by_sample.setdefault(r["sample_id"], {
             "sample_id": r["sample_id"], "name": r["sample_name"],
@@ -395,33 +396,12 @@ def samples() -> dict:
     }
 
 
-def _probe_and_remember(artifact_id: str, meta: dict) -> bool:
-    """只读文件头判断是不是矩阵，结果写回 artifact.meta_json。"""
-    import json as _json
-
-    from app.storage import db
+def _probe_lazily(artifact_id: str) -> tuple[bool, int | None]:
+    from app.storage import ingest
 
     try:
         path = artifacts.local_path(artifact_id)
     except (KeyError, FileNotFoundError):
-        return False
-
-    try:
-        if path.suffix.lower() in {".xlsx", ".xls", ".xlsm"}:
-            flag, cols = True, None
-        else:
-            from app.parsers.sniff import sniff_text
-            s = sniff_text(path, max_lines=40)   # 抬头可能有十几行，看少了会误判
-            cols = len(s.columns)
-            flag = bool(s.ok and cols >= 8)
-    except Exception:
-        flag, cols = False, None
-
-    meta["matrix_like"] = flag
-    if cols is not None:
-        meta["columns_hint"] = cols
-    with db.tx() as c:
-        # is_matrix 是真列，筛选走它；meta_json 里那份留着给界面看细节
-        c.execute("UPDATE artifact SET meta_json=?, is_matrix=? WHERE artifact_id=?",
-                  (_json.dumps(meta, ensure_ascii=False), 1 if flag else 0, artifact_id))
-    return flag
+        return False, None
+    pr = ingest.mark_matrix(artifact_id, path, if_unknown=False)
+    return bool(pr.is_matrix), pr.columns

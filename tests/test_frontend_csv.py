@@ -21,8 +21,9 @@ def _js(expr: str):
     url = (config.ROOT / "web" / "js" / "csv.js").as_uri()
     code = f"import {{ csvCell, seriesToCsv }} from {json.dumps(url)};\n" \
            f"process.stdout.write(JSON.stringify({expr}));"
+    # node 吐的是 UTF-8。text=True 会按系统编码解（Windows 上是 cp1252），中文和 BOM 就全乱了
     r = subprocess.run([NODE, "--input-type=module", "-e", code],
-                       capture_output=True, text=True, timeout=60)
+                       capture_output=True, encoding="utf-8", timeout=60)
     assert r.returncode == 0, r.stderr[-800:]
     return json.loads(r.stdout)
 

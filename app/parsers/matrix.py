@@ -358,17 +358,37 @@ def _maybe_evict() -> None:
         pass                                    # 淘汰失败不该影响正在跑的分析
 
 
-def looks_like_matrix(path: str | Path) -> bool:
-    """便宜的预判：只读文件头，不整个解析。"""
+EXCEL_EXT = {".xlsx", ".xls", ".xlsm"}
+
+# 普通宽表至少要这么多列才算光谱矩阵（一列波长 + 若干帧）。原来三份判断里写的都是 8
+MIN_MATRIX_COLUMNS = 8
+
+
+@dataclass(frozen=True)
+class Probe:
+    """「这个文件是不是光谱矩阵」的判断结果。is_matrix 为 None = 判不出来（比如读不了）。"""
+    is_matrix: bool | None
+    columns: int | None = None
+    source_format: str = ""
+
+
+def probe(path: str | Path) -> Probe:
+    """这个文件是不是光谱矩阵 —— 只读文件头，不整个解析。**平台里只有这一份判断。**
+
+    原来有三份：导入时一份（ingest）、列样品时惰性补一份（spectra）、还有一份没人调用的。
+    规则还不一样：惰性那份不认原位 Data.csv 的格式、只数列数 —— 时间点少于 7 个的原位文件
+    导入时说是矩阵，惰性那条路说不是。
+    """
+    from app.parsers import insitu_csv, sniff
+
     p = Path(path)
-    if p.suffix.lower() not in {".csv", ".txt", ".dat", ".tsv", ".asc",
-                                ".xlsx", ".xls", ".xlsm"}:
-        return False
-    if p.suffix.lower() in {".xlsx", ".xls", ".xlsm"}:
-        return True
     try:
-        from app.parsers.sniff import sniff_text
-        s = sniff_text(p, max_lines=8)
-        return bool(s.ok and len(s.columns) >= 8)
-    except Exception:
-        return False
+        if p.suffix.lower() in EXCEL_EXT:
+            return Probe(True)
+        if insitu_csv.looks_like_insitu(p):
+            return Probe(True, None, "insitu_data_csv")
+        sn = sniff.sniff_text(p, max_lines=40)     # 抬头可能有十几行，看少了会误判
+        cols = len(sn.columns)
+        return Probe(bool(sn.ok and cols >= MIN_MATRIX_COLUMNS), cols)
+    except Exception:                               # noqa: BLE001 — 判不出来不是错
+        return Probe(None)

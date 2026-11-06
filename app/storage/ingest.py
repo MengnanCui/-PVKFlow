@@ -466,7 +466,7 @@ def ingest_paths(
                          sample_id, method),
                     )
 
-            _mark_matrix(aid, src, ext)
+            mark_matrix(aid, src)
 
             report.imported.append({
                 "artifact_id": aid, "filename": src.name, "display_path": display,
@@ -580,28 +580,22 @@ def verify_references() -> dict:
     return {"checked": len(rows), "missing": missing, "restored": restored}
 
 
-def _mark_matrix(artifact_id: str, path: Path, ext: str) -> None:
-    """导入时就判定这个文件是不是光谱矩阵。
+def mark_matrix(artifact_id: str, path: Path, *, if_unknown: bool | None = None):
+    """判断这个文件是不是光谱矩阵（matrix.probe），结果写进 artifact。返回那个 Probe。
 
-    以前这件事是惰性的 —— 只有当有人访问 /api/spectra/samples 时才回填。
+    导入时就判（原来是惰性的 —— 只有当有人访问 /api/spectra/samples 时才回填。
     在那之前，筛选式的 has_matrix 和批处理看到的是「零个矩阵」，
-    刚导完就去跑批处理会命中 0 个样品，而且没有任何提示。
-    """
-    fmt = ""
-    try:
-        if ext in {".xlsx", ".xls", ".xlsm"}:
-            flag, cols = True, None
-        else:
-            from app.parsers import insitu_csv, sniff
+    刚导完就去跑批处理会命中 0 个样品，而且没有任何提示）。
+    列样品时碰到还没判过的老数据，也走这里补 —— 两条路用的是同一份判断。
 
-            if insitu_csv.looks_like_insitu(path):
-                flag, cols, fmt = True, None, "insitu_data_csv"
-            else:
-                sn = sniff.sniff_text(path, max_lines=40)   # 抬头可能有十几行
-                cols = len(sn.columns)
-                flag = bool(sn.ok and cols >= 8)
-    except Exception:
-        return          # 判不出来就留 NULL，让惰性那条路以后再补
+    判不出来时：`if_unknown` 为 None 就不写（留 NULL，以后再补）；给了值就按它写。
+    """
+    from app.parsers import matrix
+
+    pr = matrix.probe(path)
+    flag = pr.is_matrix if pr.is_matrix is not None else if_unknown
+    if flag is None:
+        return pr
 
     with db.tx() as c:
         row = c.execute("SELECT meta_json FROM artifact WHERE artifact_id=?",
@@ -611,8 +605,10 @@ def _mark_matrix(artifact_id: str, path: Path, ext: str) -> None:
         except json.JSONDecodeError:
             meta = {}
         meta["matrix_like"] = flag
-        meta["columns_hint"] = cols
-        if fmt:
-            meta["source_format"] = fmt
+        meta["columns_hint"] = pr.columns
+        if pr.source_format:
+            meta["source_format"] = pr.source_format
+        # is_matrix 是真列，筛选走它；meta_json 里那份留着给界面看细节
         c.execute("UPDATE artifact SET is_matrix=?, meta_json=? WHERE artifact_id=?",
                   (1 if flag else 0, json.dumps(meta, ensure_ascii=False), artifact_id))
+    return pr

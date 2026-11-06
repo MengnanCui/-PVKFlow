@@ -258,3 +258,49 @@ def test_outline_reads_the_real_shape(tmp_path):
     assert "分隔符看起来是 TAB" in txt
     assert "'Mode'" in txt
     assert "2 格" in txt                # 抬头是 2 格
+
+
+# ---------------------------------------------------------------- 「是不是光谱矩阵」只有一份判断
+def test_import_and_the_lazy_path_agree_on_a_short_insitu_file(workspace, tmp_path):
+    """原来有三份判断：导入时一份、列样品时惰性补一份、一份没人调用。惰性那份不认原位格式，
+    只数列数 ≥ 8 —— 只有 5 个时间点的 Data.csv 只有 7 列，导入时说是矩阵，惰性那条路说不是。"""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.storage import db, ingest
+
+    d = tmp_path / "ZG0099_2026072918354709_Mode5_202607291932_SPS100"
+    d.mkdir()
+    write_data_csv(d / "Data.csv", n_t=5)
+    ingest.ingest_paths(ingest.scan_folders(tmp_path)["files"])
+    aid = db.scalar("SELECT artifact_id FROM artifact WHERE filename='Data.csv'")
+    assert db.scalar("SELECT is_matrix FROM artifact WHERE artifact_id=?", (aid,)) == 1
+
+    # 模拟「导入时还没判过」的老数据：交给惰性那条路
+    with db.tx() as c:
+        c.execute("UPDATE artifact SET is_matrix=NULL, meta_json='{}' WHERE artifact_id=?", (aid,))
+    with TestClient(app) as client:
+        got = client.get("/api/spectra/samples").json()
+    assert got["with_matrix"] == 1, got
+    assert db.scalar("SELECT is_matrix FROM artifact WHERE artifact_id=?", (aid,)) == 1
+
+
+def test_the_insitu_check_reads_only_the_head_of_the_file(tmp_path, monkeypatch):
+    """原来为了看前 400 行把整个文件读进来（真文件 2.3 MB），每导入一个文件、每次惰性判断都读一遍。"""
+    p = tmp_path / "Data.csv"
+    write_data_csv(p, n_lam=3000, n_t=200)
+    assert p.stat().st_size > 2_000_000
+    seen = []
+    real_open = open
+
+    def spy(file, mode="r", *a, **kw):
+        f = real_open(file, mode, *a, **kw)
+        if "b" in mode and str(file) == str(p):
+            orig = f.read
+            f.read = lambda n=-1: (seen.append(n), orig(n))[1]
+        return f
+    monkeypatch.setattr("builtins.open", spy)
+    monkeypatch.setattr("pathlib.Path.read_bytes", lambda self: (_ for _ in ()).throw(
+        AssertionError("整个文件被读进来了")) if str(self) == str(p) else real_open(self, "rb").read())
+    assert ic.looks_like_insitu(p)
+    assert seen and all(0 < n <= 1_000_000 for n in seen), seen

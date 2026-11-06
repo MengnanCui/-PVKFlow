@@ -115,6 +115,23 @@ def _read_lines(path: Path) -> list[str]:
     return text.splitlines()
 
 
+def _read_head(path: Path, max_bytes: int = 512 * 1024) -> list[str]:
+    """只读文件开头那一段。判断「是不是原位格式」只要看前几十行，没必要把 2 MB 全读进来。
+
+    截在最后一个换行处再解码：截在一个多字节字符的半中间，UTF-8 解不出来，
+    decode_bytes 就会退到别的编码上，整段都解错。
+    """
+    from app.parsers.sniff import decode_bytes
+
+    with open(path, "rb") as f:
+        raw = f.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        cut = raw.rfind(b"\n", 0, max_bytes)
+        raw = raw[:cut + 1] if cut > 0 else raw[:max_bytes]
+    text, _ = decode_bytes(raw)
+    return text.splitlines()
+
+
 def outline(path: str | Path, max_lines: int = 25) -> str:
     """文件结构速写：每行的首格 + 有几格。
 
@@ -350,7 +367,8 @@ def looks_like_insitu(path: str | Path, max_lines: int = 400) -> bool:
     if p.suffix.lower() not in (".csv", ".txt", ".tsv", ".dat"):
         return False
     try:
-        lines = _read_lines(p)[:max_lines]
+        # 原来是整个文件读进来再取前 400 行（真文件 2.3 MB），每导入一个文件就读一遍
+        lines = _read_head(p)[:max_lines]
     except OSError:
         return False
     if not lines:
@@ -380,6 +398,8 @@ def looks_like_insitu(path: str | Path, max_lines: int = 400) -> bool:
             saw_block_head = True          # 块头：非数字首格 + 很多格
         elif saw_block_head:
             saw_data_after = True          # 块头之后的波长行
+        if saw_block_head and saw_data_after and (saw_time_row or kv_preamble >= 2):
+            return True                    # 够了，后面几百行不用再看
 
     # 光有「块头 + 数据行」还不够 —— **普通宽表长得一模一样**
     #（一行表头 + 一堆数值行）。原位格式独有的是那两样之一：
