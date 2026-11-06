@@ -242,3 +242,22 @@ CREATE TABLE IF NOT EXISTS ai_pin (
 CREATE INDEX IF NOT EXISTS idx_msg_conv ON message(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_conv_updated ON conversation(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pin_run ON ai_pin(analysis_run_id, created_at DESC);
+
+-- ---------------------------------------------------------------- 关键结果的「当前值」
+-- key_result 是只追加的：每跑一次批处理，每个样品就再多一整套字段。
+-- 历史要留着（哪个版本、什么参数算出过什么），但「这个样品现在的膜厚是多少」
+-- 只能有一个答案 —— 不然 AI 和按字段筛选会把新旧几次的结果混在一起
+-- （自查 §6 #2：新旧两次同时存在时，AI 拿到的是旧值）。
+--
+-- 当前值 = 同一个 (样品, 字段) 里**最后写入、且没被标作废**的那一条。
+-- 作废了最新的，就退回上一条 —— 「这次算坏了」不等于「这个样品没有值」。
+--
+-- 每次启动先删再建：视图定义改了也能生效，而视图本身不存数据，删了不丢东西。
+DROP VIEW IF EXISTS key_result_current;
+CREATE VIEW key_result_current AS
+SELECT k.* FROM key_result k
+WHERE k.quality != 'reject'
+  AND k.id = (SELECT MAX(k2.id) FROM key_result k2
+              WHERE k2.sample_id IS k.sample_id
+                AND k2.field_name = k.field_name
+                AND k2.quality != 'reject');

@@ -512,14 +512,6 @@ function renderRow(r, index) {
 // 和 selection.suggest_expansion 都留着 —— 以后想要，换个不挡路的位置接回来。
 
 // ------------------------------------------------------------------ 批处理
-// 对比的默认配方。和单样品页的默认窗口一致 ——
-// 775 避开吸收边、1120 是光谱仪上限。进去之后在对比页上随便改。
-const DEFAULT_RECIPE = {
-  band_min: 775, band_max: 1120,
-  integral_min: 800, integral_max: 950,
-  slope_center: 950, slope_half_width: 10,
-};
-
 /** 选中几个 → 直接开跑 → 直接落到对比页（页面上自己显示进度）。 */
 async function startCompare(btn) {
   const useChecked = S.checked.size > 0;
@@ -539,7 +531,9 @@ async function startCompare(btn) {
     const stamp = new Date().toLocaleString('zh-CN', {
       month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
     const r = await api.batchRun({
-      filter, recipe: DEFAULT_RECIPE,
+      // 配方留空 = 用后端的默认配方。默认值只在模块的控件声明里有一份
+      // （膜厚 775–1120、积分 800–950、斜率 950 ± 10），这里不再抄。
+      filter, recipe: {},
       title: `${pv.with_matrix} 个样品 · ${stamp}`,
     });
     // 传 task_id：这一刻还没有 parent_run_id，对比页会自己等
@@ -565,12 +559,9 @@ async function batchDialog(recipeOverride = null) {
     return;
   }
 
-  // 膜厚窗口默认 775–1120：775 避开吸收边，1120 是光谱仪上限。
+  // 默认值由后端按模块声明给（pv.recipe_defaults），这里不再抄一份。
   // AI 卡片带来的配方只是**预填**，对话框照样要你确认才开跑。
-  const recipe = { integral_min: 800, integral_max: 950,
-                   slope_center: 950, slope_half_width: 10,
-                   band_min: 775, band_max: 1120,
-                   ...(recipeOverride || {}) };
+  const recipe = { ...(pv.recipe_defaults || {}), ...(recipeOverride || {}) };
   const stamp = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit',
                                                     hour: '2-digit', minute: '2-digit' });
   let title = `${pv.with_matrix} 个样品 · ${stamp}`;

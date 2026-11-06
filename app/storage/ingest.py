@@ -123,6 +123,20 @@ def scan(root: str | Path, recursive: bool = True) -> list[ScannedFile]:
     return out
 
 
+def _measurement_key(display_path: str) -> str | None:
+    """这个文件能不能凭文件夹名认出「是哪一次测量」。能就返回用来比对的键。
+
+    仪器的子文件夹名形如 ZG0013_2026072918354709_Mode5_…，里面带着测量时刻，
+    一次测量一个名字 —— 撞名就是同一次测量（重新导出、换地方放都算）。
+    认不出时间戳的文件夹名（sample1、B12、随手起的名字）不承担这个身份，
+    返回 None，只按内容和绝对路径去重。
+    """
+    parts = display_path.split("/")
+    if len(parts) != 2:
+        return None
+    return display_path if naming.parse_run_folder(parts[0]).measured_at else None
+
+
 # 原位测量一个子文件夹一次，数据文件固定叫这个
 RUN_DATA_FILE = "Data.csv"
 
@@ -339,21 +353,26 @@ def ingest_paths(
             #
             # ① 内容相同（sha256）：同一份数据换个地方放，不该进两次
             # ② 路径相同：同一个文件再导一次
-            # ③ **同一个子文件夹**：display_path 是「子文件夹名/Data.csv」，
-            #    所以这一条就是「按文件夹目录去重」。它必须独立于 sha ——
-            #    仪器重新导出一次，字节会变、sha 会变，但那还是同一次测量。
+            # ③ **同一次测量的子文件夹**：仪器重新导出一次，字节会变、sha 会变、
+            #    甚至换了个主文件夹放，但那还是同一次测量。
+            #    **只在文件夹名里带着仪器时间戳时才判**（见 _measurement_key）——
+            #    那样的名字一次测量一个，撞名就是同一次。原来对所有文件都按相对路径比，
+            #    两个主文件夹下各有一个 film.csv、内容不同，第二个被当成重复静默丢掉
+            #    （自查 §6 #3）。
             sha = sha256_file(src)
             abs_str = str(src.resolve())
+            mkey = _measurement_key(display)
             dup = db.query_one(
                 "SELECT artifact_id, filename, display_path,"
                 "       CASE WHEN sha256 = ? THEN '内容相同'"
                 "            WHEN original_path = ? THEN '同一个文件'"
-                "            ELSE '同一个文件夹' END AS why"
+                "            ELSE '同一次测量的文件夹' END AS why"
                 "  FROM artifact"
                 " WHERE kind = 'raw'"
-                "   AND (sha256 = ? OR original_path = ? OR display_path = ?)"
+                "   AND (sha256 = ? OR original_path = ?"
+                "        OR (? IS NOT NULL AND display_path = ?))"
                 " LIMIT 1",
-                (sha, abs_str, sha, abs_str, display),
+                (sha, abs_str, sha, abs_str, mkey, mkey),
             )
             if dup:
                 report.duplicates.append({

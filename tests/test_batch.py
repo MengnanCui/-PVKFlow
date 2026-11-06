@@ -906,3 +906,94 @@ def test_sample_page_accepts_a_sample_id_not_just_a_matrix_id(batch_client, impo
     miss = batch_client.get("/api/spectra/smp_压根没有/meta")
     assert miss.status_code == 404
     assert "没有这个样品" in miss.json()["error"]["message"]
+
+
+# ---------------------------------------------------------------- 默认配方只有一份（自查 §6 #8）
+def test_default_recipe_comes_from_the_module_declarations(workspace):
+    """原来 Recipe 写死 780–1050（规范的 DEFAULTS），界面上传 775–1120（平台窗口），
+    前后端三份各写各的。现在默认值只在模块的控件声明里。"""
+    from app.analysis import fringe_ot
+    from app.modules.registry import registry as module_registry
+
+    module_registry.load_all()
+    r = batch.Recipe()
+    assert [r.band_min, r.band_max] == fringe_ot.PLATFORM_WINDOW_NM            # P-05
+    sp = module_registry.get("special.slope_integral").spec.defaults()
+    assert [r.integral_min, r.integral_max] == sp["integ"]                     # P-40
+    assert (r.slope_center, r.slope_half_width) == (sp["slope_center"], sp["slope_half"])
+
+
+def test_a_run_without_a_recipe_uses_the_platform_window(imported):
+    """不带配方调用（脚本、以后让 AI 直接调）也得是 775–1120，不能悄悄变成 780–1050。"""
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID,
+                           {"filter": {"batch": ["B21"]}, "recipe": {}})["task_id"])
+    import json
+
+    run = db.query_one("SELECT params_json FROM analysis_run WHERE analysis_run_id=?",
+                       (t["result"]["parent_run_id"],))
+    stored = json.loads(run["params_json"])["recipe"]
+    assert (stored["band_min"], stored["band_max"]) == (775.0, 1120.0)
+    eff = batch.effective_params(batch.Recipe.from_dict(stored))
+    assert eff["thickness.fringe_ot"]["band"] == [775.0, 1120.0]
+
+
+def test_explicit_values_still_win_over_defaults(workspace):
+    r = batch.Recipe.from_dict({"band_min": 790, "band_max": 1000,
+                                "module_params": {"special.slope_integral": {"slope_half": 25}}})
+    assert (r.band_min, r.band_max, r.slope_half_width) == (790, 1000, 25.0)
+    assert (r.integral_min, r.integral_max) == (800.0, 950.0)
+
+
+def test_preview_hands_the_defaults_to_the_dialog(batch_client, imported):
+    """AI 卡片打开的批处理对话框要预填数 —— 从这里拿，前端不再抄一份。"""
+    pv = batch_client.post("/api/batch/preview", json={"filter": {}}).json()
+    assert pv["recipe_defaults"]["band_min"] == 775.0
+    assert pv["recipe_defaults"]["integral_max"] == 950.0
+    src = (config.ROOT / "web" / "js" / "pages" / "process.js").read_text(encoding="utf-8")
+    assert "DEFAULT_RECIPE" not in src
+
+
+# ---------------------------------------------------------------- 长表里的文本列按文本读（自查 §6 #10）
+def test_read_frame_keeps_text_columns_as_written(workspace):
+    import pandas as pd
+
+    from app.storage import tabular
+
+    df = pd.DataFrame({"sample_id": ["s1", "s2", "s3"], "sample_name": ["001", "NA", "20260729"],
+                       "batch": ["", "NA", "ZG0013"], "t": [0.0, 1.0, 2.0],
+                       "integral": [1.5, float("nan"), 3.0]})
+    path = workspace / "tables" / "probe.csv"
+    df.to_csv(path, index=False)
+    back = tabular.read_frame(path)
+    assert list(back["sample_name"]) == ["001", "NA", "20260729"]
+    assert list(back["batch"]) == ["", "NA", "ZG0013"]
+    assert back["integral"].isna().tolist() == [False, True, False]   # 数值列的空仍是缺失
+    assert back["t"].dtype.kind == "f"
+
+
+def test_numeric_looking_names_and_empty_batch_survive_the_round_trip(workspace, tmp_path):
+    """样品名 001、没有批次 —— 原来对比页图例写 `nan/1`，导出的 data.csv 里是 1。"""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    src = tmp_path / "plain"
+    src.mkdir()
+    entries = []
+    for i, name in enumerate(("001", "002")):
+        f = src / f"m{i}.csv"
+        _matrix_file(f, seed=100 + i)
+        entries.append({"abs_path": str(f), "sample": name, "batch": "", "method": "absorbance"})
+    ingest.ingest_paths(entries)
+    with db.tx() as c:
+        c.execute("UPDATE artifact SET is_matrix=1 WHERE kind='raw'")
+
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {"filter": {}, "recipe": {}})["task_id"])
+    rid = t["result"]["parent_run_id"]
+    with TestClient(app) as c:
+        cur = c.get(f"/api/batch/runs/{rid}/curves", params={"column": "integral"}).json()
+        assert sorted(s["label"] for s in cur["series"]) == ["001", "002"]
+        assert all(s["group"] == "" for s in cur["series"])
+        z = zipfile.ZipFile(io.BytesIO(c.get(f"/api/batch/runs/{rid}/export").content))
+    data = z.read("data.csv").decode("utf-8-sig")
+    assert ",001," in data and "nan" not in data.lower()

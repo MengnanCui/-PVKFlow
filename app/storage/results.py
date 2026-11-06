@@ -113,7 +113,7 @@ def list_fields() -> list[dict]:
         "       COUNT(*) AS n,"
         "       SUM(CASE WHEN value_num IS NOT NULL THEN 1 ELSE 0 END) AS n_numeric,"
         "       MIN(value_num) AS min_v, MAX(value_num) AS max_v"
-        " FROM key_result GROUP BY field_name, unit ORDER BY n DESC"
+        " FROM key_result_current GROUP BY field_name, unit ORDER BY n DESC"
     )
 
 
@@ -123,7 +123,13 @@ def query_results(
     quality: str | None = None,
     limit: int = 200,
     offset: int = 0,
+    history: bool = False,
 ) -> dict[str, Any]:
+    """默认只给每个 (样品, 字段) 的当前值；history=True 才把每一次都列出来。
+
+    构效关系拿它做 X / Y —— 同一个样品跑过三次批处理，散点图上不该出现三个点。
+    """
+    table = "key_result" if history else "key_result_current"
     where, params = [], []
     if field:
         where.append("k.field_name = ?")
@@ -136,16 +142,17 @@ def query_results(
         params.append(quality)
     clause = f"WHERE {' AND '.join(where)}" if where else ""
 
-    total = db.scalar(f"SELECT COUNT(*) FROM key_result k {clause}", tuple(params)) or 0
+    total = db.scalar(f"SELECT COUNT(*) FROM {table} k {clause}", tuple(params)) or 0
     rows = db.query(
         f"SELECT k.*, s.name AS sample_name, r.skill_id, r.skill_version"
-        f" FROM key_result k"
+        f" FROM {table} k"
         f" LEFT JOIN sample s ON s.sample_id = k.sample_id"
         f" LEFT JOIN analysis_run r ON r.analysis_run_id = k.analysis_run_id"
         f" {clause} ORDER BY k.id DESC LIMIT ? OFFSET ?",
         tuple(params) + (limit, offset),
     )
-    return {"total": total, "rows": rows, "limit": limit, "offset": offset}
+    return {"total": total, "rows": rows, "limit": limit, "offset": offset,
+            "history": history}
 
 
 def overview_counts() -> dict[str, int]:
@@ -153,8 +160,9 @@ def overview_counts() -> dict[str, int]:
     return {
         "samples": db.scalar("SELECT COUNT(*) FROM sample") or 0,
         "artifacts": db.scalar("SELECT COUNT(*) FROM artifact WHERE kind='raw'") or 0,
-        "results": db.scalar("SELECT COUNT(*) FROM key_result") or 0,
-        "pending_review": db.scalar("SELECT COUNT(*) FROM key_result WHERE quality='review'") or 0,
+        "results": db.scalar("SELECT COUNT(*) FROM key_result_current") or 0,
+        "pending_review": db.scalar(
+            "SELECT COUNT(*) FROM key_result_current WHERE quality='review'") or 0,
         "runs": db.scalar("SELECT COUNT(*) FROM analysis_run") or 0,
         "failed_runs": db.scalar("SELECT COUNT(*) FROM analysis_run WHERE status='failed'") or 0,
         "missing_files": db.scalar("SELECT COUNT(*) FROM artifact WHERE status='missing'") or 0,

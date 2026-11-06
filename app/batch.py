@@ -39,24 +39,37 @@ COMPUTE_WORKERS = 4
 
 @dataclass
 class Recipe:
-    """一次批处理的配方。字段和单样品页的控件一一对应。"""
-    band_min: float = 780.0          # 膜厚窗口
-    band_max: float = 1050.0
-    integral_min: float = 800.0      # 波段积分
-    integral_max: float = 950.0
-    slope_center: float = 950.0      # 谱斜率
-    slope_half_width: float = 10.0
+    """一次批处理的配方。字段和单样品页的控件一一对应。
+
+    **默认值不写在这里。** 下面六个扁平字段默认是 None（= 没给），构造时由
+    `_fill_defaults()` 从已装模块的控件声明里取 —— 膜厚窗口取膜厚模块的
+    775–1120（P-05），积分 / 斜率取特殊处理模块的 800–950 / 950 ± 10（P-40）。
+
+    原来这里写的是 780–1050：那是规范的 DEFAULTS，不是平台窗口。界面上点
+    「批处理」时前端显式传了 775–1120 所以看不出来，但任何不带配方的调用都会
+    悄悄用 780–1050（自查 §6 #8）。同一组数在后端一份、前端两份，迟早对不上。
+    """
+    band_min: float | None = None          # 膜厚窗口
+    band_max: float | None = None
+    integral_min: float | None = None      # 波段积分
+    integral_max: float | None = None
+    slope_center: float | None = None      # 谱斜率
+    slope_half_width: float | None = None
     max_time_points: int = 0         # 0 = 全部帧
     # 同事装的模块，各自的控件值：{module_id: {control_key: value}}。
     # 不填就用模块声明里的默认值。
     module_params: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # 先认显式给的（module_params 盖过扁平字段），剩下没给的再取模块默认
+        self._sync_legacy()
+        self._fill_defaults()
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "Recipe":
         d = d or {}
         r = cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__
                    and v is not None})
-        r._sync_legacy()
         if r.band_max <= r.band_min:
             raise ValueError(f"膜厚窗口不合法：{r.band_min}–{r.band_max} nm")
         if r.integral_max <= r.integral_min:
@@ -89,6 +102,39 @@ class Recipe:
                         setattr(self, f, float(val))
                     except (TypeError, ValueError):
                         pass
+
+    def _fill_defaults(self) -> None:
+        """没给的扁平字段，取对应模块控件的声明默认值。
+
+        取不到（模块没装上）就报错说清楚，**不拿一个写死的数顶上** ——
+        顶上的那个数就是这次要消灭的「第二份默认值」。
+        """
+        from app.modules.registry import registry as module_registry
+
+        missing = [f for keys in _LEGACY_MAP.values() for fs in keys.values()
+                   for f in fs if getattr(self, f) is None]
+        if not missing:
+            return
+        if not module_registry.all():
+            module_registry.load_all()
+        for module_id, keys in _LEGACY_MAP.items():
+            try:
+                defaults = module_registry.get(module_id).spec.defaults()
+            except KeyError:
+                continue
+            for key, fields in keys.items():
+                v = defaults.get(key)
+                if v is None:
+                    continue
+                vals = list(v) if len(fields) > 1 else [v]
+                for f, val in zip(fields, vals):
+                    if getattr(self, f) is None:
+                        setattr(self, f, float(val))
+        still = [f for keys in _LEGACY_MAP.values() for fs in keys.values()
+                 for f in fs if getattr(self, f) is None]
+        if still:
+            raise ValueError(f"配方缺默认值：{', '.join(still)} —— 对应的内置模块没加载上，"
+                             f"去「设置 → 功能模块」看看加载失败的原因")
 
     def as_dict(self) -> dict:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}

@@ -28,9 +28,10 @@ def overview() -> dict:
 @router.get("/results")
 def list_results(
     field: str | None = None, sample_id: str | None = None, quality: str | None = None,
-    limit: int = Query(200, le=2000), offset: int = 0,
+    limit: int = Query(200, le=2000), offset: int = 0, history: bool = False,
 ) -> dict:
-    return results.query_results(field, sample_id, quality, limit, offset)
+    """默认每个 (样品, 字段) 只给当前值；`?history=true` 给全部历史。"""
+    return results.query_results(field, sample_id, quality, limit, offset, history)
 
 
 @router.get("/results/fields")
@@ -60,7 +61,7 @@ def samples(limit: int = Query(500, le=5000)) -> dict:
     return {"samples": db.query(
         "SELECT s.*,"
         " (SELECT COUNT(*) FROM artifact a WHERE a.sample_id = s.sample_id) AS n_files,"
-        " (SELECT COUNT(*) FROM key_result k WHERE k.sample_id = s.sample_id) AS n_results"
+        " (SELECT COUNT(*) FROM key_result_current k WHERE k.sample_id = s.sample_id) AS n_results"
         " FROM sample s ORDER BY s.created_at DESC LIMIT ?", (limit,)
     )}
 

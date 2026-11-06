@@ -138,7 +138,10 @@ from matplotlib import font_manager
 
 # ---------------------------------------------------------------- 数据
 HERE = Path(__file__).parent
-df = pd.read_csv(HERE / "data.csv")
+# 样品名、批次按文本读：不然 "001" 会变成 1、空批次会变成 NaN
+df = pd.read_csv(HERE / "data.csv",
+                 dtype={{"sample_id": str, "sample_name": str, "batch": str}},
+                 keep_default_na=False, na_values={{{column!r}: ["", "nan", "NaN"], "t": [""]}})
 
 Y_COLUMN = {column!r}
 Y_LABEL = L({y_label!r}, {y_label_en!r})

@@ -49,6 +49,28 @@ def write_table(analysis_run_id: str, name: str, frame: Any) -> dict:
             "n_rows": int(len(df)), "columns": [str(x) for x in df.columns]}
 
 
+# 长表里这几列是**文本**：样品 ID、样品名、批次。读 CSV 时必须按文本读。
+#
+# pandas 默认会猜类型：样品名 "001" 变成 1、"20260729" 变成 20260729.0，
+# 空批次和 "NA" 变成 NaN —— 于是图例上出现 `nan/S1`、导出的 data.csv 里
+# 出现 `20260729.0/…`（自查 §6 #10）。pyarrow 没装时 CSV 是默认格式，
+# 这条路径是主路径，不是兜底。
+TEXT_COLUMNS = ("sample_id", "sample_name", "batch", "label", "group")
+
+
+def read_frame(path: Path):
+    """读一张长表（CSV 或 Parquet）。CSV 里的文本列按原样读回。"""
+    import pandas as pd
+
+    if path.suffix != ".csv":
+        return pd.read_parquet(path)
+    cols = list(pd.read_csv(path, nrows=0).columns)
+    text = [c for c in cols if c in TEXT_COLUMNS]
+    # 文本列：空就是空串、"NA" 就是 "NA"；数值列：空才是缺失
+    return pd.read_csv(path, dtype={c: str for c in text}, keep_default_na=False,
+                       na_values={c: ["", "nan", "NaN"] for c in cols if c not in text})
+
+
 def read_table(table_id: str, limit: int | None = None) -> dict:
     row = db.query_one("SELECT * FROM data_table WHERE table_id = ?", (table_id,))
     if not row:
@@ -59,7 +81,7 @@ def read_table(table_id: str, limit: int | None = None) -> dict:
     path = config.WORKSPACE / row["path"]
     if not path.exists():
         raise FileNotFoundError(f"数值表文件缺失：{row['path']}")
-    df = pd.read_csv(path) if path.suffix == ".csv" else pd.read_parquet(path)
+    df = read_frame(path)
     if limit:
         df = df.head(limit)
     return {

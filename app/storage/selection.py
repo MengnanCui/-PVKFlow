@@ -237,7 +237,7 @@ def compile_filter(flt: dict) -> Compiled:
         if spec["max"] is not None:
             cond.append("k.value_num <= ?")
             params.append(spec["max"])
-        where.append(f"EXISTS (SELECT 1 FROM key_result k WHERE {' AND '.join(cond)})")
+        where.append(f"EXISTS (SELECT 1 FROM key_result_current k WHERE {' AND '.join(cond)})")
 
     if f.get("has_matrix"):
         where.append(
@@ -316,7 +316,7 @@ def page(flt: dict, limit: int = 100, offset: int = 0, order: str = "name") -> d
                        AND a.display_path LIKE '%/%') AS display_path,
                    (SELECT COUNT(*) FROM artifact a
                      WHERE a.sample_id = s.sample_id AND a.kind='raw') AS n_files,
-                   (SELECT COUNT(*) FROM key_result k
+                   (SELECT COUNT(*) FROM key_result_current k
                      WHERE k.sample_id = s.sample_id) AS n_results,
                    mx.artifact_id AS matrix_id,
                    mx.filename    AS matrix_name,
@@ -438,7 +438,7 @@ def _field_facet(c: Compiled, selected: list[dict]) -> list[dict]:
         SELECT k.field_name AS name, k.unit AS unit,
                COUNT(DISTINCT s.sample_id) AS n,
                MIN(k.value_num) AS lo, MAX(k.value_num) AS hi
-        FROM sample s JOIN key_result k ON k.sample_id = s.sample_id
+        FROM sample s JOIN key_result_current k ON k.sample_id = s.sample_id
         {c.clause} {'AND' if c.where else 'WHERE'} k.value_num IS NOT NULL
         GROUP BY k.field_name, k.unit
         HAVING COUNT(DISTINCT s.sample_id) > 1

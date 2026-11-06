@@ -153,8 +153,8 @@ def _scalars_for(sample_ids: list[str]) -> dict[str, dict]:
     marks = ",".join("?" * len(sample_ids))
     rows = db.query(
         f"SELECT sample_id, field_name, value_num, value_text, unit"
-        f"  FROM key_result WHERE sample_id IN ({marks})"
-        f"   AND quality != 'reject' ORDER BY sample_id, field_name",
+        f"  FROM key_result_current WHERE sample_id IN ({marks})"
+        f"  ORDER BY sample_id, field_name",
         tuple(sample_ids))
 
     out: dict[str, dict] = {}

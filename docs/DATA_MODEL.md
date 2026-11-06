@@ -12,7 +12,7 @@
 
 | ID | 是什么 | 谁生成 |
 |---|---|---|
-| `sample_id` | 实验对象 | 导入时按文件名解析出的样品名，同名复用 |
+| `sample_id` | 实验对象 | 导入时解析出的（样品名, 批次），同名同批次才复用。仪器数据一个子文件夹 = 一次测量 = 一个样品 |
 | `measurement_id` | 一次测量 | 命名规则解析出 `method` 时创建 |
 | `analysis_run_id` | 一次处理 | 每次跑 skill 生成 |
 | `artifact_id` | 一个文件 / 图像 / 曲线 | 每次导入或产出派生文件时生成 |
@@ -50,6 +50,21 @@ SQLite 完全扛得住；真到扛不住的那天，`field_name` 上有索引，
 - `version` —— 等于 `analysis_run.skill_version`。改了算法重跑，两批结果能区分开
 
 没有这三个字段，一年后你会分不清某个数是怎么来的。
+
+### 当前值与历史：`key_result_current`
+
+`key_result` **只追加**：每跑一次批处理，每个样品就再多一整套字段。历史要留着，
+但「这个样品现在的 OT 末值是多少」只能有一个答案。所以有一个视图：
+
+> **当前值** = 同一个 (样品, 字段) 里**最后写入、且没被标作废**的那一条。
+> 作废了最新的就退回上一条 —— 「这次算坏了」不等于「这个样品没有值」。
+
+| 读的是 | 谁 |
+|---|---|
+| `key_result_current`（当前值） | AI 上下文的逐样品标量、按字段筛选与分面、字段列表（构效关系页）、每个样品的结果数、总览计数、`/api/results` 默认 |
+| `key_result`（全部历史） | 某一次运行自己的结果（对比页、运行详情）、`/api/results?history=true` |
+
+原来所有读取都直接读整张表，新旧几次混在一起 —— AI 曾拿着旧值回答（自查 §6 #2）。
 
 ---
 
@@ -91,7 +106,8 @@ analysis_run(analysis_run_id, skill_id, skill_version, params_json,
 大量数值（曲线点、批量特征）不进 SQLite —— 一条 J-V 曲线上千点，
 一批实验几百条曲线，塞进关系表既撑大数据库也难做列式统计。
 
-写成 `workspace/tables/<name>__<id>.parquet`，SQLite 里只留一行索引。
+写成 `workspace/tables/<name>__<id>.csv`（装了 pyarrow 则是 `.parquet`），SQLite 里只留一行索引。
+CSV 读回时样品 ID / 样品名 / 批次按文本读（`tabular.read_frame`），不然 `001` 会变成 1、空批次会变成 NaN。
 第三期上 DuckDB 时可以直接 `SELECT * FROM 'tables/*.parquet'`。
 
 pyarrow 缺失或列类型异常时会退回 CSV —— 宁可格式降级也不丢数据。

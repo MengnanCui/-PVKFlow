@@ -195,7 +195,7 @@ def test_folder_dedup_survives_the_file_being_re_exported(workspace, main_folder
     assert rep["counts"]["imported"] == 0
     assert db.scalar("SELECT COUNT(*) FROM artifact") == n_art
     whys = {d.get("reason") for d in rep["duplicates"]}
-    assert "同一个文件夹" in whys or "同一个文件" in whys
+    assert "同一次测量的文件夹" in whys or "同一个文件" in whys
 
 
 def test_duplicate_rows_say_why_they_were_skipped(workspace, main_folder):
@@ -204,3 +204,43 @@ def test_duplicate_rows_say_why_they_were_skipped(workspace, main_folder):
     ingest.ingest_paths(prev["files"])
     rep = ingest.ingest_paths(prev["files"]).as_dict()
     assert all(d.get("reason") for d in rep["duplicates"])
+
+
+# ---------------------------------------------------------------- 去重③只认真正的测量文件夹（自查 §6 #3）
+def test_same_relative_path_under_two_roots_is_not_a_duplicate(workspace, tmp_path):
+    """两个主文件夹下各有一个 film.csv，内容不同 —— 是两份数据。
+
+    原来去重③对所有文件按相对路径比，第二个被当成「同一个文件夹」静默丢掉。
+    """
+    for root, v in (("rootA", "1.0"), ("rootB", "2.0")):
+        d = tmp_path / root
+        d.mkdir()
+        (d / "film.csv").write_text(f"x,y\n1,{v}\n", encoding="utf-8")
+        rep = ingest.ingest_paths(ingest.scan_preview(d)["files"]).as_dict()
+        assert rep["counts"]["imported"] == 1, (root, rep)
+    assert db.scalar("SELECT COUNT(*) FROM artifact WHERE filename='film.csv'") == 2
+
+
+def test_generic_subfolder_names_are_not_measurement_identities(workspace, tmp_path):
+    """sample1/Data.csv 这种名字里没有测量时刻，不能拿它当「同一次测量」。"""
+    for root, v in (("day1", 0.1), ("day2", 0.2)):
+        d = tmp_path / root / "sample1"
+        d.mkdir(parents=True)
+        (d / "Data.csv").write_text(f"Wavelength,Abs\n400,{v}\n", encoding="utf-8")
+        rep = ingest.ingest_paths(ingest.scan_preview(tmp_path / root)["files"]).as_dict()
+        assert rep["counts"]["imported"] == 1, (root, rep)
+
+
+def test_a_measurement_re_exported_elsewhere_is_still_a_duplicate(workspace, main_folder, tmp_path):
+    """★ 这条是你要的那条（C017 第 2 条）：仪器重新导出到另一个主文件夹，
+    字节变了、路径也变了，但文件夹名里的测量时刻没变 —— 还是同一次测量。"""
+    ingest.ingest_paths(ingest.scan_folders(main_folder)["files"])
+
+    other = tmp_path / "re_export"
+    (other / RUNS[0]).mkdir(parents=True)
+    src = (main_folder / RUNS[0] / "Data.csv").read_text(encoding="utf-8")
+    (other / RUNS[0] / "Data.csv").write_text(src + "\n", encoding="utf-8")
+
+    rep = ingest.ingest_paths(ingest.scan_folders(other)["files"]).as_dict()
+    assert rep["counts"]["imported"] == 0
+    assert rep["duplicates"][0]["reason"] == "同一次测量的文件夹"

@@ -9,7 +9,7 @@ from app import batch as batch_mod
 from app import tasks
 from app.api.common import ApiError, guard
 from app.plotting import script_export
-from app.storage import selection, sets
+from app.storage import selection, sets, tabular
 
 router = APIRouter(prefix="/api/batch", tags=["batch"])
 
@@ -59,8 +59,11 @@ def preview(payload: dict = Body(default={})) -> dict:
         raise ApiError(str(exc), 400, "bad_filter") from exc
     total = selection.count(flt)
     with_matrix = selection.count({**flt, "has_matrix": True})
+    # 默认配方也从这里给：它由已装模块的控件声明决定（app/batch.py Recipe），
+    # 前端不再自己抄一份 —— 抄的那份就是 780–1050 / 775–1120 两套并存的来源。
     return {"total": total, "with_matrix": with_matrix,
-            "without_matrix": total - with_matrix}
+            "without_matrix": total - with_matrix,
+            "recipe_defaults": batch_mod.Recipe().as_dict()}
 
 
 @router.get("/runs")
@@ -142,14 +145,12 @@ def _load_curves(parent_run_id: str, column: str):
     if not tables:
         raise ApiError("这次批处理没有留下曲线表", 404, "no_curves")
 
-    import pandas as pd
-
     from app import config
 
     path = config.WORKSPACE / tables[0]["path"]
     if not path.is_file():
         raise ApiError(f"曲线表文件缺失：{tables[0]['path']}", 404, "missing_table")
-    df = pd.read_csv(path) if path.suffix == ".csv" else pd.read_parquet(path)
+    df = tabular.read_frame(path)
     if column not in df.columns:
         raise ApiError(f"这张表里没有 {column} 列", 400, "bad_column")
     return detail_, tables[0], df
