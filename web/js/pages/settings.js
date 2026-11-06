@@ -12,6 +12,19 @@ export const meta = {
   desc: '导入策略、命名规则、模型接入',
 };
 
+/**
+ * 存完东西之后过一会儿重画设置页，让新状态显示出来。
+ *
+ * **只在你还停在设置页时才重画。** 原来是无条件发「去设置页」：存完马上点去别的页面，
+ * 半秒后又被拽回设置页（审查 §6 前端部分）。
+ */
+function reloadSoon(ms) {
+  setTimeout(() => {
+    if (location.hash.slice(1).replace(/^\/+/, '').split('/')[0] !== 'settings') return;
+    window.dispatchEvent(new CustomEvent('hte:nav', { detail: 'settings' }));
+  }, ms);
+}
+
 export function view(host) {
   return render(host,
     () => Promise.all([api.settings(), api.models(), api.skills(), api.modules()]),
@@ -158,8 +171,7 @@ function moduleSection(mods) {
       toast(`重载完成：${r.count} 个模块`
         + (r.errors.length ? `，${r.errors.length} 个加载失败` : ''),
         r.errors.length ? 'warn' : 'ok');
-      setTimeout(() => window.dispatchEvent(
-        new CustomEvent('hte:nav', { detail: 'settings' })), 400);
+      reloadSoon(400);
     } catch (err) { toast(err.message, 'err'); }
     busy(e.target, false);
   };
@@ -184,8 +196,7 @@ function moduleSection(mods) {
         if (r.installed) {
           mount(status, h('div.notice.notice-ok', h('div.grow',
             h('div.small', `装好了：${r.report.module_id}`))));
-          setTimeout(() => window.dispatchEvent(
-            new CustomEvent('hte:nav', { detail: 'settings' })), 700);
+          reloadSoon(700);
         } else {
           // 装不上要把每一条都摊开 —— 同事（和他的模型）就靠这段改
           mount(status, reportBox(r.report, r.hint));
@@ -267,8 +278,7 @@ function moduleTable(list, status) {
             try {
               await api.uninstallModule(m.id);
               toast('已卸载', 'ok');
-              setTimeout(() => window.dispatchEvent(
-                new CustomEvent('hte:nav', { detail: 'settings' })), 400);
+              reloadSoon(400);
             } catch (err) { toast(err.message, 'err'); }
           },
         }, '卸载'))))));
@@ -543,8 +553,7 @@ function simpleForm(providers, presets) {
               ? `已保存 ${ids.length} 个模型。右上角「AI 助手」就能用了`
               : '地址和密钥已存下。还没有模型 —— 手填一个模型名再保存才能开始对话',
               ids.length ? 'ok' : 'warn', ids.length ? 3000 : 7000);
-            setTimeout(() => window.dispatchEvent(
-              new CustomEvent('hte:nav', { detail: 'settings' })), 500);
+            reloadSoon(500);
           } catch (err) { toast(err.message, 'err', 6000); }
           busy(e.target, false);
         },
@@ -574,8 +583,7 @@ function advancedJson(providers) {
             try {
               await api.saveModels(editor.value);
               toast('模型配置已保存', 'ok');
-              setTimeout(() => window.dispatchEvent(
-                new CustomEvent('hte:nav', { detail: 'settings' })), 500);
+              reloadSoon(500);
             } catch (err) { toast(err.message, 'err', 6000); }
             busy(e.target, false);
           },

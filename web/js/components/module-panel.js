@@ -53,6 +53,12 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品',
   // `uses=[]` 的面板（比如膜厚那格全波段对照）结果不可能变，
   // 陪着算一遍就是白白多等几十毫秒。
   let changed = new Set();
+  // 精确结果的请求可能交错：先发的慢、后发的快。只画**最后一次**的结果；
+  // 被作废的那次负责的面板不能因此漏掉 —— 它的 key 留在 pending 里，
+  // 由下一次请求一起带上（自查 §6 #18）。
+  let exactSeq = 0;
+  const pending = new Set();
+  let pendingAll = false;
 
   // ── 控件画在哪一格：第一个 uses 到它的面板。声明里没人 uses 的控件
   //    放在第一格 —— 不显示出来的话，用户就永远改不了它。
@@ -94,8 +100,11 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品',
       const auto = axis(c.range_from);
       const min = auto ? auto[0] : (c.min ?? 0);
       const max = auto ? auto[1] : (c.max ?? 1e6);
+      // 拖动时只在本地重画（A 档实时），**松手才打后端**。
+      // 原来每一帧都 live() + commit()，commit 是「立刻取精确结果」——
+      // 拖一下滑块就向后端发几十个请求（自查 §6 #19）。和 bandControl 同一个约定。
       return numberControl(c.label, params[c.key], min, max,
-        c.step ?? 1, (v) => { params[c.key] = v; live(); commit(); });
+        c.step ?? 1, (v) => { params[c.key] = v; live(); }, () => commit());
     }
     if (c.type === 'select') {
       return selectControl(c.label, params[c.key],
@@ -137,8 +146,14 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品',
   function scheduleExact(delay = SETTLE_MS) {
     clearTimeout(settleTimer);
     settleTimer = setTimeout(async () => {
-      const sending = [...changed];
+      const keys = [...changed];
       changed = new Set();
+      // 第一次（keys 为空）= 全都要算；上一个「全算」的请求还没落地时，这一次也得全算
+      const all = pendingAll || keys.length === 0;
+      keys.forEach((k) => pending.add(k));
+      if (all) pendingAll = true;
+      const sending = all ? [] : [...pending];
+      const my = ++exactSeq;
       // B 档在等的时候要有交代，不能干瞪眼。
       //
       // 但**只给这次真会重算的那几格挂骨架屏**。后端按面板声明的 uses
@@ -152,15 +167,19 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品',
       }
       let data;
       try {
-        // 第一次（sending 为空）不带 changed，后端就当全都要算
+        // sending 为空就不带 changed，后端就当全都要算
         data = await compute(params, sending.length ? sending : null);
       } catch (err) {
-        sending.forEach((k) => changed.add(k));    // 失败了别把「动过」这件事丢掉
+        if (my !== exactSeq) return;               // 已经有更新的一次了
+        // 失败了 pending 不清 —— 「动过」这件事不能丢，下一次照样带上
         for (const p of spec.panels || []) {
           if (!p.live && hosts[p.id]) mount(hosts[p.id], errorBox(err, () => scheduleExact(0)));
         }
         return;      // A 档保留本地预览，不打断
       }
+      if (my !== exactSeq) return;                 // 旧结果，作废（它的 key 还在 pending 里）
+      pending.clear();
+      pendingAll = false;
       for (const p of spec.panels || []) {
         const d = data[p.id];
         // 后端没回的面板 = 它的输入没变，保持屏幕上那一份，别清空

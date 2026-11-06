@@ -412,7 +412,9 @@ export function openInfo(id, { anchor = null, extra = null, spot = null } = {}) 
         ? h('div.info-hint',
             '还没配模型，只能看上面的定义。',
             h('button.btn.btn-ghost.btn-xs', {
-              onclick: () => { close(); location.hash = '#/settings'; },
+              // 原来写的是 '#/settings'，被切成空页面 id，落到了总览（自查 §6 #21）。
+              // 路由那边也已经认这种写法了；这里写成和别处一致的形式。
+              onclick: () => { close(); location.hash = '#settings'; },
             }, '去设置'))
         : h('div.info-hint.dim', '这一栏只记这个词下面问过的话，跟别的对话分开。'));
       return;

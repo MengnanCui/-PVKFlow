@@ -5,7 +5,9 @@
 // 浏览本机目录。拖拽仍然可用，但那条通道会把文件复制进工作区。
 
 import { api } from '../api.js';
-import { h, mount, modal, toast, fmtBytes, empty, skeletonRows, errorBox, busy } from '../ui.js';
+import {
+  h, mount, modal, toast, fmtBytes, empty, skeletonRows, errorBox, busy, latest,
+} from '../ui.js';
 
 // 最近导入过的目录。导数据是个反复动作 —— 每次都从「起始位置」一层层点回去
 // 是纯粹的浪费。存 localStorage，跟工作区无关，换工作区也还在。
@@ -39,10 +41,14 @@ export async function openImportDialog({ onDone } = {}) {
            h('button.btn', { onclick: () => m.close() }, '关闭')],
   });
 
+  const dirTicket = latest();
+
   async function showRoots() {
+    const fresh = dirTicket();
     mount(body, skeletonRows(3));
     try {
       const { roots } = await api.roots();
+      if (!fresh()) return;
       const recent = recentPaths();
       mount(body,
         h('p.small.muted', '选择一个目录，下一步会先给出扫描预览，确认后才写入。'),
@@ -80,10 +86,13 @@ export async function openImportDialog({ onDone } = {}) {
     }
   }
 
+  // 连点几层目录时，后到的旧目录不许盖掉新目录（见 ui.js latest()）
   async function showDir(path) {
+    const fresh = dirTicket();
     mount(body, skeletonRows(6));
     try {
       const data = await api.browse(path);
+      if (!fresh()) return;
       cursor = data.path;
       mount(body,
         h('div.row.gap-2',
@@ -134,6 +143,7 @@ export async function openImportDialog({ onDone } = {}) {
               e.target),
           }, '扫描这个目录')));
     } catch (err) {
+      if (!fresh()) return;
       mount(body, errorBox(err, () => showDir(path)));
     }
   }
@@ -246,6 +256,12 @@ export async function openImportDialog({ onDone } = {}) {
 
 /** 拖拽上传：便捷但会复制所有文件（浏览器不给真实路径）。 */
 export function bindDropUpload(node, onDone) {
+  // 同一个节点只挂一次。数据处理页每进一次都会调这里，而那个节点是同一个 ——
+  // 原来每进一次多挂一份监听，进过 N 次之后拖一个文件就上传 N 遍、弹 N 个提示
+  // （自查 §6 #5）。再调只更新「传完之后做什么」。
+  node.__dropDone = onDone;
+  if (node.__dropBound) return;
+  node.__dropBound = true;
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
   let depth = 0;
   node.addEventListener('dragenter', (e) => { stop(e); depth++; node.classList.add('is-dragover'); });
@@ -262,7 +278,7 @@ export function bindDropUpload(node, onDone) {
       const rep = await api.upload(files);
       t.remove();
       toast(`导入 ${rep.counts.imported} 个文件（拖拽通道一律复制）`, 'ok');
-      onDone?.(rep);
+      node.__dropDone?.(rep);
     } catch (err) {
       t.remove();
       toast(err.message, 'err', 6000);

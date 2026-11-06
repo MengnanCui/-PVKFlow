@@ -29,6 +29,11 @@ const D = {
   convs: [],
   scopeMode: 'all',    // selected | all —— 只有这两档，不是 plan/auto
   scopeTouched: false, // 你自己点过选择器没有。点过就不再自动跳档
+  // AI 卡片「用这个范围继续问」收窄出来的范围：{filter, count}。
+  // 有它的时候，发消息带的是它，而不是数据处理页的筛选 —— 原来 applyScope 只改了
+  // 会话上存的范围，下一问发出时又被数据处理页的筛选盖掉，收窄从来没生效（自查 §6 #7）。
+  // 你点「选中的 / 全部命中的」或开新对话时清掉。
+  narrowed: null,
   scopeN: 0,
   allN: null,      // 「全部命中的」有几个，问后端要
   detailMax: 40,
@@ -268,7 +273,9 @@ function openMenu(evt) {
 
 // ------------------------------------------------------------------ 会话
 async function startConversation() {
+  stopStreamingForSwitch();
   D.conv = null;
+  D.narrowed = null;
   D.scopeTouched = false;      // 新对话回到「跟着你的选择走」的默认
   D.messages = [];
   D.title = '新对话';
@@ -284,9 +291,11 @@ async function startConversation() {
 }
 
 async function openConversation(id) {
+  stopStreamingForSwitch();
   try {
     const r = await api.conversation(id);
     D.conv = id;
+    D.narrowed = null;
     D.title = r.conversation.title;
     D.messages = r.messages;
     D.view = 'chat';
@@ -297,7 +306,18 @@ async function openConversation(id) {
   }
 }
 
+/**
+ * 换对话（新开、打开历史、看历史列表）之前，停掉正在流的那个回答。
+ *
+ * 原来不停：旧回答的字继续往屏幕最后一个气泡里写 —— 而那已经是另一个对话、
+ * 甚至是历史列表的某一行；D.streaming 还一直是 true，新对话里发不出消息（自查 §6 #23）。
+ */
+function stopStreamingForSwitch() {
+  if (D.streaming) D.abort?.abort();
+}
+
 async function showHistory() {
+  stopStreamingForSwitch();
   D.view = 'history';
   paint();
   try {
@@ -369,9 +389,15 @@ async function refreshScope() {
   } catch {
     D.allN = null;
   }
-  D.scopeN = D.scopeMode === 'selected' ? getScope().checked.length : (D.allN ?? 0);
+  D.scopeN = D.narrowed ? (D.narrowed.count ?? 0)
+    : D.scopeMode === 'selected' ? getScope().checked.length : (D.allN ?? 0);
   D.needsNarrowing = D.scopeN > D.detailMax;
   drawScopeBar();
+}
+
+/** 这一问带什么范围：收窄过就带收窄的，否则跟着数据处理页的选择。 */
+function currentScope() {
+  return D.narrowed ? { mode: 'all', filter: D.narrowed.filter } : scopeFilter(D.scopeMode);
 }
 
 /** 范围选择器。只有两档：分析你勾中的，还是分析筛出来的全部。 */
@@ -384,14 +410,22 @@ function drawScopeBar() {
     {
       disabled,
       title: disabled ? '还没有勾选任何样品' : '',
-      onclick: () => { D.scopeMode = mode; D.scopeTouched = true; refreshScope(); },
+      onclick: () => { D.scopeMode = mode; D.scopeTouched = true; D.narrowed = null; refreshScope(); },
     },
     label, h('span.ai-seg-n', n == null ? '—' : fmtInt(n)));
 
+  // 收窄生效时，两档都不亮，单独一枚显示「AI 收窄的 N 个」，点 × 撤销
+  const narrowedChip = D.narrowed
+    ? h('span.ai-seg.is-on', { title: '这一段对话只看 AI 卡片收窄出来的样品。点 × 回到你的选择' },
+        'AI 收窄的', h('span.ai-seg-n', fmtInt(D.narrowed.count ?? 0)),
+        h('button.icon-btn', { 'aria-label': '撤销收窄', style: { marginLeft: '4px' },
+          onclick: () => { D.narrowed = null; refreshScope(); } }, '✕'))
+    : null;
+
   mount(refs.scopeBar,
     h('div.ai-seg-row',
-      seg('selected', '选中的', nSel, nSel === 0),
-      seg('all', '全部命中的', nAll),
+      D.narrowed ? narrowedChip : seg('selected', '选中的', nSel, nSel === 0),
+      D.narrowed ? null : seg('all', '全部命中的', nAll),
       infoDot('ai_scope')),
     D.needsNarrowing
       ? h('div.ai-scope-note',
@@ -418,6 +452,8 @@ async function send() {
   }
   const assistant = { role: 'assistant', content: '', meta: {}, streaming: true };
   D.messages.push(assistant);
+  const thread = D.messages;          // 这个回答属于哪一个对话 —— 换了对话就不再往屏幕上写
+  const mine = () => D.messages === thread && D.view === 'chat';
   paint();
 
   D.streaming = true;
@@ -427,13 +463,13 @@ async function send() {
 
   try {
     await api.sendMessage(D.conv, {
-      content: text, scope: scopeFilter(D.scopeMode),
+      content: text, scope: currentScope(),
       ...(D.model || {}),          // 没选就不带，后端按设置里的默认走
     }, {
       signal: D.abort.signal,
       onFrame: (event, data) => {
         if (event === 'meta') assistant.meta.message_id = data.message_id;
-        else if (event === 'delta') { assistant.content += data.text; paintLast(); }
+        else if (event === 'delta') { assistant.content += data.text; if (mine()) paintLast(); }
         else if (event === 'card') { assistant.meta.card = data; }
         else if (event === 'error') { assistant.meta.error = data.message; }
       },
@@ -448,7 +484,7 @@ async function send() {
     D.abort = null;
     refs.sendBtn.textContent = '发送';
     refs.sendBtn.classList.add('btn-primary');
-    paint();
+    if (mine()) paint();
   }
 }
 
@@ -631,8 +667,13 @@ function actionCard(card) {
 /** 让模型的筛选式先变成范围，下一问就在这个范围里。 */
 async function applyScope(card) {
   if (!card.filter || !D.conv) return;
-  D.scopeMode = 'all';
-  await api.patchConversation(D.conv, { scope: { mode: 'all', filter: card.filter } });
+  try {
+    await api.patchConversation(D.conv, { scope: { mode: 'all', filter: card.filter } });
+  } catch (err) {
+    toast(`没能收窄范围：${err.message}`, 'err');
+    return;
+  }
+  D.narrowed = { filter: card.filter, count: card.count ?? null };
   D.scopeN = card.count ?? 0;
   D.needsNarrowing = D.scopeN > D.detailMax;
   drawScopeBar();

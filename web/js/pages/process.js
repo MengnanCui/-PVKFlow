@@ -7,7 +7,7 @@ import { api } from '../api.js';
 import { infoDot } from '../components/info.js';
 import {
   h, mount, clear, toast, empty, skeletonRows, errorBox, busy,
-  fmtBytes, fmtInt, modal,
+  fmtBytes, fmtInt, modal, latest,
 } from '../ui.js';
 import { openImportDialog, bindDropUpload } from '../components/filepicker.js';
 import { facetPanel, filterSummary } from '../components/facets.js';
@@ -70,7 +70,7 @@ function consumeAIFilter() {
 }
 
 export async function view(host, ctx) {
-  refs = { host, nav: ctx.nav };
+  refs = { host, nav: ctx.nav, ctx, alive: ctx.alive || (() => true) };
   S.checked = new Set();
   stopPolling();
 
@@ -89,7 +89,7 @@ function functionTabs() {
     'aria-selected': String(S.fn === f.id),
     disabled: !f.ready,
     title: f.ready ? f.desc : '规划中',
-    onclick: () => { if (f.ready) { S.fn = f.id; S.filter = {}; view(refs.host, refs); } },
+    onclick: () => { if (f.ready) { S.fn = f.id; S.filter = {}; view(refs.host, refs.ctx); } },
   }, h('span.fn-tab-name', f.name),
      h('span.fn-tab-desc', f.ready ? f.desc : '规划中'))));
 }
@@ -108,8 +108,13 @@ function drawShell() {
 }
 
 // ------------------------------------------------------------------ 取数
+// 快速连点筛选时，先发的请求可能后回来 —— 列表会停在第一下的结果上、
+// 计数和 AI 抽屉拿到的范围也跟着错（自查 §6 #18）。只认最后一次。
+const reloadTicket = latest();
+
 async function reload() {
   if (!refs.listHost) return;
+  const fresh = reloadTicket();
   S.loading = true;
   drawList();
   try {
@@ -117,11 +122,13 @@ async function reload() {
       api.selectionQuery({ filter: S.filter, limit: PAGE }),
       api.selectionFacets({ filter: S.filter }),
     ]);
+    if (!fresh()) return;
     S.rows = page.rows;
     S.total = page.total;
     S.facets = facets;
     S.error = null;
   } catch (err) {
+    if (!fresh()) return;
     S.error = err;
   }
   S.loading = false;
@@ -653,9 +660,16 @@ const statusText = (s) => ({ queued: '排队中', running: '进行中', ok: '完
 
 function startPolling(taskId) {
   stopPolling();
+  // 只在你还在这一页时轮询。原来离开之后照跑，跑完了把你从别的页面
+  // **强行拉到对比页** —— 你可能正看着别的东西。离开了就停；结果在「对比历史」里。
+  const alive = refs.alive || (() => true);
+  let misses = 0;
   S.pollTimer = setInterval(async () => {
+    if (!alive()) { stopPolling(); return; }
     try {
       const t = await api.getTask(taskId);
+      if (!alive()) { stopPolling(); return; }
+      misses = 0;
       S.task = t;
       drawList();
       if (t.done) {
@@ -674,7 +688,14 @@ function startPolling(taskId) {
           toast(t.error?.split('\n')[0] || '批处理失败', 'err', 8000);
         }
       }
-    } catch { stopPolling(); }
+    } catch (err) {
+      // 原来一次取不到就悄悄停掉，进度条从此卡住。偶尔一次失败再等等；
+      // 连着三次就停下并说出来
+      if (++misses >= 3) {
+        stopPolling();
+        if (alive()) toast(`取不到批处理进度：${err.message}。结果会出现在「对比历史」里`, 'warn', 8000);
+      }
+    }
   }, 700);
 }
 

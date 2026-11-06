@@ -28,6 +28,15 @@ const SYSTEM_NAV = ['settings'];
 const viewport = $('#viewport');
 const mounted = new Map();
 let current = null;
+// 当前这一次「进入页面」的生命周期。离开（导航到任何地方，包括同一页换参数）时 abort ——
+// 页面里还没回来的请求、还在跑的轮询、挂在外面的监听，凭它知道自己该停了。
+//
+// 原来没有这一层：离开对比页后轮询照跑，跑完把别的页面的标题改掉；
+// 拖拽上传的监听每进一次页面多挂一份，拖一个文件传 N 遍（自查 §6 #4 #5 #6）。
+let life = null;
+// 我们自己刚写进地址栏的 hash。写 location.hash 会触发 hashchange，
+// 回调里认出它就不再渲染第二遍 —— 原来每次点导航，页面都渲染两次、接口全部翻倍。
+let selfWritten = null;
 
 // ------------------------------------------------------------------ 主题
 const THEME_KEY = 'hte.theme';
@@ -81,11 +90,18 @@ function navigate(id, { push = true, arg = null } = {}) {
   }
   for (const [pid, node] of mounted) node.classList.toggle('is-active', pid === id);
 
+  life?.abort();
+  life = new AbortController();
+  const { signal } = life;
+
   // 每次进入都重新取数 —— 数据会变，缓存一份旧的更糟
-  page.view(host, { nav: navigate, arg });
+  page.view(host, { nav: navigate, arg, signal, alive: () => !signal.aborted });
 
   const target = arg ? `${id}/${arg}` : id;
-  if (push && location.hash.slice(1) !== target) location.hash = target;
+  if (push && location.hash.slice(1) !== target) {
+    selfWritten = target;
+    location.hash = target;
+  }
   document.title = `${page.meta.title} · HTE Studio`;
   viewport.scrollTop = 0;
 }
@@ -95,11 +111,19 @@ buildNav('#navAnalysis', ANALYSIS_NAV, '分析');
 buildNav('#navSystem', SYSTEM_NAV, '系统');
 
 function fromHash() {
-  const [id, ...rest] = (location.hash.slice(1) || 'overview').split('/');
+  // `#/settings` 和 `#settings` 是一回事。原来前者被切成 id=''，落到总览（自查 §6 #21）
+  const raw = location.hash.slice(1).replace(/^\/+/, '');
+  const [id, ...rest] = (raw || 'overview').split('/');
   return { id: id || 'overview', arg: rest.join('/') || null };
 }
 
 window.addEventListener('hashchange', () => {
+  // 刚才 navigate() 自己写的那个 hash —— 页面已经渲染过了，不再来一遍
+  if (selfWritten !== null && location.hash.slice(1) === selfWritten) {
+    selfWritten = null;
+    return;
+  }
+  selfWritten = null;
   const { id, arg } = fromHash();
   navigate(id, { push: false, arg });
 });

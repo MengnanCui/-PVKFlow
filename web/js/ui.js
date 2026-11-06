@@ -185,17 +185,39 @@ export function errorBox(err, retry, label = '重试') {
       retry ? h('div.mt-2', h('button.btn.btn-sm', { onclick: retry }, label)) : null));
 }
 
+/**
+ * 「只认最后一次」。
+ *
+ * 快速连续发请求时，先发的可能后到 —— 后到的旧响应会把新状态覆盖掉：
+ * 快速点两下筛选，列表停在第一下的结果上；清空搜索框，旧的搜索结果又冒出来
+ * （自查 §6 #18）。每个会被连续触发的地方各拿一个：
+ *
+ *   const ticket = latest();       // 模块级，一处一个
+ *   const fresh = ticket();        // 发请求前取号
+ *   const r = await api.xxx();
+ *   if (!fresh()) return;          // 已经有更新的一次了，这次作废
+ */
+export function latest() {
+  let n = 0;
+  return () => { const my = ++n; return () => my === n; };
+}
+
 /** 异步渲染的统一包装：加载 → 成功 / 失败，三种状态都有交代。 */
 export async function render(host, loader, view) {
+  // 同一个容器上，后发的 render 说了算（见 latest()）
+  host.__renderTicket ??= latest();
+  const fresh = host.__renderTicket();
   mount(host, skeletonRows(4));
   try {
     const data = await loader();
+    if (!fresh()) return null;
     // 骨架屏（四根灰条）换成整页内容，跳变很大 —— 让内容淡入进来，
     // 眼睛就有个「换了」的交代，不是凭空闪一下。
     const body = h('div.enter', view(data));
     mount(host, body);
     return data;
   } catch (err) {
+    if (!fresh()) return null;
     mount(host, errorBox(err, () => render(host, loader, view)));
     return null;
   }

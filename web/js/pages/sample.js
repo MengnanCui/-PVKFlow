@@ -86,16 +86,22 @@ export async function view(host, ctx) {
     return;
   }
 
+  // 这一次进入还算不算数。连着点开两个样品时，先点的那个慢回来，
+  // 不许把后点的那个的标题、元信息、模块面板换掉；离开了也不许再往标题栏写。
+  const alive = ctx.alive || (() => true);
   mount(host, skeletonRows(8));
+  let meta;
   try {
-    S.meta = await api.spectraMeta(S.artifactId);
-    // 地址里给的可能是样品 id（`#sample/smp_xxx`）。后端翻译成了矩阵 id，
-    // 从这里开始一律用翻译后的那个 —— 热力图、拉帧、模块面板都吃它。
-    if (S.meta.artifact_id) S.artifactId = S.meta.artifact_id;
+    meta = await api.spectraMeta(S.artifactId);
   } catch (err) {
-    mount(host, errorBox(err, () => view(host, ctx)));
+    if (alive()) mount(host, errorBox(err, () => view(host, ctx)));
     return;
   }
+  if (!alive()) return;
+  S.meta = meta;
+  // 地址里给的可能是样品 id（`#sample/smp_xxx`）。后端翻译成了矩阵 id，
+  // 从这里开始一律用翻译后的那个 —— 热力图、拉帧、模块面板都吃它。
+  if (S.meta.artifact_id) S.artifactId = S.meta.artifact_id;
 
   const sample = S.meta.sample;
   document.querySelector('#pageTitle').textContent = sample?.name || S.meta.filename || '样品';
@@ -109,7 +115,7 @@ export async function view(host, ctx) {
   mount(host,
     h('div.sample-head', headerFacts()),
     h('div.sample-layout', nav, body));
-  refs = { host, nav, body, ctx };
+  refs = { host, nav, body, ctx, alive };
 
   mount(nav, ...moduleList().map((m) => h('a.module-link', {
     href: `#module-${m.id}`,
@@ -121,6 +127,7 @@ export async function view(host, ctx) {
 
   drawSpectra();
   await loadModules();      // 已装模块各占一节，接在上面两个后面
+  if (!alive()) return;
   loadFrames();
   observeScroll();
 }
@@ -215,8 +222,11 @@ function observeScroll() {
   // 图是异步画出来的，模块高度会变 —— 高度一变参考线的结论就变了
   const ro = new ResizeObserver(onScroll);
   ro.observe(refs.body);
-  // 换样品时 refs.body 整个换掉，旧的监听要摘干净，不然越积越多
+  // 换样品时 refs.body 整个换掉，旧的监听要摘干净，不然越积越多。
+  // 离开样品页也要摘：原来只在「再进样品页」时才摘，去了别的页面之后，
+  // 每次滚动都还在给一个看不见的页面算高亮
   S.spyOff = () => { root.removeEventListener('scroll', onScroll); ro.disconnect(); };
+  refs.ctx?.signal?.addEventListener('abort', () => S.spyOff?.(), { once: true });
   syncSpy();
 }
 
@@ -438,10 +448,13 @@ function timeShade(u) {
  * 模块作者一行前端代码都不写。
  */
 async function loadModules() {
+  const alive = refs.alive || (() => true);
   let mods;
   try {
     mods = (await api.modules()).modules || [];
+    if (!alive()) return;
   } catch (err) {
+    if (!alive()) return;
     // 取不到模块列表不该让整页空着 —— 上面两个平台模块是好的
     mount(refs.body, ...refs.body.childNodes, errorBox(err, loadModules));
     return;
@@ -479,7 +492,7 @@ function drawModules() {
     if (!host) continue;
     moduleView(host, m, {
       frames: S.frames,
-      sampleName: S.meta?.sample_name || '样品',
+      sampleName: S.meta?.sample?.name || '样品',
       // 面板上的 ⓘ 提问时要说清是哪个样品 —— 后端据此给出它自己那一行标量，
       // 而不是全库汇总
       sampleId: S.meta?.sample?.sample_id || '',
@@ -491,9 +504,11 @@ function drawModules() {
 
 // ------------------------------------------------------------------ 数据加载
 async function loadFrames() {
+  const alive = refs.alive || (() => true);
   try {
     const info = await api.spectraFrames(S.artifactId);
     const flat = await api.spectraFramesBin(info.data_url);
+    if (!alive()) return;
     const [L, T] = info.shape;
     if (flat.length !== L * T) {
       throw new Error(`抽样谱长度不符：期望 ${L * T}，实际 ${flat.length}`);
@@ -503,6 +518,7 @@ async function loadFrames() {
     for (let i = 0; i < L; i++) values[i] = flat.subarray(i * T, (i + 1) * T);
     S.frames = { ...info, values };
   } catch (err) {
+    if (!alive()) return;
     S.frames = null;
     [refs.overlayHost].forEach((n) => {
       if (n) mount(n, errorBox(err, loadFrames));
@@ -529,7 +545,7 @@ function dl(hostGetter, name) {
   return downloadMenu({
     svg: () => hostGetter()?.querySelector('svg'),
     spec: () => hostGetter()?.__spec || null,
-    name: `${S.meta?.sample_name || '样品'}_${name}`,
+    name: `${S.meta?.sample?.name || '样品'}_${name}`,
   });
 }
 
@@ -539,7 +555,7 @@ function dlHeatmap(urlGetter, name) {
     svg: () => null,
     spec: () => null,
     imageUrl: urlGetter,
-    name: `${S.meta?.sample_name || '样品'}_${name}`,
+    name: `${S.meta?.sample?.name || '样品'}_${name}`,
   });
 }
 

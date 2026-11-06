@@ -8,6 +8,7 @@ import { infoDot, withInfo } from '../components/info.js';
 import {
   h, mount, clear, toast, empty, skeletonRows, errorBox, busy,
   fmtInt, fmtNum, fmtTime, modal, sampleLabel,
+  latest,
 } from '../ui.js';
 import { xyChart, quantileBand, seriesColor, barChart } from '../chart.js';
 import { figure, numberControl, bandControl,
@@ -76,7 +77,11 @@ export async function view(host, ctx) {
   S.win2 = null; S.win2Resolved = false; S.tMax = null;
   S.modules = null; S.moduleErr = null; S.axes = null;
   S.pins = [];
-  refs = { host, nav: ctx.nav };
+  // alive()：这一次进入页面还算不算数。离开（或换成另一次对比）之后，
+  // 还没回来的请求不许再改 S —— S 是模块级的，下一次进来的页面也用它。
+  // 原来离开后轮询照跑，跑完把你此刻所在页面的标题改掉、把正在看的对比换掉（自查 §6 #6）。
+  const alive = ctx.alive || (() => true);
+  refs = { host, nav: ctx.nav, alive };
 
   const arg = ctx.arg;
   if (!arg) {
@@ -99,12 +104,15 @@ export async function view(host, ctx) {
   }
 
   mount(host, skeletonRows(8));
+  let detail;
   try {
-    S.detail = await api.batchDetail(S.runId);
+    detail = await api.batchDetail(S.runId);
   } catch (err) {
-    mount(host, errorBox(err, () => view(host, ctx)));
+    if (alive()) mount(host, errorBox(err, () => view(host, ctx)));
     return;
   }
+  if (!alive()) return;
+  S.detail = detail;
 
   // 同事模块声明的批处理曲线：长表里有、对比页原来却画不出来（自查 §6 #9）。
   // 平台那三条有固定位置；其余能画的（不是 ot_ok 这种 0/1 辅助列）各占一格。
@@ -158,14 +166,17 @@ async function waitForTask(host, taskId, ctx) {
                                ctx.nav('process'); },
       }, '取消')))));
 
+  const alive = ctx.alive || (() => true);
   for (;;) {
+    if (!alive()) return null;        // 你已经走了：不再轮询，也不再往页面上写
     let t;
     try {
       t = await api.getTask(taskId);
     } catch (err) {
-      mount(host, errorBox(err, () => view(host, ctx)));
+      if (alive()) mount(host, errorBox(err, () => view(host, ctx)));
       return null;
     }
+    if (!alive()) return null;
     const pct = t.total ? Math.round((t.progress / t.total) * 100) : 0;
     bar.style.width = `${pct}%`;
     msg.textContent = t.message || `${t.progress} / ${t.total}`;
@@ -189,11 +200,15 @@ async function waitForTask(host, taskId, ctx) {
 // 「比完就没了、找不到在哪儿」的最后一环。对比本身靠 analysis_run 留住了，
 // AI 对那次对比说过的话靠这里 —— 钉住的是正文快照，删掉对话也带不走它。
 async function loadPins() {
+  const alive = refs.alive;
+  let pins;
   try {
-    S.pins = (await api.pins(S.runId)).pins || [];
+    pins = (await api.pins(S.runId)).pins || [];
   } catch {
-    S.pins = [];        // 钉住是锦上添花，取不到不该影响看结果
+    pins = [];          // 钉住是锦上添花，取不到不该影响看结果
   }
+  if (!alive()) return;
+  S.pins = pins;
   drawPins();
 }
 
@@ -242,6 +257,7 @@ function header() {
 // 后端 `Recipe.module_params` 明明认这个结构，前端一个控件都不生成。
 // 于是「可调参数」实际上就是那六个，别的全是模块里的默认值。
 async function loadRecipe() {
+  const alive = refs.alive;
   try {
     const [mods, axes] = await Promise.all([
       api.modules(),
@@ -249,9 +265,11 @@ async function loadRecipe() {
       // 滑块照样能用，只是范围不跟着这批数据。
       api.batchAxes(S.runId).catch(() => ({ available: false })),
     ]);
+    if (!alive()) return;
     S.modules = mods.modules || [];
     S.axes = axes.available ? axes : null;
   } catch (err) {
+    if (!alive()) return;
     S.moduleErr = err;
   }
   drawRecipe();
@@ -327,7 +345,10 @@ function recipePanel() {
     body,
     h('div.xsmall.dim.mt-3',
       '这些参数改完要重跑一次 —— 它们决定曲线本身怎么算。',
-      '上面「不同时刻的平均膜厚」里换时刻**不用**重跑：膜厚曲线整条已经存下来了。'));
+      // 原来这里是纯文本里写了 **不用**，星号原样显示；而且那一块在参数区**下面**，
+      // 文案却写「上面」（自查 §6 #27）
+      '下面「不同时刻的平均膜厚」里换时刻', h('strong', '不用'),
+      '重跑：膜厚曲线整条已经存下来了。'));
 }
 
 /** 重跑标题里带上最能说明这次改了什么的那个参数。 */
@@ -418,14 +439,20 @@ const metric = (label, value, note) => h('div.metric',
 //
 // 时间窗是**查询参数**，不是配方：整条膜厚曲线在批处理时就算好存下了，
 // 这里只是按窗口切一刀求平均。所以加一个「再看看 15 秒」是即时的，不用重跑。
+const sliceTicket = latest();
+
 async function loadSlices() {
   if (!refs.sliceHost) return;
+  const alive = refs.alive;
+  const fresh = sliceTicket();
   S.sliceBusy = true;
   S.sliceErr = null;
   drawSlices();
   const wins = S.win2 ? [WIN_HEAD, S.win2] : [WIN_HEAD];
   try {
-    S.slices = await api.batchSlices(S.runId, wins);
+    const slices = await api.batchSlices(S.runId, wins);
+    if (!alive() || !fresh()) return;
+    S.slices = slices;
     S.tMax = maxT(S.slices.rows);
     // 第二张图的默认时刻要等这一步 —— 只有拿到数据才知道它测到哪儿。
     // 所以首屏是两次请求：第一张图先出来，第二张图紧接着补上。
@@ -435,6 +462,7 @@ async function loadSlices() {
       if (w) { S.win2 = w; return loadSlices(); }
     }
   } catch (err) {
+    if (!alive() || !fresh()) return;
     S.sliceErr = err;
     S.slices = null;
   }
@@ -712,11 +740,20 @@ function cell(v) {
 // 左右并排两张：谱斜率 vs 时间 | 波段积分 vs 时间。
 // 对比看的就是这两条 —— 一次全画出来，不用先选一个再切另一个。
 async function loadCurves() {
+  const alive = refs.alive;
+  // 重试要先把上一次的错清掉。原来不清：点「重试」之后 drawChart 看见的还是那个错，
+  // 永远画同一个报错（自查 §6 #22）
+  S.error = null;
+  drawChart();
   const cols = ['integral', 'slope', 'ot', ...(S.extra || []).map((c) => c.column)];
   await Promise.all(cols.map(async (col) => {
+    let data;
     try {
-      S.curves[col] = await api.batchCurves(S.runId, { column: col, max_series: 1200 });
+      data = await api.batchCurves(S.runId, { column: col, max_series: 1200 });
+      if (!alive()) return;
+      S.curves[col] = data;
     } catch (err) {
+      if (!alive()) return;
       // 膜厚可能整个缺席（老的对比跑在加膜厚之前）；同事模块的一列出问题也一样 ——
       // 都不该把别的图拖垮，缺的那一张自己显示原因就行。
       if (col === 'integral' || col === 'slope') S.error = err;

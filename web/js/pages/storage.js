@@ -2,7 +2,7 @@
 
 import { api } from '../api.js';
 import { infoDot, withInfo } from '../components/info.js';
-import { h, mount, clear, render, fmtBytes, fmtInt, fmtTime, empty } from '../ui.js';
+import { h, mount, clear, render, fmtBytes, fmtInt, fmtTime, empty, latest } from '../ui.js';
 
 export const meta = {
   id: 'storage',
@@ -163,7 +163,8 @@ function searchSection(ctx) {
     oninput: (e) => {
       clearTimeout(searchTimer);
       const q = e.target.value.trim();
-      // 每敲一个字打一次后端太吵；停 250ms 再查
+      // 清空要立刻生效（并作废路上的旧结果）；敲字时停 250ms 再查，每个字都打后端太吵
+      if (!q) { runSearch('', resultHost, ctx); return; }
       searchTimer = setTimeout(() => runSearch(q, resultHost, ctx), 250);
     },
   });
@@ -177,16 +178,23 @@ function searchSection(ctx) {
       resultHost));
 }
 
+// 敲得快的时候，前一个词的结果可能比后一个词的晚回来；清空搜索框之后，
+// 还在路上的那次搜索也会把结果又画出来（自查 §6 #18）。只认最后一次。
+const searchTicket = latest();
+
 async function runSearch(q, host, ctx) {
+  const fresh = searchTicket();          // 清空也取号 —— 这样路上的旧结果作废
   if (!q) { clear(host); return; }
 
   let d;
   try {
     d = await api.selectionQuery({ filter: { q }, limit: SEARCH_LIMIT });
   } catch (err) {
+    if (!fresh()) return;
     mount(host, h('div.mt-3.small', { style: { color: 'var(--danger)' } }, err.message));
     return;
   }
+  if (!fresh()) return;
 
   if (!d.rows.length) {
     mount(host, h('div.mt-3.small.muted', `没有匹配「${q}」的样品。`));
