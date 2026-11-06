@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any
 
 from app.storage import db
 
@@ -526,10 +526,8 @@ def suggest_expansion(sample_ids: list[str], base: dict | None = None,
         if enum.count < len(rows):
             continue
         # 先看整段范围有多少个，再决定提议扩到哪
-        probe = {**base, "name_range": {"prefix": enum.prefix, "suffix": enum.suffix,
-                                        "min": None, "max": None}}
         full = db.query(
-            f"SELECT s.name FROM sample s WHERE s.name LIKE ? ORDER BY s.name",
+            "SELECT s.name FROM sample s WHERE s.name LIKE ? ORDER BY s.name",
             (enum.prefix + "%" + enum.suffix,))
         all_nums = []
         for r in full:

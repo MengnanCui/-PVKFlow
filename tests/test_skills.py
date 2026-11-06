@@ -181,7 +181,7 @@ def test_custom_skill_result_lands_in_key_result(loaded):
                 Metric("answer", 21 * ctx.param("factor"), unit="eV", quality="validated")])
 
     registry.register(Mini())
-    out = runner.run_skill("test.mini", [art("%jv.csv")], {"factor": 2})
+    runner.run_skill("test.mini", [art("%jv.csv")], {"factor": 2})
 
     row = db.query_one("SELECT * FROM key_result WHERE field_name='answer'")
     assert row["value_num"] == 42
@@ -193,7 +193,6 @@ def test_custom_skill_result_lands_in_key_result(loaded):
 
 
 def test_text_and_numeric_values_go_to_different_columns(loaded):
-    from app.skills import runner
     from app.storage import results
 
     run_id = results.start_run("t", "1.0")

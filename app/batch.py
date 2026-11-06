@@ -21,11 +21,10 @@ import json
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 
-from app import config, tasks
+from app import tasks
 from app.parsers import matrix, render
 from app.storage import artifacts, db, results, selection, tabular
 

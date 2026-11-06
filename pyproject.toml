@@ -12,3 +12,15 @@ filterwarnings = ["ignore::DeprecationWarning"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# 只开抓 bug 的规则：语法错误（E9）、pyflakes（F：未定义名、未用导入 / 变量）、
+# bugbear（B：闭包抓循环变量之类）。风格类不开 —— CI 是用来拦坏代码的，不是拦写法的。
+select = ["E4", "E7", "E9", "F", "B"]
+ignore = [
+    "B008",   # FastAPI 的 Query(...) / Body(...) 默认参数就是这么写的
+    "B905",   # zip(strict=) —— 加了会改变运行时行为，要逐处判断，不一刀切
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F811"]   # pytest 夹具按参数名注入，从别的测试文件导入夹具会被误判成重定义

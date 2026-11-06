@@ -14,7 +14,7 @@ import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
 from app.storage import db
 

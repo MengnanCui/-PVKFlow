@@ -1,0 +1,109 @@
+# 每次推送都跑一遍。三件事：
+#   lint     —— ruff，只开抓 bug 的规则（见 pyproject.toml）
+#   test     —— pytest，Linux 两个 Python 版本 + Windows。
+#               Windows 上**故意不设 PYTHONUTF8**：同事双击 run.bat 时也没有它，
+#               编码类的毛病要在这里先露出来
+#   startup  —— 真的跑一遍 run.bat（Windows）和 run.sh（Linux）：建虚拟环境、装依赖、
+#               起服务，然后打健康检查和首页。run.bat 在此之前从没在任何地方跑过。
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff==0.17.4
+      - run: ruff check app tests tools
+
+  test:
+    name: test (${{ matrix.os }}, py${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.11" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.11" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      # 算子一致性测试要用 node 跑 web/js/ops.js；前端打包检查也要它
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  startup-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 双击 run.bat 的等价操作
+        shell: pwsh
+        run: |
+          $env:HTE_NO_BROWSER = "1"
+          $env:HTE_WORKSPACE = "$env:RUNNER_TEMP\hte-ws"
+          $p = Start-Process -FilePath cmd.exe -ArgumentList '/c', 'run.bat' -PassThru `
+                 -RedirectStandardOutput out.txt -RedirectStandardError err.txt -NoNewWindow
+          $ok = $false
+          for ($i = 0; $i -lt 150; $i++) {
+            try {
+              $r = Invoke-RestMethod -Uri http://127.0.0.1:8765/api/health -TimeoutSec 3
+              if ($r.ok) { $ok = $true; break }
+            } catch { }
+            Start-Sleep -Seconds 2
+          }
+          Write-Host "---- run.bat 输出 ----"
+          Get-Content out.txt -Encoding utf8 -ErrorAction SilentlyContinue
+          Get-Content err.txt -Encoding utf8 -ErrorAction SilentlyContinue
+          if (-not $ok) { taskkill /PID $p.Id /T /F; throw "run.bat 5 分钟内没有起来" }
+          Write-Host "健康检查：$($r | ConvertTo-Json -Compress)"
+          $page = Invoke-WebRequest -Uri http://127.0.0.1:8765/ -UseBasicParsing
+          if ($page.Content -notmatch 'HTE Studio') { taskkill /PID $p.Id /T /F; throw "首页不对" }
+          $page = Invoke-WebRequest -Uri http://127.0.0.1:8765/assets/js/app.js -UseBasicParsing
+          if ($page.StatusCode -ne 200) { taskkill /PID $p.Id /T /F; throw "前端脚本取不到" }
+          taskkill /PID $p.Id /T /F
+          Write-Host "run.bat：建环境、装依赖、起服务、首页 —— 全部通过"
+
+  startup-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: run.sh
+        run: |
+          export HTE_NO_BROWSER=1 HTE_WORKSPACE="$RUNNER_TEMP/hte-ws"
+          ./run.sh > out.txt 2>&1 &
+          for i in $(seq 1 150); do
+            if curl -sf http://127.0.0.1:8765/api/health; then ok=1; break; fi
+            sleep 2
+          done
+          cat out.txt
+          [ "${ok:-}" = 1 ] || { echo "run.sh 5 分钟内没有起来"; exit 1; }
+          curl -sf http://127.0.0.1:8765/ | grep -q 'HTE Studio'
+          echo "run.sh：建环境、装依赖、起服务、首页 —— 全部通过"

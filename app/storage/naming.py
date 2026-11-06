@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Iterable
+from typing import Any, Iterable
 
 FIELDS = ("batch", "sample", "method")
 _PLACEHOLDER = re.compile(r"\{(\*|[a-zA-Z_][a-zA-Z0-9_]*)\}")

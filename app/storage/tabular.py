@@ -76,7 +76,6 @@ def read_table(table_id: str, limit: int | None = None) -> dict:
     if not row:
         raise KeyError(f"数值表不存在：{table_id}")
 
-    import pandas as pd
 
     path = config.WORKSPACE / row["path"]
     if not path.exists():

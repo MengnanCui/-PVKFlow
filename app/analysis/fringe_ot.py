@@ -601,7 +601,7 @@ def _selftest() -> int:
         return 1
     print(f"✓ f = 2·n·d 验证通过：标 OK 的帧全部锁在正确的条纹级次上"
           f"（偏差 < 一格 {bound:.1f} nm）")
-    print(f"  （要更细得上 §8 IMP-3 相位精修，规范里默认是 off）")
+    print("  （要更细得上 §8 IMP-3 相位精修，规范里默认是 off）")
     return 0
 
 

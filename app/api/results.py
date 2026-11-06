@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Query
 
-from app.api.common import ApiError, guard
+from app.api.common import guard
 from app.skills import runner
 from app.storage import db, results, tabular
 

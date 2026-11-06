@@ -10,9 +10,7 @@ Mengnan 的 matplotlib 规范，不是"差不多"的版本。
 from __future__ import annotations
 
 import io
-import json
 import zipfile
-from typing import Any
 
 # ---- 以下四块逐字对应 matplotlib-mengnan-style skill，改动前先看那份规范 ----
 RCPARAMS = """plt.rcParams.update({

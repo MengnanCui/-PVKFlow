@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Query
+from fastapi import APIRouter, Body
 
 from app.api.common import ApiError, guard
 from app.storage import selection, sets

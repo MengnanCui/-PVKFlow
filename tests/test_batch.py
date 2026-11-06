@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from app import batch, config, tasks
-from app.storage import db, ingest, selection
+from app.storage import db, ingest
 
 
 def _matrix_file(path, n_lam=120, n_t=40, ot=4000.0, seed=0):
@@ -392,7 +392,7 @@ def test_exported_script_actually_runs(batch_client, imported, tmp_path, mode, g
     导出脚本是"论文里那张图"的来源 —— 生成一份跑不起来的脚本比不给还糟。
     所以这里不检查字符串，直接解压、执行、看有没有出图。
     """
-    matplotlib = pytest.importorskip("matplotlib", reason="脚本执行验证需要 matplotlib")
+    pytest.importorskip("matplotlib", reason="脚本执行验证需要 matplotlib")
 
     t = _wait(tasks.submit(batch.BATCH_SKILL_ID,
                            {"filter": {"batch": ["B20"]}, "recipe": {}})["task_id"])
@@ -502,7 +502,6 @@ def test_history_lists_runs_with_their_titles(batch_client, imported):
 
 
 def test_untitled_run_still_gets_a_usable_name(batch_client, imported):
-    import json as _json
 
     r = batch_client.post("/api/batch/run",
                           json={"filter": {"batch": ["B20"]}, "recipe": {}})

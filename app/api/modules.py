@@ -9,12 +9,11 @@ import shutil
 import zipfile
 from pathlib import Path
 
-import numpy as np
-from fastapi import APIRouter, Body, File, Query, UploadFile
+from fastapi import APIRouter, Body, File, UploadFile
 from fastapi.responses import Response
 
 from app import config
-from app.api.common import ApiError, guard
+from app.api.common import ApiError
 from app.modules import ops, validate
 from app.modules.base import ModuleContext
 from app.modules.registry import registry

@@ -1,5 +1,7 @@
 -r requirements.txt
 pytest==8.3.4
+# CI 里跑的静态检查。规则在 pyproject.toml，只开抓 bug 的那几类
+ruff==0.17.4
 
 # 平台本身不画 matplotlib 图 —— 它只**导出**一份 plot.py 让你自己跑。
 # 这里装它是为了在测试里真的把导出的脚本执行一遍：

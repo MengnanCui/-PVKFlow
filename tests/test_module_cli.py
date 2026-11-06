@@ -9,11 +9,8 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
 
-from app import config
 from app.modules import check as cli
-from app.modules import validate
 from app.modules.registry import ModuleRegistry, TEMPLATE_DIR
 
 BAD = '''
@@ -43,7 +40,7 @@ def test_the_cli_and_the_import_path_say_exactly_the_same_thing(workspace, tmp_p
 
     # 命令行那条路
     ok_cli, lines = cli.check(folder)
-    cli_errors = [l[2:] for l in lines if l.startswith("✗ ")]
+    cli_errors = [ln[2:] for ln in lines if ln.startswith("✗ ")]
 
     # 界面导入那条路（同一个函数，导入接口内部就调它）
     from app.api.modules import _validate_folder
@@ -80,7 +77,7 @@ def test_it_accepts_the_file_as_well_as_the_folder(workspace, tmp_path):
     a = cli.check(folder)
     b = cli.check(folder / "module.py")
     assert a[0] == b[0]
-    assert [l for l in a[1] if l.startswith("✗")] == [l for l in b[1] if l.startswith("✗")]
+    assert [ln for ln in a[1] if ln.startswith("✗")] == [ln for ln in b[1] if ln.startswith("✗")]
 
 
 def test_the_failure_output_tells_you_to_paste_it_to_your_model(workspace, tmp_path):
@@ -88,7 +85,7 @@ def test_the_failure_output_tells_you_to_paste_it_to_your_model(workspace, tmp_p
     人得知道这段报错是可以直接喂回去的。"""
     folder = _write(tmp_path / "bad", BAD)
     _, lines = cli.check(folder)
-    assert any("贴给你的模型" in l for l in lines)
+    assert any("贴给你的模型" in ln for ln in lines)
 
 
 def test_the_shipped_modules_all_pass_the_cli(workspace):

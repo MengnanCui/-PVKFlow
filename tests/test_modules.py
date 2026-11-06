@@ -15,8 +15,8 @@ import pytest
 from app import config
 from app.modules import ops, validate
 from app.modules.base import (Control, Curve, Module, ModuleContext, ModuleSpec,
-                              Op, Panel, PanelData)
-from app.modules.registry import ModuleRegistry, registry
+                              Op, Panel)
+from app.modules.registry import ModuleRegistry
 
 BASE = dict(id="pl.peak", name="荧光", version="1.0.0")
 BAND = Control("integ", "波段", "band", default=[800, 950], unit="nm")

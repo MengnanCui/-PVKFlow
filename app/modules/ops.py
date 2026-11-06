@@ -28,7 +28,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Sequence
+from typing import Any, Callable, Literal
 
 import numpy as np
 

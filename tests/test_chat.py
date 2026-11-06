@@ -306,7 +306,7 @@ def _frames(text):
 
 
 def test_streaming_answer_arrives_in_pieces_and_lands_in_the_db(client, samples, monkeypatch):
-    p = _use(monkeypatch, _FakeProvider(["这批", "膜厚", "偏薄。"]))
+    _use(monkeypatch, _FakeProvider(["这批", "膜厚", "偏薄。"]))
     cid = client.post("/api/chat/conversations", json={}).json()[
         "conversation"]["conversation_id"]
 

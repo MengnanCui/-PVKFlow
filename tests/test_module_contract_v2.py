@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from app.modules import validate
-from app.modules.base import (SERIES_COLORS, Control, Curve, Module, ModuleContext,
+from app.modules.base import (SERIES_COLORS, Control, Module, ModuleContext,
                               ModuleSpec, Notice, Op, Panel, PanelData, Series, Stat)
 from app.modules.registry import ModuleRegistry, TEMPLATE_DIR
 
@@ -57,7 +57,7 @@ def test_extending_the_contract_did_not_break_the_shipped_modules(workspace):
         assert r.ok, f"{m.spec.id} 装不上了：{r.errors}"
 
     # 模板也一样
-    dest = config_tmp = None
+    dest = None
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         dest = f"{tmp}/t"

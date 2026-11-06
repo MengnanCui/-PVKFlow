@@ -149,7 +149,7 @@ def matrix_client(client, tmp_path):
     with open(p, "w", encoding="utf-8") as f:
         f.write("# Instrument: TestSpec\n")
         f.write("Wavelength(nm)," + ",".join(f"{x:.4f}" for x in t) + "\n")
-        for i, w in enumerate(lam):
+        for w in lam:
             row = 0.6 + 0.2 * np.cos(2 * np.pi * 2 * 4000 * (1 - 0.5 * t / 20) / w)
             f.write(f"{w:.4f}," + ",".join(f"{v:.6f}" for v in row) + "\n")
 

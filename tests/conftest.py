@@ -1,8 +1,6 @@
 """每个测试跑在自己的临时工作区里，互不干扰。"""
 from __future__ import annotations
 
-import os
-import shutil
 from pathlib import Path
 
 import pytest

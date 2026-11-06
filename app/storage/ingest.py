@@ -424,7 +424,7 @@ def ingest_paths(
             if mode == "copied":
                 target = raw_target(sha, ext)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                _store_copy(target, src.stat().st_size, lambda tmp: shutil.copy2(src, tmp))
+                _store_copy(target, src.stat().st_size, lambda tmp, src=src: shutil.copy2(src, tmp))
                 stored_path = rel_to_workspace(target)
             else:
                 # 引用型：原图不动，只做缩略图（图像才有）
@@ -514,7 +514,7 @@ def ingest_uploads(uploads: Iterable[tuple[str, bytes]], source_hint: str = "") 
 
             target = raw_target(sha, ext)
             target.parent.mkdir(parents=True, exist_ok=True)
-            _store_copy(target, len(data), lambda tmp: tmp.write_bytes(data))
+            _store_copy(target, len(data), lambda tmp, data=data: tmp.write_bytes(data))
 
             m = naming.parse(display, rules)
             sample_id = _ensure_sample(m.sample, m.batch)

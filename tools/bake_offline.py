@@ -31,7 +31,6 @@ import os
 import pathlib
 import re
 import subprocess
-import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"

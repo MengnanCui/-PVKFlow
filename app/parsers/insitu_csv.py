@@ -40,7 +40,6 @@ from typing import Any
 import numpy as np
 
 from app.parsers.matrix import SpectralMatrix
-from app.parsers.sniff import read_text
 
 # 块名。文件里写作 "<块名> Wavelength"。
 ABSORPTION = "Absorption"

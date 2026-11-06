@@ -170,9 +170,11 @@ def _ot_panel(lam, t, M, window, absorb: bool, want_report: bool = False) -> Pan
     ok_x, ok_y, deg_x, deg_y = [], [], [], []
     for x, y, st in zip(xs, ys, status):
         if st == "OK":
-            ok_x.append(x); ok_y.append(y)
+            ok_x.append(x)
+            ok_y.append(y)
         elif st == "DEGRADED":
-            deg_x.append(x); deg_y.append(y)
+            deg_x.append(x)
+            deg_y.append(y)
 
     series = [Series(xs, ys, "全部帧（含不可信）", "line", "muted")]
     if deg_x:
