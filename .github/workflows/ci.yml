@@ -53,7 +53,8 @@ jobs:
         with:
           node-version: "20"
       # 和 run.bat 一样只装预编译包：哪个依赖在这个 Python 上没有 wheel，这一步就红
-      - run: python -m pip install -r requirements-dev.txt --only-binary=:all:
+      # 整条加引号：结尾的 `:all:` 不加引号会被 YAML 当成「键:」，整个工作流文件就解析失败
+      - run: "python -m pip install -r requirements-dev.txt --only-binary=:all:"
       - run: python -m pytest -q
 
   startup-windows:
