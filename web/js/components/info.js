@@ -18,6 +18,7 @@
 //    所以没有遮罩：页面照常看得见、滚得动，点浮层外面就关。
 
 import { h, mount, toast, fmtTime, richText } from '../ui.js';
+import { modelSelect, onModelPicked, streamReply, syncSelect } from './chat-client.js';
 import { api } from '../api.js';
 import { term } from '../glossary.js';
 
@@ -143,23 +144,12 @@ const spotDigest = (spot) => {
 // ------------------------------------------------------------------ 浮层
 const TOPIC = (id) => `glossary:${id}`;
 
-// 和右侧 AI 抽屉共用同一个键：在哪儿换的模型，另一边都跟着变。
-// 各存一份的话，你在抽屉里换了模型、在 ⓘ 里问一句，答的还是旧模型。
-const MODEL_KEY = 'hte.ai.model';
-
-function readPickedModel() {
-  try {
-    const raw = localStorage.getItem(MODEL_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
-}
-
-function writePickedModel(v) {
-  try { localStorage.setItem(MODEL_KEY, JSON.stringify(v)); } catch { /* 隐私模式 */ }
-}
-
 // 同时只开一个。开第二个之前先把上一个收掉 —— 满屏浮层比全屏遮罩还糟。
 let openPop = null;
+
+// 模型选择和右侧 AI 抽屉共用一份（chat-client.js）。抽屉里换了模型，
+// 开着的这个浮层也跟上 —— 只有一个浮层开着，所以监听挂在模块级、只挂一次。
+onModelPicked((v) => openPop?.onModel?.(v));
 
 export function closePop() {
   openPop?.close();
@@ -260,7 +250,7 @@ export function openInfo(id, { anchor = null, extra = null, spot = null } = {}) 
     window.removeEventListener('resize', reposition);
     if (openPop?.close === close) openPop = null;
   }
-  openPop = { close };
+  openPop = { close, onModel: (v) => { S.model = v; syncSelect(S.modelEl, v); } };
 
   document.addEventListener('keydown', onKey, true);
   window.addEventListener('scroll', reposition, true);
@@ -306,32 +296,12 @@ export function openInfo(id, { anchor = null, extra = null, spot = null } = {}) 
     drawModelPick();
   }
 
-  /** 这个小窗里也能换模型，和右侧抽屉共用同一份选择（存在同一个 localStorage 键）。 */
+  /** 这个小窗里也能换模型，和右侧抽屉共用同一份选择（chat-client.js）。 */
   async function drawModelPick() {
-    let list = [];
-    try {
-      const cfg = await api.models();
-      for (const pr of cfg.providers || []) {
-        for (const m of pr.models || []) list.push({ provider: pr.name, model: m.id });
-      }
-    } catch { list = []; }
-    // 只有一个模型时不画：一个没有选择余地的下拉只是噪声
-    if (list.length < 2) return mount(modelPick);
-    const cur = readPickedModel();
-    const sep = '\u0000';
-    mount(modelPick, h('select.model-switch', {
-      title: '这一问用哪个模型',
-      onchange: (e) => {
-        const [provider, model] = e.target.value.split(sep);
-        writePickedModel({ provider, model });
-        S.model = { provider, model };
-      },
-    }, ...list.map((x) => h('option', {
-      value: `${x.provider}${sep}${x.model}`,
-      selected: cur && cur.model === x.model && cur.provider === x.provider,
-    }, x.model))));
-    S.model = cur && list.some((x) => x.model === cur.model && x.provider === cur.provider)
-      ? cur : null;
+    const { el, current } = await modelSelect({ title: '这一问用哪个模型' });
+    S.model = current;
+    S.modelEl = el;
+    mount(modelPick, el);
   }
 
   // ---------------------------------------------------------------- 发问
@@ -364,7 +334,7 @@ export function openInfo(id, { anchor = null, extra = null, spot = null } = {}) 
     sendBtn.textContent = '停止';
 
     try {
-      await api.sendMessage(S.conv, {
+      await streamReply(S.conv, {
         content: text,
         // 身份（哪个样品 / 哪次对比）进 scope —— 那里只放能重新解析的 id，
         // 后端据此还能去取更多。读数**不进这里**，见上面 spotText 的注释。
@@ -385,17 +355,10 @@ export function openInfo(id, { anchor = null, extra = null, spot = null } = {}) 
         ].filter(Boolean).join('\n\n'),
       }, {
         signal: S.abort.signal,
-        onFrame: (event, data) => {
-          if (event === 'delta') { a.content += data.text; paintLast(); }
-          else if (event === 'error') { a.meta.error = data.message; }
-        },
+        reply: a,
+        onDelta: paintLast,
       });
-    } catch (err) {
-      if (err.name === 'AbortError') a.meta.aborted = true;
-      else if (err.kind === 'no_model' || err.status === 501) a.meta.noModel = true;
-      else a.meta.error = err.message;
     } finally {
-      a.streaming = false;
       S.streaming = false;
       S.abort = null;
       sendBtn.textContent = '问';

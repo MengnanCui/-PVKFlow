@@ -20,7 +20,6 @@ export function h(tag, props = null, ...children) {
     if (v === null || v === undefined || v === false) continue;
     if (k === 'class') node.classList.add(...String(v).split(/\s+/).filter(Boolean));
     else if (k === 'style' && typeof v === 'object') Object.assign(node.style, v);
-    else if (k === 'html') node.innerHTML = v;
     else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
     else if (k === 'dataset') Object.assign(node.dataset, v);
     else if (k in node && k !== 'list' && typeof v !== 'object') node[k] = v;
@@ -44,7 +43,6 @@ export function append(node, children) {
 }
 
 export const $ = (sel, root = document) => root.querySelector(sel);
-export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 export function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); return node; }
 export function mount(node, ...children) { clear(node); return append(node, children); }

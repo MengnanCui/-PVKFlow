@@ -7,7 +7,7 @@ import { h, clear } from '../ui.js';
 /**
  * virtualList({ height, rowHeight, count, renderRow, overscan })
  * renderRow(index) → 元素
- * 返回的节点带 .refresh(newCount) 和 .scrollToIndex(i)
+ * 返回的就是那个滚动容器节点
  */
 export function virtualList({ height = 480, rowHeight = 46, count = 0,
                               renderRow, overscan = 6 }) {
@@ -44,13 +44,6 @@ export function virtualList({ height = 480, rowHeight = 46, count = 0,
     ticking = true;
     requestAnimationFrame(() => { ticking = false; layout(); });
   });
-
-  host.refresh = (newCount) => {
-    if (newCount !== undefined) total = newCount;
-    lastRange = [-1, -1];
-    layout(true);
-  };
-  host.scrollToIndex = (i) => { host.scrollTop = i * rowHeight; layout(true); };
 
   layout(true);
   return host;

@@ -13,6 +13,7 @@ import { api } from '../api.js';
 import { infoDot } from './info.js';
 import { h, mount, $, toast, fmtInt, fmtTime, confirmDialog, modal, richText, inlineText } from '../ui.js';
 import { getScope, onScope, scopeFilter, hasSelection } from '../scope.js';
+import { modelSelect, onModelPicked, streamReply, syncSelect } from './chat-client.js';
 
 const WIDTH_KEY = 'hte.ai.width';
 const MIN_W = 320;
@@ -39,7 +40,6 @@ const D = {
   detailMax: 40,
   streaming: false,
   abort: null,
-  models: [],          // 设置里配好的全部模型，头部那个下拉从这儿来
   model: null,         // {provider, model}；null = 用设置里的默认
   modelReady: null,    // null = 还没探过
 };
@@ -60,21 +60,31 @@ export function initDrawer(options = {}) {
 
   $('#aiToggle')?.addEventListener('click', () => toggle());
 
+  onModelPicked((v) => {
+    const changed = !D.model || !v || D.model.model !== v.model || D.model.provider !== v.provider;
+    D.model = v;
+    syncSelect(refs.modelSel, v);
+    if (changed && v && D.messages.length) {
+      D.messages.push({ role: 'system', content: `已切换到 ${v.model}`, meta: {} });
+      if (D.view === 'chat' && !D.streaming) paint();
+    }
+  });
+
   window.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
       toggle();
     } else if (e.key === 'Escape') {
       if (D.full) setFull(false);           // 先退全屏，别一下全关了
-      else if (D.open && !$('.modal-mask')) toggle(false);
+      // 弹窗开着时 Esc 是关弹窗的。原来查的是 .modal-mask —— 这个类名根本不存在，
+      // 于是在弹窗里按 Esc 会连抽屉一起关掉
+      else if (D.open && !$('.modal-backdrop')) toggle(false);
     }
   });
 
   // 数据处理页改了勾选或筛选式，范围选择器上的数字要跟着走
   onScope(() => { if (D.open) refreshScope(); });
 }
-
-export function openDrawer() { toggle(true); }
 
 function toggle(force) {
   D.open = force === undefined ? !D.open : force;
@@ -128,63 +138,15 @@ function buildShell() {
 }
 
 /**
- * 头部那个模型切换器。
- *
- * 后端早就收 `{provider, model}` 了（chat.py 的 post_message），
- * 缺的只是一个能选的地方。选中的存 localStorage —— 这是「我这台机器上
- * 习惯用哪个」，不是平台设置，不该写进数据库让别人也跟着变。
+ * 头部那个模型切换器。选择本身、下拉、存在哪儿，都在 chat-client.js ——
+ * 和 ⓘ 浮层共用一份：在哪边换，另一边立刻跟上（见 initDrawer 里的 onModelPicked）。
  */
-const MODEL_KEY = 'hte.ai.model';
-
-function readModel() {
-  try {
-    const raw = localStorage.getItem(MODEL_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
-}
-
-function writeModel(v) {
-  try {
-    if (v) localStorage.setItem(MODEL_KEY, JSON.stringify(v));
-    else localStorage.removeItem(MODEL_KEY);
-  } catch { /* 隐私模式下写不进去，不影响这一次会话 */ }
-}
-
 async function drawModelSwitch() {
   if (!refs.modelBar) return;
-  let list = [];
-  try {
-    const cfg = await api.models();
-    for (const p of cfg.providers || []) {
-      for (const m of p.models || []) list.push({ provider: p.name, model: m.id });
-    }
-  } catch { list = []; }
-
-  D.models = list;
-  // 只有一个模型时不画 —— 一个没有选择余地的下拉只是噪声
-  if (list.length < 2) { mount(refs.modelBar); return; }
-
-  const cur = readModel();
-  const val = (x) => `${x.provider}\u0000${x.model}`;
-  const sel = h('select.model-switch', {
-    title: '这次对话用哪个模型',
-    onchange: (e) => {
-      const [provider, model] = e.target.value.split('\u0000');
-      writeModel({ provider, model });
-      D.model = { provider, model };
-      // 在对话流里插一行 —— 回头看历史时才分得清哪句是谁答的
-      if (D.messages.length) {
-        D.messages.push({ role: 'system', content: `已切换到 ${model}`, meta: {} });
-        paint();
-      }
-    },
-  }, ...list.map((x) => h('option', {
-    value: val(x), selected: cur && cur.model === x.model && cur.provider === x.provider,
-  }, x.model)));
-
-  D.model = cur && list.some((x) => x.model === cur.model && x.provider === cur.provider)
-    ? cur : null;
-  mount(refs.modelBar, sel);
+  const { el, current } = await modelSelect({ title: '这次对话用哪个模型' });
+  D.model = current;
+  refs.modelSel = el;
+  mount(refs.modelBar, el);
 }
 
 function autoGrow() {
@@ -462,24 +424,15 @@ async function send() {
   refs.sendBtn.classList.remove('btn-primary');
 
   try {
-    await api.sendMessage(D.conv, {
+    await streamReply(D.conv, {
       content: text, scope: currentScope(),
       ...(D.model || {}),          // 没选就不带，后端按设置里的默认走
     }, {
       signal: D.abort.signal,
-      onFrame: (event, data) => {
-        if (event === 'meta') assistant.meta.message_id = data.message_id;
-        else if (event === 'delta') { assistant.content += data.text; if (mine()) paintLast(); }
-        else if (event === 'card') { assistant.meta.card = data; }
-        else if (event === 'error') { assistant.meta.error = data.message; }
-      },
+      reply: assistant,
+      onDelta: () => { if (mine()) paintLast(); },
     });
-  } catch (err) {
-    if (err.name === 'AbortError') assistant.meta.aborted = true;
-    else if (err.kind === 'no_model' || err.status === 501) assistant.meta.noModel = true;
-    else assistant.meta.error = err.message;
   } finally {
-    assistant.streaming = false;
     D.streaming = false;
     D.abort = null;
     refs.sendBtn.textContent = '发送';

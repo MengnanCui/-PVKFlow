@@ -6,7 +6,7 @@
 
 import { api } from '../api.js';
 import { withInfo } from '../components/info.js';
-import { h, mount, render, empty, fmtInt, fmtTime } from '../ui.js';
+import { h, render, empty, fmtInt, fmtTime } from '../ui.js';
 
 export const meta = {
   id: 'history',

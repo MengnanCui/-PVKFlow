@@ -28,6 +28,8 @@ NODE_PATH=$(npm root -g) node tools/qa/a2_check.js smp_xxx run_xxx
 NODE_PATH=$(npm root -g) node tools/qa/a2_download_name.js smp_xxx
 # AI 曲线摘要（P-44）：看假网关记下的、模型实际收到的文字里有没有曲线摘要
 NODE_PATH=$(npm root -g) node tools/qa/p44_check.js smp_xxx /tmp/requests.jsonl
+# B（二）：拆页面 / 删死代码 / 共用聊天客户端之后的行为（设置里要配两个模型 fake-1、fake-2）
+NODE_PATH=$(npm root -g) node tools/qa/b2_check.js smp_xxx run_xxx /tmp/requests.jsonl
 ```
 
 需要 Playwright（`npm i -g playwright`，或已经装好的）。

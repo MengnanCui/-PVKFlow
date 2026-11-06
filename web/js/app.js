@@ -1,7 +1,7 @@
 // 应用外壳：导航、主题、健康检查。
 
 import { api } from './api.js';
-import { h, mount, $, toast } from './ui.js';
+import { h, mount, $ } from './ui.js';
 
 import * as overview from './pages/overview.js';
 import * as process_ from './pages/process.js';

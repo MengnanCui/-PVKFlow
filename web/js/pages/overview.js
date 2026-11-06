@@ -2,7 +2,7 @@
 
 import { api } from '../api.js';
 import { withInfo } from '../components/info.js';
-import { h, mount, render, fmtInt, fmtTime, empty, sampleLabel } from '../ui.js';
+import { h, render, fmtInt, fmtTime, empty, sampleLabel } from '../ui.js';
 
 export const meta = {
   id: 'overview',

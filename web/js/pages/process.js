@@ -2,17 +2,28 @@
 //
 // 核心：**一次选择是一个筛选式，不是一串 ID**。左边的分面面板改的是筛选式，
 // 中间的列表只是它的一个视图。手点几个之后平台会提议「要不要扩展成规则」。
+//
+// 原来一个文件七百多行，2026-11 按职责拆开（tools/split_page.py），行为不变：
+//   process-state.js   页面状态 S / refs，和 hooks（见下）
+//   process-filter.js  搜索框、分面、保存的样品集
+//   process-select.js  在列表上拖选
+//   process-run.js     交给批处理：确认、进度、跳到对比页
+// 拆出去的三个要回头调本文件的 reload / drawList / syncSelection —— 直接 import 会成环
+// （离线烤制要求依赖无环），所以本文件加载时把它们登记到 hooks 上，那三个经 hooks 调。
 
 import { api } from '../api.js';
 import { infoDot } from '../components/info.js';
-import {
-  h, mount, clear, toast, empty, skeletonRows, errorBox, busy,
-  fmtBytes, fmtInt, modal, latest,
-} from '../ui.js';
+import { h, mount, toast, empty, skeletonRows, errorBox, fmtBytes, fmtInt, latest } from '../ui.js';
 import { openImportDialog, bindDropUpload } from '../components/filepicker.js';
-import { facetPanel, filterSummary } from '../components/facets.js';
+import { filterSummary } from '../components/facets.js';
 import { virtualList } from '../components/virtual-list.js';
-import { setScope } from '../scope.js';
+import { drawFacets, loadSets, publishScope, saveSetDialog, setFilter } from './process-filter.js';
+import { batchDialog, progressBlock, startCompare, stopPolling } from './process-run.js';
+import { beginSelect, extendSelect } from './process-select.js';
+import { S, hooks, refs, resetRefs } from './process-state.js';
+
+// 拆出去的文件经 hooks 回调这几个（见 process-state.js）
+Object.assign(hooks, { drawList, reload, syncSelection });
 
 export const meta = {
   id: 'process',
@@ -29,22 +40,6 @@ const FUNCTIONS = [
 ];
 
 const PAGE = 200;
-
-const S = {
-  fn: 'abs-thickness',
-  filter: {},
-  facets: null,
-  rows: [],          // 已加载的页
-  total: 0,
-  loading: false,
-  checked: new Set(),   // 手工勾选的 sample_id
-  anchor: null,         // 上次点选的行号，shift 范围选从这儿起
-  sets: [],
-  task: null,
-  pollTimer: null,
-};
-
-let refs = {};
 
 export function actions(nav) {
   return [h('button.btn.btn-primary', { onclick: () => openImport() }, '导入数据')];
@@ -70,7 +65,7 @@ function consumeAIFilter() {
 }
 
 export async function view(host, ctx) {
-  refs = { host, nav: ctx.nav, ctx, alive: ctx.alive || (() => true) };
+  resetRefs({ host, nav: ctx.nav, ctx, alive: ctx.alive || (() => true) });
   S.checked = new Set();
   stopPolling();
 
@@ -135,96 +130,6 @@ async function reload() {
   drawFacets();
   drawList();
   publishScope();
-}
-
-/** 把「当前在看哪批样品」告诉 AI 抽屉。抽屉不该来读这里的私有 S。 */
-function publishScope() {
-  setScope({ filter: S.filter, total: S.total,
-             checked: [...S.checked], page: 'process' });
-}
-
-function setFilter(next) {
-  S.filter = next;
-  S.checked = new Set();
-  reload();
-}
-
-async function loadSets() {
-  try { S.sets = (await api.listSets()).sets; } catch { S.sets = []; }
-  drawFacets();
-}
-
-// ------------------------------------------------------------------ 左栏
-
-/**
- * 搜索框**建一次就一直用那一个节点**。
- *
- * 以前它写在 drawFacets() 里，而每次筛选变化都会重建整个左栏 ——
- * 于是你敲完回车，输入框被换成了一个新的，焦点和光标位置一起没了，
- * 想接着改关键词得再点一次。这是打字时最直接的一处「不顺滑」。
- */
-function searchBox() {
-  if (!refs.search) {
-    refs.search = h('input.input', {
-      placeholder: '搜索样品名 / 批次…',
-      onchange: (e) => {
-        const next = { ...S.filter };
-        if (e.target.value.trim()) next.q = e.target.value.trim();
-        else delete next.q;
-        setFilter(next);
-      },
-    });
-  }
-  // 值由 S.filter 来定，但**别在用户正打字的时候改它** ——
-  // 那会把光标弹到末尾。
-  if (document.activeElement !== refs.search) refs.search.value = S.filter.q || '';
-  return refs.search;
-}
-
-function drawFacets() {
-  if (!refs.facetHost) return;
-  if (!S.facets) { mount(refs.facetHost, skeletonRows(6)); return; }
-
-  // 光留住节点还不够：mount() 会把它摘下来再插回去，而**移动一个带焦点的元素
-  // 会让它失焦**。所以插完再把焦点和选区放回去。
-  const box = searchBox();
-  const hadFocus = document.activeElement === box;
-  const caret = hadFocus ? [box.selectionStart, box.selectionEnd] : null;
-
-  mount(refs.facetHost,
-    h('div.row-between',
-      h('div.panel-title', '筛选'),
-      h('span.small.muted', `${fmtInt(S.facets.total)} 个样品`)),
-    h('div.mt-3', box),
-    S.sets.length ? savedSets() : null,
-    h('div.divider'),
-    facetPanel({ facets: S.facets, filter: S.filter, onChange: setFilter }));
-
-  if (hadFocus) {
-    box.focus({ preventScroll: true });
-    try { box.setSelectionRange(caret[0], caret[1]); } catch { /* 有些类型不支持选区 */ }
-  }
-}
-
-function savedSets() {
-  return h('div.mt-4',
-    h('div.facet-head', h('span.facet-title', '样品集')),
-    h('div.facet-chips', ...S.sets.map((s) =>
-      h('button.chip-toggle', {
-        title: s.kind === 'dynamic' ? '动态集：新导入的样品会自动进来'
-                                    : '固定集：钉死的快照，不随新数据变',
-        onclick: async () => {
-          try {
-            const resolved = await api.getSet(s.set_id);
-            setFilter(resolved.kind === 'pinned'
-              ? { ids: resolved.pinned_ids } : resolved.filter);
-            toast(`已套用「${s.name}」`, 'ok');
-          } catch (err) { toast(err.message, 'err'); }
-        },
-      },
-        h('span.chip-label', s.name),
-        h('span.chip-count', fmtInt(s.count)),
-        s.kind === 'pinned' ? h('span.xsmall.dim', '钉') : null))));
 }
 
 // ------------------------------------------------------------------ 右栏
@@ -341,102 +246,6 @@ function drawTable() {
   mount(host, header, list);
 }
 
-// ------------------------------------------------------------------ 勾选
-//
-// 挑样品是这一页的主要动作，所以**整行就是勾选热区**，点哪儿都是选。
-// 打开样品要走行尾的「打开」按钮或者双击 —— 之前点行体直接跳走，
-// 挑到一半被弹到详情页，回来滚动和勾选全没了。
-//
-// 三种手势：
-//   点         切换这一行，并把锚点挪过来
-//   按住拖     从按下那一行刷到当前行，按下时是选就一路选、是取消就一路取消
-//   shift+点   锚点到这一行之间**加选**（已经选好的不会被抹掉）
-//
-// 复选框本身设了 pointer-events: none —— 它只是状态的显示，不是独立的按钮。
-// 让它可点会有两套状态在打架：浏览器自己的 checked 和我们的 S.checked。
-
-const drag = { on: false, anchor: null, mode: 'add' };
-
-function selectRange(a, b, mode) {
-  const [lo, hi] = a <= b ? [a, b] : [b, a];
-  for (let i = lo; i <= hi; i++) {
-    const r = S.rows[i];
-    if (!r) continue;
-    if (mode === 'add') S.checked.add(r.sample_id);
-    else S.checked.delete(r.sample_id);
-  }
-}
-
-function beginSelect(index, evt) {
-  const row = S.rows[index];
-  if (!row) return;
-
-  if (evt.shiftKey && S.anchor !== null && S.anchor !== index) {
-    selectRange(S.anchor, index, 'add');
-    syncSelection();
-    return;                       // shift 是一次性的范围选，不进入拖拽
-  }
-
-  // 按下时这一行是「将要被选中」还是「将要被取消」，决定整段刷的方向。
-  // 从一个已选的行开始拖 = 擦掉一片，这跟表格软件里的行为一致。
-  drag.on = true;
-  drag.anchor = index;
-  pointer.x = evt.clientX;
-  pointer.y = evt.clientY;
-  autoScroll();
-  drag.mode = S.checked.has(row.sample_id) ? 'remove' : 'add';
-  S.anchor = index;
-  selectRange(index, index, drag.mode);
-  syncSelection();
-}
-
-function extendSelect(index) {
-  if (!drag.on) return;
-  selectRange(drag.anchor, index, drag.mode);
-  syncSelection();
-}
-
-// 松手可能发生在列表外面（拖出了窗口），所以监听在 window 上，只装一次
-window.addEventListener('pointerup', endDrag);
-window.addEventListener('pointercancel', endDrag);
-window.addEventListener('pointermove', (e) => {
-  if (!drag.on) return;
-  pointer.x = e.clientX;
-  pointer.y = e.clientY;
-});
-
-function endDrag() {
-  drag.on = false;
-  if (raf) { cancelAnimationFrame(raf); raf = null; }
-}
-
-// 拖到列表上下边缘就自动滚 —— 没有这个的话一次只能刷视口里那十几行，
-// 四十个样品想全选还是得点点点。
-const pointer = { x: 0, y: 0 };
-const EDGE = 34;          // 离边缘多近开始滚
-let raf = null;
-
-function autoScroll() {
-  raf = requestAnimationFrame(function step() {
-    if (!drag.on) { raf = null; return; }
-    const list = refs.vlist;
-    if (list) {
-      const r = list.getBoundingClientRect();
-      let dy = 0;
-      if (pointer.y < r.top + EDGE) dy = -Math.ceil((r.top + EDGE - pointer.y) / 2);
-      else if (pointer.y > r.bottom - EDGE) dy = Math.ceil((pointer.y - (r.bottom - EDGE)) / 2);
-      if (dy) list.scrollTop += dy;
-
-      // 内容在不动的指针下面滚过去时 pointerenter 不会触发，
-      // 所以每一帧都自己问一次「现在指针底下是哪一行」。
-      const el = document.elementFromPoint(pointer.x, pointer.y);
-      const row = el?.closest?.('.vrow[data-index]');
-      if (row) extendSelect(Number(row.dataset.index));
-    }
-    raf = requestAnimationFrame(step);
-  });
-}
-
 /**
  * 只更新受影响的地方，不重建整个列表。
  *
@@ -512,246 +321,6 @@ function renderRow(r, index) {
       r.matrix_id
         ? h('button.btn.btn-sm', { onclick: (e) => { e.stopPropagation(); open(); } }, '打开')
         : null));
-}
-
-// 「选择即示例」那个建议条删掉了：它挂在列表上方向下弹出，一出现就把
-// 下面的样品行推走，正在挑样品的时候根本点不中。后端 /api/selection/suggest
-// 和 selection.suggest_expansion 都留着 —— 以后想要，换个不挡路的位置接回来。
-
-// ------------------------------------------------------------------ 批处理
-/** 选中几个 → 直接开跑 → 直接落到对比页（页面上自己显示进度）。 */
-async function startCompare(btn) {
-  const useChecked = S.checked.size > 0;
-  const filter = useChecked ? { ids: [...S.checked] } : S.filter;
-
-  busy(btn, true);
-  try {
-    const pv = await api.batchPreview(filter);
-    if (!pv.with_matrix) {
-      toast('选中的样品里没有光谱矩阵，没法对比', 'err');
-      return;
-    }
-    if (pv.without_matrix) {
-      // 跳过了一些样品要说出来，别让人以为全都比了
-      toast(`${pv.without_matrix} 个样品没有光谱矩阵，这次跳过`, 'warn');
-    }
-    const stamp = new Date().toLocaleString('zh-CN', {
-      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-    const r = await api.batchRun({
-      // 配方留空 = 用后端的默认配方。默认值只在模块的控件声明里有一份
-      // （膜厚 775–1120、积分 800–950、斜率 950 ± 10），这里不再抄。
-      filter, recipe: {},
-      title: `${pv.with_matrix} 个样品 · ${stamp}`,
-    });
-    // 传 task_id：这一刻还没有 parent_run_id，对比页会自己等
-    refs.nav('batch', { arg: r.task.task_id });
-  } catch (err) {
-    toast(err.message, 'err');
-  } finally {
-    busy(btn, false);
-  }
-}
-
-async function batchDialog(recipeOverride = null) {
-  const useChecked = S.checked.size > 0;
-  const filter = useChecked ? { ids: [...S.checked] } : S.filter;
-
-  let pv;
-  try {
-    pv = await api.batchPreview(filter);
-  } catch (err) { toast(err.message, 'err'); return; }
-
-  if (!pv.with_matrix) {
-    toast('选中的样品里没有光谱矩阵', 'err');
-    return;
-  }
-
-  // 默认值由后端按模块声明给（pv.recipe_defaults），这里不再抄一份。
-  // AI 卡片带来的配方只是**预填**，对话框照样要你确认才开跑。
-  const recipe = { ...(pv.recipe_defaults || {}), ...(recipeOverride || {}) };
-  const stamp = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit',
-                                                    hour: '2-digit', minute: '2-digit' });
-  let title = `${pv.with_matrix} 个样品 · ${stamp}`;
-  const nameInput = h('input.input', {
-    type: 'text', value: title, placeholder: '这次对比叫什么',
-    oninput: (e) => { title = e.target.value; },
-  });
-  const num = (key, label, unit) => h('div.field',
-    h('label.field-label', label, unit ? h('span.unit', ` (${unit})`) : null),
-    h('input.input', { type: 'number', value: recipe[key], step: 'any',
-      oninput: (e) => { recipe[key] = Number(e.target.value); } }));
-
-  const m = modal({
-    title: `批处理 ${fmtInt(pv.with_matrix)} 个样品`,
-    width: '620px',
-    body: h('div',
-      h('p.small.muted',
-        `命中 ${fmtInt(pv.total)} 个样品，其中 ${fmtInt(pv.with_matrix)} 个有光谱矩阵`,
-        pv.without_matrix ? `，${fmtInt(pv.without_matrix)} 个会被跳过` : '', '。'),
-      h('div.field.mt-3',
-        h('label.field-label', '名称',
-          h('span.unit', ' （会出现在对比历史里，方便以后找回来）')),
-        nameInput),
-      h('div.notice.mt-3',
-        h('div.grow',
-          h('div.small', '这套参数就是单样品页上的那套 —— '
-            + '在单个样品上调好之后回到这里，填一样的值即可。')),
-      ),
-      h('div.recipe-grid.mt-4',
-        num('band_min', '膜厚窗口起', 'nm'), num('band_max', '膜厚窗口止', 'nm'),
-        num('integral_min', '积分波段起', 'nm'), num('integral_max', '积分波段止', 'nm'),
-        num('slope_center', '斜率波长', 'nm'), num('slope_half_width', '斜率窗口半宽', 'nm'))),
-    foot: [
-      h('span.small.muted.grow', '跑在后台，可以离开这个页面'),
-      h('button.btn', { onclick: () => m.close() }, '取消'),
-      h('button.btn.btn-primary', {
-        onclick: async (e) => {
-          busy(e.target, true);
-          try {
-            const r = await api.batchRun({ filter, recipe,
-              title: title.trim() || `${pv.with_matrix} 个样品` });
-            m.close();
-            S.task = r.task;
-            drawList();
-            startPolling(r.task.task_id);
-          } catch (err) {
-            busy(e.target, false);
-            toast(err.message, 'err', 6000);
-          }
-        },
-      }, '开始'),
-    ],
-  });
-}
-
-function progressBlock() {
-  const t = S.task;
-  const pct = t.percent ?? 0;
-  return h('div.progress-card.mb-3',
-    h('div.row-between',
-      h('div',
-        h('div.small.strong', t.title || '批处理'),
-        h('div.xsmall.dim.mt-2', t.message || statusText(t.status))),
-      h('div.row.gap-2',
-        t.done
-          ? h('button.btn.btn-sm', {
-              onclick: () => { S.task = null; drawList(); } }, '收起')
-          : h('button.btn.btn-sm', {
-              onclick: async (e) => {
-                busy(e.target, true);
-                try { await api.cancelTask(t.task_id); } catch (err) { toast(err.message, 'err'); }
-                busy(e.target, false);
-              } }, '取消'),
-        t.done && t.status === 'ok' && t.result?.parent_run_id
-          ? h('button.btn.btn-primary.btn-sm', {
-              onclick: () => refs.nav('batch', { arg: t.result.parent_run_id }),
-            }, '看结果')
-          : null)),
-    h('div.progress-bar', h('i', { style: { width: `${pct}%` } })),
-    h('div.row-between',
-      h('span.xsmall.dim', `${fmtInt(t.progress)} / ${fmtInt(t.total)}`),
-      h('span.xsmall.dim',
-        t.n_failed ? `${fmtInt(t.n_ok)} 成功 · ${fmtInt(t.n_failed)} 失败`
-                   : `${fmtInt(t.n_ok)} 成功`)));
-}
-
-const statusText = (s) => ({ queued: '排队中', running: '进行中', ok: '完成',
-                             failed: '失败', cancelled: '已取消' }[s] || s);
-
-function startPolling(taskId) {
-  stopPolling();
-  // 只在你还在这一页时轮询。原来离开之后照跑，跑完了把你从别的页面
-  // **强行拉到对比页** —— 你可能正看着别的东西。离开了就停；结果在「对比历史」里。
-  const alive = refs.alive || (() => true);
-  let misses = 0;
-  S.pollTimer = setInterval(async () => {
-    if (!alive()) { stopPolling(); return; }
-    try {
-      const t = await api.getTask(taskId);
-      if (!alive()) { stopPolling(); return; }
-      misses = 0;
-      S.task = t;
-      drawList();
-      if (t.done) {
-        stopPolling();
-        if (t.status === 'ok') {
-          toast(`处理完成：${t.n_ok} 成功` + (t.n_failed ? `，${t.n_failed} 失败` : ''), 'ok');
-          // 跑完直接落到对比页。以前还要再点一下「看结果」，而那个按钮
-          // 一刷新就没了 —— 「比完就没了、找不到在哪儿」说的就是这个。
-          // 现在它同时也进了「对比历史」，随时点得回来。
-          if (t.result?.parent_run_id) {
-            refs.nav('batch', { arg: t.result.parent_run_id });
-            return;
-          }
-          reload();
-        } else if (t.status === 'failed') {
-          toast(t.error?.split('\n')[0] || '批处理失败', 'err', 8000);
-        }
-      }
-    } catch (err) {
-      // 原来一次取不到就悄悄停掉，进度条从此卡住。偶尔一次失败再等等；
-      // 连着三次就停下并说出来
-      if (++misses >= 3) {
-        stopPolling();
-        if (alive()) toast(`取不到批处理进度：${err.message}。结果会出现在「对比历史」里`, 'warn', 8000);
-      }
-    }
-  }, 700);
-}
-
-function stopPolling() {
-  if (S.pollTimer) { clearInterval(S.pollTimer); S.pollTimer = null; }
-}
-
-// ------------------------------------------------------------------ 样品集
-function saveSetDialog() {
-  const useChecked = S.checked.size > 0;
-  const nameInput = h('input.input', { placeholder: '比如 B20 全批' });
-  let kind = useChecked ? 'pinned' : 'dynamic';
-
-  const kindRow = (value, title, desc) => h('label.kind-option',
-    h('input', { type: 'radio', name: 'setkind', value, checked: kind === value,
-                 onchange: () => { kind = value; } }),
-    h('div', h('div.small.strong', title), h('div.xsmall.dim', desc)));
-
-  const m = modal({
-    title: '存为样品集',
-    width: '560px',
-    body: h('div',
-      h('div.field', h('label.field-label', '名字'), nameInput),
-      h('div.col.gap-2.mt-4',
-        kindRow('dynamic', '动态集（存筛选式）',
-          '以后新导入的、符合这个筛选式的样品会自动进来。适合「B20 全批」这种。'),
-        kindRow('pinned', '固定集（存快照）',
-          `钉死当前这 ${fmtInt(useChecked ? S.checked.size : S.facets?.total || 0)} 个，`
-          + '不随新数据变。论文里的图要用这种。')),
-      h('p.xsmall.dim.mt-3',
-        '两者语义完全不同：论文图对应的样品集如果是动态的，重跑一次数字就变了。')),
-    foot: [
-      h('button.btn', { onclick: () => m.close() }, '取消'),
-      h('button.btn.btn-primary', {
-        onclick: async (e) => {
-          busy(e.target, true);
-          try {
-            const body = { name: nameInput.value, kind };
-            if (kind === 'pinned') {
-              body.sample_ids = useChecked ? [...S.checked] : undefined;
-              if (!body.sample_ids) body.filter = S.filter;
-            } else {
-              body.filter = useChecked ? { ids: [...S.checked] } : S.filter;
-            }
-            await api.createSet(body);
-            m.close();
-            toast('样品集已保存', 'ok');
-            loadSets();
-          } catch (err) {
-            busy(e.target, false);
-            toast(err.message, 'err', 6000);
-          }
-        },
-      }, '保存'),
-    ],
-  });
 }
 
 function openImport() {

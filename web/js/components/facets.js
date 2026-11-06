@@ -6,7 +6,7 @@
 // 计数是在「去掉自己这一面之后」的筛选式下算的 —— 选了 B20 之后其他批次
 // 的计数还在，所以还能改选。这一条在后端保证（selection.facets）。
 
-import { h, mount, fmtInt, modal } from '../ui.js';
+import { h, fmtInt, modal } from '../ui.js';
 
 /**
  * facetPanel({ facets, filter, onChange })
@@ -168,117 +168,6 @@ function chipSection(title, key, items, f, toggle) {
         h('span.chip-label', it.label || it.value),
         h('span.chip-count', fmtInt(it.count))))));
 }
-
-/**
- * 名称范围 —— 这一条是为了回答「不想先去别处读范围再回来输」。
- * 滑块的两个端点就是数据里的真实 min/max，范围本身就画在那儿。
- */
-function nameSection(f, nameFacet, onChange) {
-  const patterns = nameFacet.patterns;
-  const active = f.name_range;
-  const current = active
-    ? patterns.find((p) => p.prefix === active.prefix && p.suffix === active.suffix)
-    : patterns[0];
-  if (!current) return h('div');
-
-  const lo = active?.min ?? current.min;
-  const hi = active?.max ?? current.max;
-
-  const loNum = h('input.input.input-sm', { type: 'number', value: lo,
-    min: current.min, max: current.max, style: { width: '68px' } });
-  const hiNum = h('input.input.input-sm', { type: 'number', value: hi,
-    min: current.min, max: current.max, style: { width: '68px' } });
-  const loRange = h('input.range', { type: 'range', value: lo,
-    min: current.min, max: current.max, step: 1 });
-  const hiRange = h('input.range', { type: 'range', value: hi,
-    min: current.min, max: current.max, step: 1 });
-
-  const emit = () => {
-    let a = Number(loNum.value), b = Number(hiNum.value);
-    if (a > b) [a, b] = [b, a];
-    loNum.value = loRange.value = a;
-    hiNum.value = hiRange.value = b;
-    const full = a <= current.min && b >= current.max;
-    const next = { ...f };
-    if (full) delete next.name_range;
-    else next.name_range = { prefix: current.prefix, suffix: current.suffix, min: a, max: b };
-    onChange(next);
-  };
-  const sync = (src, dst) => (e) => { dst.value = e.target.value; };
-  loNum.oninput = sync(loNum, loRange); hiNum.oninput = sync(hiNum, hiRange);
-  loRange.oninput = sync(loRange, loNum); hiRange.oninput = sync(hiRange, hiNum);
-  [loNum, hiNum, loRange, hiRange].forEach((el) => { el.onchange = emit; });
-
-  const picker = patterns.length > 1
-    ? h('select.select.select-sm', {
-        onchange: (e) => {
-          const p = patterns[Number(e.target.value)];
-          onChange({ ...f, name_range: { prefix: p.prefix, suffix: p.suffix,
-                                         min: p.min, max: p.max } });
-        },
-      }, ...patterns.map((p, i) => h('option', {
-        value: i, selected: p.prefix === current.prefix && p.suffix === current.suffix,
-      }, `${p.prefix}◻${p.suffix}（${p.count} 个）`)))
-    : null;
-
-  return h('div.facet',
-    h('div.facet-head',
-      h('span.facet-title', '名称范围'),
-      active ? h('button.facet-clear', {
-        onclick: () => { const n = { ...f }; delete n.name_range; onChange(n); },
-      }, '清除') : null),
-    picker ? h('div.mt-2', picker) : null,
-    h('div.range-row.mt-2',
-      h('span.mono.xsmall.dim', current.prefix || '—'),
-      loNum, h('span.small.dim', '–'), hiNum,
-      current.suffix ? h('span.mono.xsmall.dim', current.suffix) : null),
-    h('div.band-sliders.mt-2', loRange, hiRange),
-    h('div.xsmall.dim.mt-2',
-      `数据里是 ${current.prefix}${current.min}–${current.max}${current.suffix}`,
-      current.complete ? '' : '（中间有缺号）'));
-}
-
-function fieldSection(f, fields, onChange) {
-  const chosen = new Map((f.field || []).map((x) => [x.name, x]));
-  return h('div.facet',
-    h('div.facet-head',
-      h('span.facet-title', '关键结果'),
-      chosen.size ? h('button.facet-clear', {
-        onclick: () => { const n = { ...f }; delete n.field; onChange(n); },
-      }, '清除') : null),
-    ...fields.slice(0, 8).map((fd) => {
-      const sel = chosen.get(fd.name);
-      const lo = h('input.input.input-sm', { type: 'number', placeholder: fmtRange(fd.min),
-        value: sel?.min ?? '', style: { width: '100%' } });
-      const hi = h('input.input.input-sm', { type: 'number', placeholder: fmtRange(fd.max),
-        value: sel?.max ?? '', style: { width: '100%' } });
-      const emit = () => {
-        const others = (f.field || []).filter((x) => x.name !== fd.name);
-        const a = lo.value === '' ? null : Number(lo.value);
-        const b = hi.value === '' ? null : Number(hi.value);
-        const next = { ...f };
-        if (a === null && b === null) {
-          if (others.length) next.field = others; else delete next.field;
-        } else {
-          next.field = [...others, { name: fd.name, min: a, max: b }];
-        }
-        onChange(next);
-      };
-      lo.onchange = emit; hi.onchange = emit;
-      // 名字单独一行：integral_initial 和 integral_final 挤在输入框旁边会被
-      // 截成一样的 "integ…"，五行长得完全一样，等于没写。
-      return h('div.field-row',
-        h('div.field-name',
-          h('span.mono.small', fd.name),
-          fd.unit ? h('span.xsmall.dim', ` ${fd.unit}`) : null,
-          h('span.xsmall.dim', ` · ${fmtInt(fd.count)}`)),
-        h('div.row.gap-1', lo, h('span.xsmall.dim', '–'), hi));
-    }));
-}
-
-const fmtRange = (v) => (v === null || v === undefined ? '' :
-  Math.abs(v) >= 1e4 || (Math.abs(v) < 1e-2 && v !== 0)
-    ? Number(v).toExponential(1) : Number(v).toPrecision(3));
 
 /** 当前筛选式的摘要 chip 行 —— 让人一眼看出「我现在选的是什么」。 */
 export function filterSummary(filter, onChange) {

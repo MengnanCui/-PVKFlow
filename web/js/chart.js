@@ -64,11 +64,22 @@ export function trackWidth(host, apply, hint = 0) {
       last = w;
       apply(w);
     });
+    // 原来每画一次就多一个观察者、旧的从不断开（那个断开函数没有人调用）。两种情况：
+    // 同一个容器反复重画 —— 上一次挂的先断开；整块换成新容器（切显示方式、换页）——
+    // 旧容器已经不在页面上了，挂新的之前把这些顺手清掉。
+    host.__widthObserver?.disconnect();
+    for (const old of watched) {
+      if (!old.isConnected) { old.__widthObserver?.disconnect(); watched.delete(old); }
+    }
+    host.__widthObserver = ro;
+    watched.add(host);
     ro.observe(host);
-    host.__stopWidthTrack = () => ro.disconnect();
   }
   return last;
 }
+
+/** 挂着宽度观察者的容器。只用来在挂新的之前找出已经离开页面的那些。 */
+const watched = new Set();
 
 export const seriesColor = (i) => `var(${PALETTE[i % PALETTE.length]})`;
 

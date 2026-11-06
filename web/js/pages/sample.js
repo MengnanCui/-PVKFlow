@@ -7,14 +7,10 @@
 //                     模块只交声明，界面由平台按声明画 —— 同事加功能走的就是这条路。
 
 import { api } from '../api.js';
-import {
-  h, mount, clear, toast, empty, skeletonRows, errorBox, busy,
-  fmtBytes, fmtInt, fmtNum,
-} from '../ui.js';
+import { h, mount, empty, skeletonRows, errorBox, fmtBytes, fmtInt, fmtNum } from '../ui.js';
 import { xyChart } from '../chart.js';
 import { heatmap } from '../components/heatmap.js';
-import { figure, selectControl, numberControl,
-         bandControl } from '../components/figure.js';
+import { figure, selectControl, bandControl } from '../components/figure.js';
 import { infoDot, withInfo } from '../components/info.js';
 import { moduleView } from '../components/module-panel.js';
 import { downloadMenu } from '../download.js';
@@ -229,7 +225,6 @@ function observeScroll() {
   refs.ctx?.signal?.addEventListener('abort', () => S.spyOff?.(), { once: true });
   syncSpy();
 }
-
 
 // ------------------------------------------------------------------ 给 ⓘ 的读数
 //
