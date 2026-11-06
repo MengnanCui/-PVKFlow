@@ -26,6 +26,8 @@ HTE_WORKSPACE=/tmp/hte-qa HTE_NO_BROWSER=1 HTE_PORT=8799 .venv/bin/python -m app
 # 参数：一个样品 id、一次批处理的 run id
 NODE_PATH=$(npm root -g) node tools/qa/a2_check.js smp_xxx run_xxx
 NODE_PATH=$(npm root -g) node tools/qa/a2_download_name.js smp_xxx
+# AI 曲线摘要（P-44）：看假网关记下的、模型实际收到的文字里有没有曲线摘要
+NODE_PATH=$(npm root -g) node tools/qa/p44_check.js smp_xxx /tmp/requests.jsonl
 ```
 
 需要 Playwright（`npm i -g playwright`，或已经装好的）。

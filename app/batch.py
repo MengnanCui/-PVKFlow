@@ -612,6 +612,13 @@ def batch_detail(parent_run_id: str) -> dict:
 _META_COLUMNS = {"sample_id", "sample_name", "batch", "t", "label", "group"}
 # 平台自己画的三条（对比页上有固定位置和专门的图注）
 BUILTIN_CURVES = ("ot", "slope", "integral")
+# 它们的纵轴标签（中 / 英）。对比页、导出脚本、AI 曲线摘要用同一份 ——
+# 模块面板没声明 y_label 时，曲线目录里不至于只剩一个 "slope"。
+BUILTIN_Y_LABELS = {
+    "integral": ("积分强度 (a.u.·nm)", "Band integral (a.u.·nm)"),
+    "slope": ("dI/dλ (a.u./nm)", "dI/dλ (a.u./nm)"),
+    "ot": ("光学厚度 OT = n·d·cosθ (nm)", "Optical thickness OT (nm)"),
+}
 
 
 def curve_catalog(parent_run_id: str) -> list[dict]:
@@ -649,8 +656,10 @@ def curve_catalog(parent_run_id: str) -> list[dict]:
         for col in cols:
             if col in _META_COLUMNS or any(c["column"] == col for c in out):
                 continue
-            d = declared.get(col, {"label": col, "y_label": col, "module_id": None,
-                                   "module_name": None, "plottable": col != "ot_ok"})
+            d = dict(declared.get(col, {"label": col, "y_label": col, "module_id": None,
+                                        "module_name": None, "plottable": col != "ot_ok"}))
+            if col in BUILTIN_Y_LABELS and d["y_label"] in ("", col):
+                d["y_label"] = BUILTIN_Y_LABELS[col][0]
             out.append({"column": col, "table": tbl["name"],
                         "builtin": col in BUILTIN_CURVES, **d})
     return out

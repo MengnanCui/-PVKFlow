@@ -6,7 +6,9 @@
 三条硬规则：
 
 1. **原始光谱矩阵永远不进 prompt。** 一个样品 200 帧 × 2000 波长 = 40 万个数，
-   一个样品就把本地 27B 的窗口撑爆了。模型要看曲线就去看标量，或者你自己看图。
+   一个样品就把本地 27B 的窗口撑爆了。给模型的是**曲线摘要**：批处理算出来的
+   每条随时间变化的曲线（膜厚、积分、斜率、同事模块的曲线），按时间等分成
+   十几到三十段、每段取平均（P-44，2026-11 你要求加的）。
 2. **超过 `AI_DETAIL_MAX` 个样品时不给逐条明细**，只给概览，并明说
    「请先给一个收窄的筛选式」。宁可多问一轮，也不要模型对着 200 个样品的
    截断列表编一个「综合来看」。
@@ -27,6 +29,14 @@ DETAIL_MAX = getattr(config, "AI_DETAIL_MAX", 40)
 # 送进 prompt 的事实块的字节上限。这是最后一道闸 —— 上面两条规则都失效时，
 # 至少不会把一个几 MB 的 json 甩给模型。
 FACTS_BYTE_LIMIT = 60_000
+
+# ── 曲线摘要（P-44）
+# 每条曲线按时间等分成 N 段、每段取平均。N 由总预算倒推：样品多就少分几段，
+# 但不少于 12 段（再少就看不出形状）、不多于 30 段（再多模型也读不过来）。
+# 3000 个数 ≈ 18 KB 文本 ≈ 本地 27B 的五六千 token —— 和逐样品标量表是同一个量级。
+CURVE_BINS_MIN = 12
+CURVE_BINS_MAX = 30
+CURVE_NUMBER_BUDGET = 3000
 
 
 def build(scope: dict | None, *, detail_max: int = DETAIL_MAX,
@@ -77,6 +87,13 @@ def build(scope: dict | None, *, detail_max: int = DETAIL_MAX,
     comp = _comparison(run_id)
     if comp:
         facts["你正在看的这次对比" if run_id else "最近一次对比"] = comp
+
+    # 曲线摘要放在**最后**：事实包超长时 to_prompt 从尾部截断，
+    # 宁可少几条曲线，也不能把标量表和对比诊断截掉。
+    if facts.get("样品明细"):
+        curves = _curve_summaries(flt, detail_max)
+        if curves:
+            facts["曲线摘要"] = curves
 
     return {"facts": facts, "n_samples": n, "needs_narrowing": needs_narrowing,
             "mode": mode, "filter": flt}
@@ -229,6 +246,133 @@ def _comparison(run_id: str = "") -> dict | None:
              "最小": _round(s["lo"]), "最大": _round(s["hi"]), "均值": _round(s["avg"])}
             for s in stats]
     return out
+
+
+# ---------------------------------------------------------------- L3 曲线摘要（P-44）
+def _curve_summaries(flt: dict, limit: int) -> dict | None:
+    """每个样品的曲线，压成几十个点给模型看形状。
+
+    数据来自**最近一次跑过这个样品的批处理**的长表 —— 和「当前值」
+    （key_result_current，也是最后一次为准）同一个口径。没跑过批处理的样品没有曲线，
+    单独列出来，不编。
+
+    下采样用**分段取平均**，不抽点：抽点会漏掉夹在两点之间的平台和突变，
+    取平均不会（和热力图降采样用面积平均是同一个道理）。
+    膜厚另给每段的「可信比例」—— 判据只打标志、不改数值，所以平均里含不可信的帧，
+    比例必须跟着给（和对比页「不同时刻的平均膜厚」同一个口径，P-24）。
+    """
+    import numpy as np
+
+    from app import batch as batch_mod
+    from app.storage import tabular
+
+    rows = selection.page(flt, limit=limit, offset=0, order="name")["rows"]
+    if not rows:
+        return None
+
+    # 每个样品最近一次跑过它的批处理（父运行）
+    latest_parent: dict[str, str] = {}
+    for r in rows:
+        hit = db.query_one(
+            "SELECT parent_run_id FROM analysis_run WHERE sample_id = ?"
+            " AND parent_run_id IS NOT NULL AND status = 'ok'"
+            " ORDER BY started_at DESC, rowid DESC LIMIT 1", (r["sample_id"],))
+        if hit:
+            latest_parent[r["sample_id"]] = hit["parent_run_id"]
+
+    frames: dict[str, Any] = {}          # 表路径 → DataFrame，一张表只读一次
+    catalogs: dict[str, list[dict]] = {}
+
+    def table_df(parent: str, name: str):
+        for t in tabular.tables_for_run(parent):
+            if t["name"] != name:
+                continue
+            path = config.WORKSPACE / t["path"]
+            if t["path"] not in frames:
+                frames[t["path"]] = tabular.read_frame(path) if path.is_file() else None
+            return frames[t["path"]]
+        return None
+
+    per_sample: list[tuple[dict, list[tuple[str, str, np.ndarray, np.ndarray]]]] = []
+    missing: list[str] = []
+    for r in rows:
+        label = f"{r['batch']}/{r['name']}" if r.get("batch") else r["name"]
+        parent = latest_parent.get(r["sample_id"])
+        if not parent:
+            missing.append(label)
+            continue
+        if parent not in catalogs:
+            catalogs[parent] = batch_mod.curve_catalog(parent)
+        series = []
+        for c in catalogs[parent]:
+            if not c["plottable"] and c["column"] != "ot_ok":
+                continue
+            df = table_df(parent, c["table"])
+            if df is None or c["column"] not in df.columns:
+                continue
+            g = df[df["sample_id"] == r["sample_id"]]
+            if g.empty:
+                continue
+            name = c["column"] if c["column"] == "ot_ok" else c["y_label"] or c["label"]
+            series.append((name, c["column"], g["t"].to_numpy(dtype=float),
+                           g[c["column"]].to_numpy(dtype=float)))
+        if series:
+            per_sample.append(({"label": label, "parent": parent}, series))
+        else:
+            missing.append(label)
+
+    if not per_sample:
+        return {"说明": "范围里的样品都还没跑过批处理，没有曲线。要看曲线先跑一次批处理。"} \
+            if missing else None
+
+    n_arrays = max(1 + len(s) for _, s in per_sample)        # 时间轴 + 每条曲线
+    bins = int(np.clip(CURVE_NUMBER_BUDGET // max(1, len(per_sample) * n_arrays),
+                       CURVE_BINS_MIN, CURVE_BINS_MAX))
+
+    out: dict[str, Any] = {
+        "说明": (f"每个样品取最近一次跑过它的批处理。每条曲线按时间等分成 {bins} 段、"
+                 "每段取平均（不是抽点，平台期和突变都还在）；空段写 —。"
+                 "「OT 可信比例」是这一段里判为可信的帧占多少（0–1），"
+                 "膜厚的平均里含不可信的帧，读膜厚时要和它对着看。"),
+    }
+    for info, series in per_sample:
+        t_all = np.concatenate([t for _, _, t, _ in series])
+        t0, t1 = float(np.nanmin(t_all)), float(np.nanmax(t_all))
+        edges = np.linspace(t0, t1, bins + 1) if t1 > t0 else np.array([t0, t0 + 1e-9])
+        item: dict[str, Any] = {
+            "来自对比": info["parent"],
+            "时间 (s)": _fmt_series((edges[:-1] + edges[1:]) / 2),
+        }
+        for name, column, t, y in series:
+            key = "OT 可信比例" if column == "ot_ok" else name
+            if key in item:                     # 两条曲线标签撞了，用列名区分
+                key = f"{key}（{column}）"
+            item[key] = _fmt_series(_bin_mean(t, y, edges))
+        out[info["label"]] = item
+    if missing:
+        out["没有曲线的样品"] = missing
+    return out
+
+
+def _bin_mean(t, y, edges):
+    """按时间分段取平均。只算有限值；一段里一个有限值都没有就是 None。"""
+    import numpy as np
+
+    idx = np.clip(np.digitize(t, edges[1:-1]), 0, len(edges) - 2)
+    out = []
+    for k in range(len(edges) - 1):
+        v = y[(idx == k) & np.isfinite(y)]
+        out.append(float(v.mean()) if v.size else None)
+    return out
+
+
+def _fmt_series(vals) -> str:
+    """一条曲线写成一行：`7067 6900 6512 —`。
+
+    写成 json 数组的话 to_prompt 的 indent=2 会把每个数单独放一行，
+    同样的信息多占三四倍篇幅。4 位有效数字：膜厚到 nm、积分到千分之一，够看形状了。
+    """
+    return " ".join("—" if v is None else f"{v:.4g}" for v in vals)
 
 
 # ---------------------------------------------------------------- 序列化

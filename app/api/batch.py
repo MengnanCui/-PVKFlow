@@ -306,11 +306,7 @@ def _parse_windows(raw: str) -> list[tuple[float, float]]:
 
 # 每个标签配一份英文：导出的脚本会被拷到别的机器上跑，那台机器不一定
 # 装了中文字体。脚本里自己判断，装了用中文，没装退回英文。
-_Y_LABELS = {
-    "integral": ("积分强度 (a.u.·nm)", "Band integral (a.u.·nm)"),
-    "slope": ("dI/dλ (a.u./nm)", "dI/dλ (a.u./nm)"),
-    "ot": ("光学厚度 OT = n·d·cosθ (nm)", "Optical thickness OT (nm)"),
-}
+_Y_LABELS = batch_mod.BUILTIN_Y_LABELS
 
 
 def _y_labels(parent_run_id: str, column: str) -> tuple[str, str]:
