@@ -90,15 +90,20 @@ const count = (p, pred) => { const c = { n: 0 }; p.on('request', (q) => { if (pr
     rec('#19 拖动不逐帧打后端', n === 20 && c.n <= 2, `拖 20 帧再松手，compute 请求 ${c.n} 次`);
     await ctx.close(); }
 
-  // #20 样品页下载的文件名
+  // #20 样品页下载的文件名。
+  // 判据是点下去那一刻 <a download> 上写的名字 —— headless Chromium 对 blob 下载
+  // 一律报 suggestedFilename = "download"（连手写的 <a download="x.csv"> 也一样），不能拿它判。
   { const { ctx, p } = await fresh(b, 'sample/' + sid);
     await sleep(2500);
+    await p.evaluate(() => {
+      const orig = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function () { window.__dlName = this.download; return orig.call(this); };
+    });
     const btn = (await p.$$('button:has-text("下载 ▾")'))[1];
     await btn.click(); await sleep(200);
-    const [dl] = await Promise.all([p.waitForEvent('download', { timeout: 5000 }),
-      p.click('text=下载数据（CSV）')]);
-    const name = dl.suggestedFilename();
-    rec('#20 下载文件名带样品名', name.startsWith('ZG00'), `下载文件名：${name}`);
+    await p.click('text=下载数据（CSV）'); await sleep(500);
+    const name = await p.evaluate(() => window.__dlName) || '';
+    rec('#20 下载文件名带样品名', name.startsWith('ZG00'), `<a download> = ${name}`);
     await ctx.close(); }
 
   // #21 `#/settings` 这种写法
