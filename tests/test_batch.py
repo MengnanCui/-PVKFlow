@@ -401,7 +401,9 @@ def test_exported_script_actually_runs(batch_client, imported, tmp_path, mode, g
     out = tmp_path / f"export-{mode}-{group_by}"
     z.extractall(out)
 
-    env = {**os.environ, "MPLBACKEND": "Agg"}
+    # 故意给一个不认中文的终端编码：英文 Windows、输出被重定向时就是这样。
+    # CI 的 Windows 机器上实测过：脚本存完图之后在打印「已保存」时崩掉。
+    env = {**os.environ, "MPLBACKEND": "Agg", "PYTHONIOENCODING": "cp1252"}
     proc = subprocess.run([sys.executable, "plot.py"], cwd=out, env=env,
                           capture_output=True, text=True, timeout=180)
     assert proc.returncode == 0, proc.stderr

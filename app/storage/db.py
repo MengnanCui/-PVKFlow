@@ -1,6 +1,6 @@
 """SQLite 连接、建表与设置读写。
 
-用原生 sqlite3 而不是 ORM：schema 只有 8 张表，显式 SQL 更容易读、
+用原生 sqlite3 而不是 ORM：表不多（13 张 + 1 个视图），显式 SQL 更容易读、
 也更容易在需要时整体迁到 PostgreSQL。
 """
 from __future__ import annotations
@@ -59,41 +59,19 @@ def close() -> None:
         _local.path = None
 
 
-# 给已有表补的列。ALTER TABLE 不幂等，不能写进 schema.sql —— 那个脚本每次启动都跑。
-# 格式：表名 → [(列名, 列定义), ...]
-_ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
-    "analysis_run": [("parent_run_id", "TEXT")],
-    "artifact": [("is_matrix", "INTEGER")],
-}
-
-
-def _add_missing_columns(conn: sqlite3.Connection) -> list[str]:
-    """按需补列。老工作区升级上来时不会丢数据。"""
-    added = []
-    for table, columns in _ADDED_COLUMNS.items():
-        try:
-            have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
-        except sqlite3.Error:
-            continue                      # 表还不存在，建表语句会带上这些列
-        if not have:
-            continue
-        for name, decl in columns:
-            if name not in have:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
-                added.append(f"{table}.{name}")
-    return added
-
-
 def init(path: Path | None = None) -> sqlite3.Connection:
-    """建表并补列。幂等，每次启动都跑。"""
-    conn = connect(path)
-    script = _SCHEMA.read_text(encoding="utf-8")
+    """建表并迁移到最新版本。幂等，每次启动都跑。
 
-    # 先补列再执行脚本：脚本里有引用新列的索引，列不存在会失败
-    _add_missing_columns(conn)
-    conn.executescript(script)
-    _add_missing_columns(conn)             # 首次建表后再补一次
-    conn.commit()
+    版本号、迁移步骤、升级前备份都在 app/storage/migrations.py。
+    原来这里是「每次补一遍缺的列」，只够加列，改约束、搬数据都没有地方写。
+    """
+    from app.storage import migrations
+
+    conn = connect(path)
+    report = migrations.run(conn, _SCHEMA.read_text(encoding="utf-8"))
+    if report["backup"]:
+        migrations.prune_backups()
+    _local.last_migration = report
     return conn
 
 

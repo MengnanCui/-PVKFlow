@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS app_setting (
 -- 一次批处理 = 一条父运行 + 每个样品一条子运行。
 -- 为什么每个样品单独记一条：上千个样品里一定有跑失败的，你必须知道是哪些、
 -- 为什么。一条大记录说不清楚。
--- parent_run_id 由 db.py 的 _add_missing_columns() 补上 ——
+-- 老工作区的 parent_run_id 由 migrations.py 第 1 步补上 ——
 -- ALTER TABLE 不是幂等的，不能放在每次启动都执行的脚本里。
 CREATE INDEX IF NOT EXISTS idx_run_parent ON analysis_run(parent_run_id);
 

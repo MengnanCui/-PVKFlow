@@ -120,12 +120,20 @@ def build_script(*, column: str, y_label: str, y_label_en: str, mode: str,
     python plot.py --show     # 顺便弹窗看
 """
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib import font_manager
+
+# 终端认不出中文时（英文 Windows、输出被重定向）打印换成 ? —— 不要因为最后一句
+# 「已保存」打不出来就整个脚本报错退出（图其实已经存好了）。CI 的 Windows 机器上实测踩到过。
+try:
+    sys.stdout.reconfigure(errors="replace")
+except (AttributeError, ValueError):
+    pass
 
 # ---------------------------------------------------------------- 样式
 {RCPARAMS}

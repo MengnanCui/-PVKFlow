@@ -54,7 +54,7 @@ jobs:
 
   startup-windows:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -62,30 +62,44 @@ jobs:
           python-version: "3.11"
       - name: 双击 run.bat 的等价操作
         shell: pwsh
+        timeout-minutes: 12
         run: |
           $env:HTE_NO_BROWSER = "1"
           $env:HTE_WORKSPACE = "$env:RUNNER_TEMP\hte-ws"
-          $p = Start-Process -FilePath cmd.exe -ArgumentList '/c', 'run.bat' -PassThru `
-                 -RedirectStandardOutput out.txt -RedirectStandardError err.txt -NoNewWindow
-          $ok = $false
-          for ($i = 0; $i -lt 150; $i++) {
-            try {
-              $r = Invoke-RestMethod -Uri http://127.0.0.1:8765/api/health -TimeoutSec 3
-              if ($r.ok) { $ok = $true; break }
-            } catch { }
-            Start-Sleep -Seconds 2
+          # stdin 接 NUL：run.bat 出错时会 pause 等按键，CI 里没有人按 —— 不接的话就一直卡着
+          $p = Start-Process -FilePath cmd.exe -ArgumentList '/c', 'run.bat < NUL' -PassThru `
+                 -NoNewWindow -RedirectStandardOutput out.txt -RedirectStandardError err.txt
+          try {
+            $deadline = (Get-Date).AddMinutes(8)
+            $ok = $false
+            while ((Get-Date) -lt $deadline) {
+              if ($p.HasExited) { throw "run.bat 自己退出了（退出码 $($p.ExitCode)），没起服务" }
+              try {
+                $r = Invoke-RestMethod -Uri http://127.0.0.1:8765/api/health -TimeoutSec 3
+                if ($r.ok) { $ok = $true; break }
+              } catch { }
+              Start-Sleep -Seconds 3
+            }
+            if (-not $ok) { throw "run.bat 8 分钟内没有起来" }
+            Write-Host "健康检查：$($r | ConvertTo-Json -Compress)"
+            $page = Invoke-WebRequest -Uri http://127.0.0.1:8765/ -UseBasicParsing
+            if ($page.Content -notmatch 'HTE Studio') { throw "首页不对" }
+            $js = Invoke-WebRequest -Uri http://127.0.0.1:8765/assets/js/app.js -UseBasicParsing
+            if ($js.StatusCode -ne 200) { throw "前端脚本取不到" }
+            Write-Host "run.bat：建环境、装依赖、起服务、首页 —— 全部通过"
+          } finally {
+            # 服务是 cmd → python 的子进程，连根拔掉；不然它占着输出管道，这一步永远结束不了
+            Get-CimInstance Win32_Process |
+              Where-Object { $_.CommandLine -like '*app.main*' } |
+              ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+            taskkill /PID $p.Id /T /F 2>$null | Out-Null
           }
-          Write-Host "---- run.bat 输出 ----"
-          Get-Content out.txt -Encoding utf8 -ErrorAction SilentlyContinue
-          Get-Content err.txt -Encoding utf8 -ErrorAction SilentlyContinue
-          if (-not $ok) { taskkill /PID $p.Id /T /F; throw "run.bat 5 分钟内没有起来" }
-          Write-Host "健康检查：$($r | ConvertTo-Json -Compress)"
-          $page = Invoke-WebRequest -Uri http://127.0.0.1:8765/ -UseBasicParsing
-          if ($page.Content -notmatch 'HTE Studio') { taskkill /PID $p.Id /T /F; throw "首页不对" }
-          $page = Invoke-WebRequest -Uri http://127.0.0.1:8765/assets/js/app.js -UseBasicParsing
-          if ($page.StatusCode -ne 200) { taskkill /PID $p.Id /T /F; throw "前端脚本取不到" }
-          taskkill /PID $p.Id /T /F
-          Write-Host "run.bat：建环境、装依赖、起服务、首页 —— 全部通过"
+      - name: run.bat 的输出
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "---- stdout ----"; Get-Content out.txt -ErrorAction SilentlyContinue
+          Write-Host "---- stderr ----"; Get-Content err.txt -ErrorAction SilentlyContinue
 
   startup-linux:
     runs-on: ubuntu-latest
