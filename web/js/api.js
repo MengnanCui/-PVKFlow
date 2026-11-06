@@ -108,13 +108,7 @@ export const api = {
     return request('/api/modules/import', { method: 'POST', body: fd });
   },
 
-  // skill
-  skills: () => get('/api/skills'),
-  reloadSkills: () => post('/api/skills/reload'),
-  suggest: (artifactIds) => post('/api/skills/suggest', { artifact_ids: artifactIds }),
-  run: (skillId, artifactIds, params, save = true) =>
-    post('/api/skills/run', { skill_id: skillId, artifact_ids: artifactIds, params, save }),
-  recentRuns: (limit = 50) => get('/api/skills/runs/recent', { limit }),
+  // 一次运行的详情（参数、结果、数值表）
   runDetail: (id) => get(`/api/runs/${id}`),
 
   // 结果
@@ -217,11 +211,8 @@ export const api = {
     }
   },
 
-  // 助手（单文件页里那个规则引擎面板，跟抽屉是两回事）
+  // 模型配好了没有（AI 抽屉和 ⓘ 用）
   assistStatus: () => get('/api/assist/status'),
-  inspect: (artifactIds) => post('/api/assist/inspect', { artifact_ids: artifactIds }),
-  ask: (question, artifactIds, resultContext) =>
-    post('/api/assist/ask', { question, artifact_ids: artifactIds, result_context: resultContext }),
 
   // 设置
   settings: () => get('/api/settings'),

@@ -17,11 +17,11 @@ from fastapi.staticfiles import StaticFiles
 
 from app import config, security
 from app.api import (artifacts, assist, batch, chat, files, results, selection,
-                     settings, skills, spectra)
+                     settings, spectra)
 from app.api import modules as modules_api
 from app.api.common import error_response
+from app.modules.registry import registry as module_registry
 from app.modules.registry import reload as reload_modules, seed_template
-from app.skills.registry import registry
 
 log = logging.getLogger("hte")
 
@@ -33,8 +33,6 @@ async def lifespan(app: FastAPI):
     config.ensure_dirs()
     db.init()
     db.seed_defaults()
-    registry.load_all()
-    log.info("已加载 %d 个 skill", len(registry.all()))
     seed_template()          # 工作区里得真有个模板目录可以复制
     mods = reload_modules()
     log.info("已加载 %d 个功能模块", mods["count"])
@@ -44,8 +42,12 @@ async def lifespan(app: FastAPI):
     reaped = task_queue.reap_interrupted()
     if reaped:
         log.warning("有 %d 个任务因为上次重启被中断，已标记", reaped)
-    for err in registry.errors:
-        log.warning("skill 加载失败 %s：%s", err["source"], err["error"])
+    # 旧的 Skill 机制已经退役（2026-11）。工作区里还留着同事写的 skill 时要说出来，
+    # 不能让它们悄悄不生效 —— 设置页上也有同一条提示。
+    legacy = legacy_skills()
+    if legacy:
+        log.warning("workspace/skills/ 里有 %d 个旧 Skill，平台已不再加载它们：%s。"
+                    "请按 docs/MODULE_AUTHORING.md 改写成功能模块。", len(legacy), ", ".join(legacy))
     # 模块加载失败不能静默 —— 同事装了个坏模块，得看得见是哪一个、为什么
     for err in mods["errors"]:
         log.warning("模块加载失败 %s：%s", err["source"], err["error"])
@@ -67,7 +69,7 @@ app = FastAPI(
 # 放在所有路由之前：被拒的请求连路由都进不去，副作用一个都不会发生。
 app.middleware("http")(security.middleware)
 
-for router in (files.router, skills.router, results.router, artifacts.router,
+for router in (files.router, results.router, artifacts.router,
                assist.router, settings.router, spectra.router,
                selection.router, batch.router, batch.tasks_router,
                modules_api.router,
@@ -130,6 +132,15 @@ async def unhandled(_: Request, exc: Exception):
     )
 
 
+def legacy_skills() -> list[str]:
+    """工作区里残留的旧 Skill 目录名。目录本身不动 —— 那是用户的文件。"""
+    d = config.SKILLS_DIR
+    if not d.is_dir():
+        return []
+    return sorted(p.name for p in d.iterdir()
+                  if p.is_dir() and not p.name.startswith((".", "_")))
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {
@@ -137,8 +148,9 @@ def health() -> dict:
         "app": config.APP_NAME,
         "version": config.APP_VERSION,
         "workspace": str(config.WORKSPACE),
-        "skills": len(registry.all()),
-        "skill_errors": len(registry.errors),
+        "modules": len(module_registry.all()),
+        "module_errors": len(module_registry.errors),
+        "legacy_skills": legacy_skills(),
     }
 
 

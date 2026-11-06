@@ -86,7 +86,7 @@ function firstRun(nav) {
 function stageList(nav, counts) {
   const stages = [
     ['01', '数据处理', 'process',
-     '导入实验文件，调用处理 Skill 完成分析。Skill 是插件——加一个进来，参数表单和结果卡片自动出现。',
+     '导入实验文件，用功能模块处理。模块是插件——放一个进来，控件、图和对比页上的那一格自动出现。',
      counts.runs ? `已跑 ${counts.runs} 次` : '尚未运行'],
     ['02', '数据存储', 'storage',
      '原始文件不丢失，分析结果结构化回写。图像、曲线、数字、文本各归其位，用统一 ID 串起来。',

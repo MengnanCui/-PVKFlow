@@ -4,7 +4,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Query
 
 from app.api.common import guard
-from app.skills import runner
 from app.storage import db, results, tabular
 
 router = APIRouter(prefix="/api", tags=["results"])
@@ -16,7 +15,7 @@ def overview() -> dict:
     counts = results.overview_counts()
     return {
         "counts": counts,
-        "recent_runs": runner.recent_runs(8),
+        "recent_runs": results.recent_runs(8),
         "fields": results.list_fields()[:12],
         "recent_files": db.query(
             "SELECT artifact_id, filename, ext, size, storage_mode, created_at"
@@ -48,7 +47,7 @@ def set_quality(result_id: int, payload: dict = Body(...)) -> dict:
 
 @router.get("/runs/{run_id}")
 def run_detail(run_id: str) -> dict:
-    return guard(runner.run_detail, run_id)
+    return guard(results.run_detail, run_id)
 
 
 @router.get("/tables/{table_id}")

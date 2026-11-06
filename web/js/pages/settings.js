@@ -27,13 +27,13 @@ function reloadSoon(ms) {
 
 export function view(host) {
   return render(host,
-    () => Promise.all([api.settings(), api.models(), api.skills(), api.modules()]),
-    ([cfg, models, skills, mods]) => h('div',
+    () => Promise.all([api.settings(), api.models(), api.health(), api.modules()]),
+    ([cfg, models, health, mods]) => h('div',
       importSection(cfg.settings),
       namingSection(cfg.settings),
       moduleSection(mods),
       modelSection(models),
-      skillSection(skills),
+      legacySkillNotice(health.legacy_skills || []),
       workspaceSection(cfg)));
 }
 
@@ -640,43 +640,22 @@ function testButton(providerName, modelId, status) {
   }, '测试并启用');
 }
 
-// ------------------------------------------------------------------ Skill
-function skillSection(data) {
-  return section('Skill', `已加载 ${data.skills.length} 个处理能力`,
-    h('div.panel.panel-body',
-      h('p.small.muted.measure',
-        '把一个目录（里面放 ', h('span.mono', 'skill.py'), ' 或 ',
-        h('span.mono', 'SKILL.md'), '）丢进 ', h('span.mono', 'workspace/skills/'),
-        '，然后在数据处理页点「重载 Skill」就生效，不用重启。写法见 ',
-        h('span.mono', 'docs/SKILL_CONTRACT.md'), '。'),
-
-      data.errors?.length
-        ? h('div.notice.notice-danger.mt-3',
-            h('div.grow',
-              h('div.small.strong', `${data.errors.length} 个 skill 加载失败`),
-              ...data.errors.map((e) => h('div.mt-2',
-                h('div.mono.xsmall', e.source),
-                h('div.xsmall.dim', e.error)))))
-        : null,
-
-      h('div.panel.panel-body.flush.mt-3', skillTable(data.skills))));
-}
-
-/** 已加载 skill 的清单。同样拆出来保持可读。 */
-function skillTable(skills) {
-  const originText = { builtin: '自带', user: '你添加的', 'skill.md': 'SKILL.md' };
-  return h('table.data',
-    h('thead', h('tr', h('th', '名称'), h('th', 'ID'), h('th', '类别'),
-                 h('th', '版本'), h('th', '来源'), h('th', '状态'))),
-    h('tbody', ...skills.map((s) => h('tr',
-      h('td.strong', s.name),
-      h('td.mono.xsmall.muted', s.id),
-      h('td.small.muted', s.category),
-      h('td.mono.xsmall.muted', s.version),
-      h('td.small.muted', originText[s.origin] || s.origin),
-      h('td', s.ready
-        ? h('span.status.status-ok.small', '可运行')
-        : h('span.status.status-warn.small', { title: s.ready_note }, '待接入'))))));
+// ------------------------------------------------------------------ 旧 Skill
+/**
+ * 旧的 Skill 机制 2026-11 退役了：它跑出来的东西在界面上早就没有入口，
+ * 和「功能模块」是两套做同一件事的写法。工作区里还留着同事写的 skill 时，
+ * 平台不再加载它们 —— 这件事必须说出来，不能让它们悄悄失效。没有残留就什么都不显示。
+ */
+function legacySkillNotice(names) {
+  if (!names.length) return null;
+  return section('旧的 Skill', `workspace/skills/ 里还有 ${names.length} 个，平台已不再加载`,
+    h('div.notice.notice-warn',
+      h('div.grow',
+        h('div.small.strong', names.join('、')),
+        h('p.xsmall.dim.mt-2',
+          'Skill 这套写法已经退役，统一改用「功能模块」：一个 module.py，界面由平台画，',
+          '还能自动进批处理和对比页。改写方法见 ', h('span.mono', 'docs/MODULE_AUTHORING.md'),
+          '。原来的文件夹原样留着，不会被删。'))));
 }
 
 function workspaceSection(cfg) {

@@ -1,50 +1,10 @@
-"""AI 层：规则引擎必须永远可用；模型缺席时要明确说出来，不能假装。"""
+"""AI 层：模型缺席时要明确说出来，不能假装。"""
 import json
 
 import pytest
 
-from app.ai import openai_compat, rules
+from app.ai import openai_compat
 from app.ai.provider import NullProvider, ProviderUnavailable, extract_json
-from app.storage import ingest
-
-
-@pytest.fixture()
-def imported(workspace, sample_dir):
-    from app.skills.registry import registry
-    registry.load_all()
-    ingest.ingest_paths(ingest.scan_preview(sample_dir)["files"])
-    from app.storage import db
-    return db
-
-
-# ---------------------------------------------------------------- 规则引擎
-def test_rules_work_without_any_model(imported):
-    aid = imported.scalar("SELECT artifact_id FROM artifact WHERE filename LIKE '%jv.csv'")
-    out = rules.assist([aid])
-
-    assert out["source"] == "rule"
-    assert out["files"][0]["kind"] == "table"
-    assert out["files"][0]["domain"] == "jv"      # 从列名认出来的
-    assert out["suggestions"], "应该给出候选 skill"
-
-
-def test_identify_recognises_images(imported):
-    aid = imported.scalar("SELECT artifact_id FROM artifact WHERE filename LIKE '%.png'")
-    from app.storage import artifacts
-    info = rules.identify(artifacts.local_path(aid))
-    assert info["kind"] == "image"
-    assert info["width"] == 120 and info["height"] == 90
-
-
-def test_inspect_frame_flags_real_problems():
-    import pandas as pd
-
-    df = pd.DataFrame({"a": [1, 1, 1, 1], "b": [1.0, 2.0, 3.0, 500.0]})
-    messages = " ".join(i["message"] for i in rules.inspect_frame(df))
-    assert "常量" in messages          # a 列没有信息量
-
-    empty = rules.inspect_frame(pd.DataFrame())
-    assert empty[0]["level"] == "error"
 
 
 # ---------------------------------------------------------------- Provider

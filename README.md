@@ -30,7 +30,7 @@
 | `workspace/`（你的数据） | 约原始数据的 **1.4 倍** | 随导入的数据增长 |
 
 那 220 MB 里 **pandas + numpy 就占了 150 MB**。numpy 是所有数值计算的地基，
-没得商量；pandas 用在通用表格解析和 skill 契约的 `ctx.load_table()` 上。
+没得商量；pandas 用在通用表格解析和批处理长表上。
 
 已经砍掉的两项：`pyarrow`（131 MB，批处理长表改用 CSV）和
 `uvicorn[standard]` 的额外组件（19 MB，uvloop / watchfiles / websockets 一个都没用到）。
@@ -151,12 +151,13 @@
 workspace/
 ├─ hte.db            SQLite：样品、测量、分析运行、关键结果、AI 对话
 ├─ raw/              复制进来的原始文件（按 sha256 内容寻址，同内容自动去重）
-├─ derived/          缩略图、skill 产出的图
+├─ derived/          缩略图、处理产出的图
 ├─ tables/           批处理的曲线长表（几万行数值走这儿，不进 SQLite）。
 │                    默认 CSV；装了 pyarrow 就自动改用 Parquet
 ├─ cache/            解析缓存（.npz）。删了只是下次慢约 1 秒
 ├─ config/           providers.json —— 你的模型密钥
-├─ skills/           你自己丢进来的处理算法
+├─ modules/          你和同事加的功能模块（module.py）
+├─ backups/          数据库升级前的自动备份（只留最近 5 份）
 └─ logs/  tmp/
 ```
 
@@ -280,29 +281,33 @@ workspace/
 
 ## 六、加一个你自己的处理算法
 
-把目录丢进 `workspace/skills/`，点「重载 Skill」：
+写一个 `module.py`，放进 `workspace/modules/<名字>/`，在「设置 → 功能模块」点「重载」
+（或者把文件夹打成 zip，在同一个地方「导入」）：
 
 ```python
-from app.skills.base import Skill, SkillSpec, ParamSpec, OutputSpec, FileMatch, SkillResult, Metric
+from app.modules.base import Control, Curve, Module, ModuleSpec, Op, Panel
 
-class MyThickness(Skill):
-    spec = SkillSpec(
-        id="thickness.profilometer", name="台阶仪膜厚",
-        category="thickness", version="1.0.0",
-        accepts=FileMatch(extensions=[".csv"]),
-        params=[ParamSpec("baseline", "基线区间", "range", default=[0, 10], unit="%")],
-        outputs=[OutputSpec("thickness", "膜厚", unit="nm")],
+
+class PLIntegral(Module):
+    spec = ModuleSpec(
+        id="pl.integral", name="荧光强度", version="1.0.0",
+        controls=[Control("band", "波段", "band", default=[700, 800], unit="nm")],
+        panels=[Panel("main", "荧光强度 vs 时间", uses=["band"],
+                      live=Op.band_integral(band="band"))],      # 拖控件时实时算
+        batch_curves=[Curve("pl_integral", from_panel="main")],  # 自动进批处理和对比页
     )
 
-    def run(self, ctx):
-        df, _ = ctx.load_table()          # 编码/分隔符/仪器抬头已经嗅探好
-        return SkillResult(metrics=[Metric("thickness", my_algorithm(df), unit="nm")])
 
-SKILL = MyThickness()
+MODULE = PLIntegral()
 ```
 
-**参数表单、结果卡片、图表全部自动生成，不用碰任何前端代码。**
-完整说明：[`docs/SKILL_CONTRACT.md`](docs/SKILL_CONTRACT.md)
+**控件、图、图注、下载、ⓘ、对比页那一格全部由平台画，不用碰任何前端代码。**
+算子拼不出来的（峰拟合、FFT…）写一个 `compute()`，松手才算。
+完整说明（写给你和你的模型看的）：[`docs/MODULE_AUTHORING.md`](docs/MODULE_AUTHORING.md)。
+装之前平台会先验证，不通过会逐条说清楚错在哪；本地验证：`python -m app.modules.check 你的模块目录/`。
+
+> 2026-11 之前还有一套「Skill」写法，已经退役。`workspace/skills/` 里如果还有旧的，
+> 平台不再加载它们，设置页会列出来提醒你改写。
 
 ---
 
@@ -313,7 +318,7 @@ run.bat / run.sh     一键启动
 app/                 后端（FastAPI + SQLite + Parquet，无 ORM）
 web/                 前端（原生 ES Module，零构建）
 tools/               开发用小工具（见下）
-docs/                架构、数据模型、Skill 契约
+docs/                架构、数据模型、模块写法、计划与报告
 sample_data/         可以直接拿来试的样例数据
 workspace/           你的全部数据（gitignore）
 ```
@@ -345,7 +350,7 @@ workspace/           你的全部数据（gitignore）
 
 - [架构](docs/ARCHITECTURE.md) —— 模块划分与设计原则
 - [数据模型](docs/DATA_MODEL.md) —— 为什么 `key_result` 是长表
-- [Skill 契约](docs/SKILL_CONTRACT.md) —— 怎么接入你的算法
+- [模块写法](docs/MODULE_AUTHORING.md) —— 怎么接入你的算法
 
 ---
 
@@ -355,7 +360,7 @@ workspace/           你的全部数据（gitignore）
 
 - **构效关系页**只有入口和数据形态，实际的 X/Y 映射与相关性分析还没做
 - 「荧光 & 荧光」「荧光 & 散射」「QFLS」三个功能标着「规划中」，点不动
-- 不会静默监听目录、自动跑 skill —— 所有处理都要你点一下
+- 不会静默监听目录、自动跑处理 —— 所有处理都要你点一下
 - 没有打包成单个 exe（需要先装 Python）
 - 没有登录和权限体系，所以只监听本机
 - 模型写的代码**不会被执行**。它只能输出筛选式和配方，由界面渲染成卡片，

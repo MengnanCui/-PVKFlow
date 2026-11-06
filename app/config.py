@@ -22,14 +22,13 @@ DB_PATH = WORKSPACE / "hte.db"
 RAW_DIR = WORKSPACE / "raw"          # 复制进来的文本类原始文件（按 sha256 分桶）
 DERIVED_DIR = WORKSPACE / "derived"  # 缩略图、skill 产出的图
 TABLES_DIR = WORKSPACE / "tables"    # Parquet 数值表
-SKILLS_DIR = WORKSPACE / "skills"    # 用户拖进来的 skill
+SKILLS_DIR = WORKSPACE / "skills"    # 旧 Skill 机制的目录（已退役，只用来检测有没有残留）
 MODULES_DIR = WORKSPACE / "modules"  # 同事写的功能模块（拖进来即生效）
 CONFIG_DIR = WORKSPACE / "config"    # providers.json 等本地配置（含密钥，不入库）
 LOGS_DIR = WORKSPACE / "logs"
 TMP_DIR = WORKSPACE / "tmp"
 
 WEB_DIR = ROOT / "web"
-BUILTIN_SKILLS_DIR = ROOT / "app" / "skills" / "builtin"
 BUILTIN_MODULES_DIR = ROOT / "app" / "modules" / "builtin"
 PROVIDERS_PATH = CONFIG_DIR / "providers.json"
 PROVIDERS_EXAMPLE_PATH = ROOT / "config" / "providers.example.json"
@@ -42,7 +41,7 @@ AI_DETAIL_MAX = int(os.environ.get("HTE_AI_DETAIL_MAX", "40"))
 HOST = os.environ.get("HTE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("HTE_PORT", "8765"))
 
-ALL_DIRS = (WORKSPACE, RAW_DIR, DERIVED_DIR, TABLES_DIR, SKILLS_DIR, MODULES_DIR,
+ALL_DIRS = (WORKSPACE, RAW_DIR, DERIVED_DIR, TABLES_DIR, MODULES_DIR,
             CONFIG_DIR, LOGS_DIR, TMP_DIR)
 
 

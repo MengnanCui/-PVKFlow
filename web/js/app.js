@@ -139,11 +139,11 @@ async function checkHealth() {
   try {
     const info = await api.health();
     el.className = 'status status-ok small';
-    el.textContent = `本地服务正常 · ${info.skills} 个 Skill`;
+    el.textContent = `本地服务正常 · ${info.modules} 个功能模块`;
     $('#versionLabel').textContent = `v${info.version}`;
-    if (info.skill_errors) {
+    if (info.module_errors) {
       el.className = 'status status-warn small';
-      el.textContent = `${info.skill_errors} 个 Skill 加载失败`;
+      el.textContent = `${info.module_errors} 个功能模块加载失败`;
     }
   } catch {
     el.className = 'status status-danger small';

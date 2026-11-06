@@ -298,8 +298,6 @@ def batch_client(imported):
     from fastapi.testclient import TestClient
 
     from app.main import app
-    from app.skills.registry import registry
-    registry.load_all()
     with TestClient(app) as c:
         yield c
 
@@ -427,13 +425,12 @@ def test_run_and_file_listings_carry_the_batch(imported):
     只回名字的话，24 个批次的 S9 在界面上长得一模一样 —— 前端拿不到批次，
     再怎么改也显示不出区别。所以这是查询的问题，不是渲染的问题。
     """
-    from app.skills import runner
-    from app.storage import artifacts
+    from app.storage import artifacts, results
 
     _wait(tasks.submit(batch.BATCH_SKILL_ID,
                        {"filter": {"batch": ["B20", "B21"]}, "recipe": {}})["task_id"])
 
-    runs = runner.recent_runs(50)
+    runs = results.recent_runs(50)
     assert runs and all("sample_batch" in r for r in runs)
     assert {r["sample_batch"] for r in runs if r["sample_batch"]} >= {"B20", "B21"}
 

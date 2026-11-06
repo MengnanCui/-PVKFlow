@@ -1,6 +1,6 @@
 """模块的发现与热加载。
 
-做法和 `app/skills/registry.py` 完全一样（有意的 —— 同事看哪一套都行）：
+怎么找、怎么装：
 
 * 扫两个地方：`app/modules/builtin/*` 和 `workspace/modules/*`
 * 一个模块 = 一个目录，里面有 `module.py`
@@ -10,13 +10,15 @@
 """
 from __future__ import annotations
 
+import importlib.util
+import sys
+
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
 from app import config
 from app.modules.base import Module, ModuleSpec
-from app.skills.registry import load_module_from_path   # 同一个不撞车的导入器，不另写
 
 
 @dataclass
@@ -27,6 +29,29 @@ class LoadError:
 
     def as_dict(self) -> dict:
         return {"source": self.source, "error": self.error, "detail": self.detail}
+
+
+def load_module_from_path(path: Path, module_name: str):
+    """从任意路径导入一个模块，用一个不会撞车的模块名。
+
+    同事的 module.py 放在工作区里，不在 Python 的导入路径上；
+    它里面写的 `from app.modules.base import ...` 要能找到平台的包，
+    所以先把项目根目录放进 sys.path。
+    """
+    root = str(config.ROOT)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法加载模块：{path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+    return module
 
 
 class ModuleRegistry:

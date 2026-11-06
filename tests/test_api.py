@@ -6,8 +6,6 @@ from fastapi.testclient import TestClient
 @pytest.fixture()
 def client(workspace, sample_dir):
     from app.main import app
-    from app.skills.registry import registry
-    registry.load_all()
     with TestClient(app) as c:
         c.sample_dir = sample_dir
         yield c
@@ -40,48 +38,36 @@ def test_full_chain_scan_import_run_query(client):
     assert preview["kind"] == "table"
     assert "Voltage(V)" in preview["columns"]
 
-    suggest = client.post("/api/skills/suggest", json={"artifact_ids": [aid]}).json()
-    assert suggest["source"] == "rule" and suggest["suggestions"]
+    # 一次运行的详情（原来这一段是走旧 Skill 机制跑一次，那套已经退役）
+    from app.storage import results
+    rid = results.start_run("demo.processor", "1.0.0", sample_id=None)
+    results.write_results(rid, [{"field_name": "answer", "value": 42.0, "unit": "eV"}])
+    results.finish_run(rid, "ok")
+    detail = client.get(f"/api/runs/{rid}").json()
+    assert detail["run"]["status"] == "ok" and detail["results"][0]["value_num"] == 42.0
 
-    run = client.post("/api/skills/run",
-                      json={"skill_id": "table.preview", "artifact_ids": [aid]}).json()
-    assert run["saved"] is True and run["metrics_written"] > 0
-
-    detail = client.get(f"/api/runs/{run['analysis_run_id']}").json()
-    assert detail["run"]["status"] == "ok" and detail["results"]
-
-    assert client.get("/api/results/fields").json()["fields"]
-    assert client.get("/api/overview").json()["counts"]["results"] > 0
     assert client.get("/api/storage/stats").json()["by_mode"]
 
 
-def test_run_without_files_is_rejected(client):
-    r = client.post("/api/skills/run", json={"skill_id": "table.preview", "artifact_ids": []})
-    assert r.status_code == 400
-    assert "选择" in r.json()["error"]["message"]
-
-
-def test_unready_skill_returns_a_clear_error(client):
-    scan = client.post("/api/files/scan", json={"path": str(client.sample_dir)}).json()
-    client.post("/api/files/import", json={"files": scan["files"]})
-    aid = client.get("/api/files", params={"q": "jv"}).json()["rows"][0]["artifact_id"]
-
-    r = client.post("/api/skills/run",
-                    json={"skill_id": "thickness.generic", "artifact_ids": [aid]})
-    assert r.status_code == 500
-    assert "算法尚未接入" in r.json()["error"]["message"]
-
-
-def test_ask_without_a_model_says_so(client):
-    r = client.post("/api/assist/ask", json={"question": "这是什么"})
-    assert r.status_code == 501
-    assert r.json()["error"]["kind"] == "no_model"
+def test_retired_skill_endpoints_are_gone(client):
+    """旧 Skill 机制和规则引擎退役了：这些接口不再存在，说清楚是 404 而不是 500。"""
+    for path in ("/api/skills/run", "/api/skills/suggest", "/api/assist/inspect",
+                 "/api/assist/ask"):
+        r = client.post(path, json={})
+        assert r.status_code in (404, 405), (path, r.status_code)
 
 
 def test_assist_status_admits_no_model(client):
     s = client.get("/api/assist/status").json()
     assert s["model_configured"] is False
-    assert s["rules_available"] is True      # 规则引擎永远可用
+
+
+def test_health_reports_modules_and_leftover_skills(client, workspace):
+    """工作区里还留着旧 skill 时要说出来 —— 它们不会再被加载，不能悄悄失效。"""
+    h = client.get("/api/health").json()
+    assert h["modules"] >= 2 and h["legacy_skills"] == []
+    (workspace / "skills" / "my_old_skill").mkdir(parents=True)
+    assert client.get("/api/health").json()["legacy_skills"] == ["my_old_skill"]
 
 
 def test_settings_rejects_unknown_keys(client):

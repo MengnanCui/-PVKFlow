@@ -167,3 +167,30 @@ def overview_counts() -> dict[str, int]:
         "failed_runs": db.scalar("SELECT COUNT(*) FROM analysis_run WHERE status='failed'") or 0,
         "missing_files": db.scalar("SELECT COUNT(*) FROM artifact WHERE status='missing'") or 0,
     }
+
+
+def run_detail(run_id: str) -> dict:
+    """一次运行的全部：参数、结果、数值表、派生图。"""
+    from app.storage import tabular
+
+    run = db.query_one("SELECT * FROM analysis_run WHERE analysis_run_id = ?", (run_id,))
+    if not run:
+        raise KeyError(f"没有这次运行记录：{run_id}")
+    return {
+        "run": run,
+        "results": results_for_run(run_id),
+        "tables": tabular.tables_for_run(run_id),
+        "figures": db.query(
+            "SELECT artifact_id, filename, mime FROM artifact WHERE produced_by = ?", (run_id,)
+        ),
+    }
+
+
+def recent_runs(limit: int = 50) -> list[dict]:
+    return db.query(
+        "SELECT r.*, s.name AS sample_name, s.batch AS sample_batch,"
+        "       (SELECT COUNT(*) FROM key_result k WHERE k.analysis_run_id = r.analysis_run_id)"
+        "         AS n_results"
+        " FROM analysis_run r LEFT JOIN sample s ON s.sample_id = r.sample_id"
+        " ORDER BY r.started_at DESC, r.rowid DESC LIMIT ?", (limit,),
+    )
