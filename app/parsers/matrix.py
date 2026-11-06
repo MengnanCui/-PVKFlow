@@ -187,8 +187,24 @@ def parse(path: str | Path) -> SpectralMatrix:
 
 
 # ------------------------------------------------------------------ 缓存
+# 解析器的版本。**解析结果可能变的改动都要把它加一**（改了判格式、取块、
+# 时间轴推断、编码……）。
+#
+# 缓存原来只按文件内容哈希命名：文件没变，解析器修了 bug，旧缓存照样命中，
+# 看到的还是修 bug 之前的解析结果，除非手动清缓存（自查 §6 #13）。
+# 版本进了文件名之后，升级后第一次打开就会重新解析；旧版本的缓存再也命中不了，
+# 淘汰时顺手删掉。
+#   1 —— 2026-08 最初的宽表 / 原位双块解析
+#   2 —— 2026-08-27 认结构不认名字（UTF-16、逗号分号、全角括号）之后
+PARSER_VERSION = 2
+
+
 def _cache_path(sha256: str) -> Path:
-    return config.WORKSPACE / "cache" / "matrix" / f"{sha256}.npz"
+    return config.WORKSPACE / "cache" / "matrix" / f"{sha256}.p{PARSER_VERSION}.npz"
+
+
+def _is_current(path: Path) -> bool:
+    return path.name.endswith(f".p{PARSER_VERSION}.npz")
 
 
 def cache_dir() -> Path:
@@ -235,19 +251,31 @@ def evict_cache(limit_bytes: int | None = None) -> dict:
 
     entries = []
     total = 0
+    stale_removed = stale_freed = 0
     for p in d.glob("*.npz"):
         try:
             st = p.stat()
         except OSError:
             continue
+        if not _is_current(p):
+            # 旧解析器版本的缓存永远不会再被命中，留着只占地方
+            try:
+                p.unlink()
+                stale_removed += 1
+                stale_freed += st.st_size
+            except OSError:
+                pass
+            continue
         entries.append((st.st_atime, st.st_size, p))
         total += st.st_size
 
     if total <= limit:
-        return {"removed": 0, "freed": 0, "bytes": total, "limit_bytes": limit}
+        return {"removed": stale_removed, "freed": stale_freed, "bytes": total,
+                "limit_bytes": limit}
 
     entries.sort()                              # 最久没被访问的排前面
-    removed = freed = 0
+    removed, freed = stale_removed, stale_freed
+    total += stale_freed                         # 下面按「total - freed」判断，先补回去
     for _, size, path in entries:
         if total - freed <= limit:
             break

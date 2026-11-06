@@ -144,3 +144,20 @@ def test_same_filename_in_different_folders_are_different_samples(workspace, tmp
     again = ingest.ingest_paths(paths, "")
     assert not again.imported
     assert len(again.duplicates) == 3
+
+
+def test_a_half_written_copy_left_by_a_crash_is_rewritten(workspace, tmp_path):
+    """导入到一半被杀，workspace/raw/ 里留下半截文件；下次导入不能「见存在就跳过」
+    —— 那样这份截断的数据从此一直被当成正常的（自查 §6 #14）。"""
+    src = tmp_path / "B30_S1_jv.csv"
+    src.write_text("Voltage,Current\n" + "".join(f"{i/10},{i}\n" for i in range(200)),
+                   encoding="utf-8")
+    sha = ingest.sha256_file(src)
+    target = ingest.raw_target(sha, ".csv")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(src.read_bytes()[:100])          # 上次只写进去 100 字节
+
+    rep = ingest.ingest_paths([str(src)])
+    assert len(rep.imported) == 1
+    assert target.read_bytes() == src.read_bytes()
+    assert not list(target.parent.glob("*.tmp"))       # 临时文件不留痕

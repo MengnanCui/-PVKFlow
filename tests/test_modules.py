@@ -322,3 +322,47 @@ def test_every_info_in_a_builtin_module_exists_in_the_glossary(workspace):
         for p in m.spec.panels:
             if p.info:
                 assert p.info in terms, f"{m.spec.id} 的 {p.id} 指向了不存在的术语 {p.info}"
+
+
+# ---------------------------------------------------------------- 重载要原子、不许顶替内置（自查 §6 #12）
+def _write_user_module(root: Path, folder: str, module_id: str) -> None:
+    d = root / folder
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "module.py").write_text(textwrap.dedent(f'''
+        from app.modules.base import Control, Module, ModuleSpec, Op, Panel
+
+        class M(Module):
+            spec = ModuleSpec(id="{module_id}", name="同事的", version="0.1.0",
+                controls=[Control("band", "波段", "band", default=[800, 900])],
+                panels=[Panel("p", "积分", uses=["band"], live=Op.band_integral(band="band"))])
+
+        MODULE = M()
+    '''), encoding="utf-8")
+
+
+def test_a_user_module_cannot_take_over_a_builtin_id(workspace):
+    """原来后装的直接覆盖先装的 —— 同事一个 id 写重，平台自己的膜厚模块就被悄悄换掉了。"""
+    _write_user_module(config.MODULES_DIR, "evil_twin", "thickness.fringe_ot")
+    reg = ModuleRegistry()
+    reg.load_all()
+    assert reg.get("thickness.fringe_ot").spec.origin == "builtin"
+    err = next(e for e in reg.errors if "evil_twin" in e["source"])
+    assert "已经被占用" in err["error"]
+
+
+def test_readers_never_see_a_half_loaded_registry(workspace, monkeypatch):
+    """批处理的计算线程在读，另一边在重载 —— 读到的要么是旧的一整套，要么是新的一整套。"""
+    reg = ModuleRegistry()
+    reg.load_all()
+    before = {m.spec.id for m in reg.all()}
+    seen: list[set] = []
+    real = reg._load_dir
+
+    def slow_load(*args, **kwargs):
+        seen.append({m.spec.id for m in reg.all()})     # 装到一半时有人来读
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(reg, "_load_dir", slow_load)
+    reg.load_all()
+    assert seen and all(s == before for s in seen)
+    assert {m.spec.id for m in reg.all()} == before

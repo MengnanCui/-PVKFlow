@@ -83,6 +83,8 @@ def detail(parent_run_id: str) -> dict:
     except (ValueError, KeyError, AttributeError):
         # 老配方读不出来不该把整页拖垮 —— 参数面板退回模块自己的默认值
         d["module_params"] = {}
+    # 这次长表里实际有哪些曲线 —— 对比页照它画，同事模块的曲线也在里面
+    d["curves"] = batch_mod.curve_catalog(parent_run_id)
     return d
 
 
@@ -127,16 +129,28 @@ def axes(parent_run_id: str) -> dict:
     }
 
 
-# 膜厚在**另一张**表里：它的时间轴是全部帧，integral / slope 那张可能被
-# max_time_points 抽稀过。见 app/batch.py 里 SampleOutcome.ot_t 的注释。
-_TABLE_OF = {"integral": "batch_curves", "slope": "batch_curves",
-             "ot": "batch_thickness"}
+# 列名的形状。具体有哪些列不在这里写死 —— 由这次批处理的长表决定
+# （见 batch_mod.curve_catalog）。原来写死成 integral|slope|ot，同事模块的曲线取不出来。
+_COLUMN = r"^[A-Za-z_][A-Za-z0-9_]{0,63}$"
 
 
 def _load_curves(parent_run_id: str, column: str):
-    """读出这次批处理的长表。curves、slices 和 export 走的是同一份数据。"""
+    """读出这次批处理的长表。curves、slices 和 export 走的是同一份数据。
+
+    膜厚在**另一张**表里（batch_thickness）：它的时间轴是全部帧，
+    batch_curves 那张可能被 max_time_points 抽稀过。哪一列在哪张表，问 curve_catalog。
+    """
     detail_ = guard(batch_mod.batch_detail, parent_run_id)
-    want = _TABLE_OF.get(column, "batch_curves")
+    catalog = batch_mod.curve_catalog(parent_run_id)
+    entry = next((c for c in catalog if c["column"] == column), None)
+    if entry is not None:
+        want = entry["table"]
+    elif column in batch_mod.BUILTIN_CURVES:
+        # 平台那三条缺席，多半是老对比（跑在加膜厚之前），下面会说清楚「重跑一次就有」
+        want = "batch_thickness" if column == "ot" else "batch_curves"
+    else:
+        have = "、".join(c["column"] for c in catalog) or "（一列都没有）"
+        raise ApiError(f"这次批处理没有「{column}」这一列。有的是：{have}", 400, "bad_column")
     tables = [t for t in detail_["tables"] if t["name"] == want]
     if not tables and want == "batch_thickness":
         raise ApiError(
@@ -158,7 +172,7 @@ def _load_curves(parent_run_id: str, column: str):
 
 @router.get("/runs/{parent_run_id}/curves")
 def curves(parent_run_id: str,
-           column: str = Query("integral", pattern="^(integral|slope|ot)$"),
+           column: str = Query("integral", pattern=_COLUMN),
            max_series: int = Query(400, ge=1, le=5000)) -> dict:
     """批处理的曲线，按样品分组返回。
 
@@ -234,13 +248,18 @@ def slices(parent_run_id: str,
                 })
                 continue
             n_ok = int(ok_mask[sel][np.isfinite(vals)].sum())
+            # 窗口里没有数的帧（输入缺失，见膜厚模块的 NO_INPUT）不参与平均 ——
+            # 「全部帧参与」说的是有数的帧都算，不是把没有的数编出来。少了几帧要说出来。
+            n_missing = int(vals.size - finite.size)
             values.append({
                 "mean": round(float(finite.mean()), 2),
                 "std": round(float(finite.std()), 2),
                 "n_frames": int(finite.size),
                 "n_ok": n_ok,
                 "ok_ratio": round(n_ok / finite.size, 3),
-                "note": "",
+                "n_missing": n_missing,
+                "note": (f"窗口里有 {n_missing} 帧没有数（输入缺失），没参与平均"
+                         if n_missing else ""),
             })
 
         rows.append({
@@ -294,9 +313,19 @@ _Y_LABELS = {
 }
 
 
+def _y_labels(parent_run_id: str, column: str) -> tuple[str, str]:
+    """平台那三条用写好的中英文标签；同事模块的曲线用它声明里的标签（英文没有就同一个）。"""
+    if column in _Y_LABELS:
+        return _Y_LABELS[column]
+    entry = next((c for c in batch_mod.curve_catalog(parent_run_id)
+                  if c["column"] == column), None)
+    label = (entry or {}).get("y_label") or column
+    return label, label
+
+
 @router.get("/runs/{parent_run_id}/export")
 def export_script(parent_run_id: str,
-                  column: str = Query("integral", pattern="^(integral|slope|ot)$"),
+                  column: str = Query("integral", pattern=_COLUMN),
                   mode: str = Query("overlay", pattern="^(overlay|band)$"),
                   group_by: str = Query("batch", pattern="^(batch|none)$"),
                   max_series: int = Query(1200, ge=1, le=5000)) -> Response:
@@ -321,7 +350,7 @@ def export_script(parent_run_id: str,
     cols = ["sample_id", "sample_name", "batch", "label", "t", column]
     csv_bytes = df[cols].to_csv(index=False).encode("utf-8-sig")
 
-    zh_label, en_label = _Y_LABELS[column]
+    zh_label, en_label = _y_labels(parent_run_id, column)
     blob = script_export.build_zip(
         csv_bytes=csv_bytes,
         column=column,
@@ -346,7 +375,7 @@ def export_script(parent_run_id: str,
 
 @router.get("/runs/{parent_run_id}/export/preview")
 def export_preview(parent_run_id: str,
-                   column: str = Query("integral", pattern="^(integral|slope|ot)$"),
+                   column: str = Query("integral", pattern=_COLUMN),
                    mode: str = Query("overlay", pattern="^(overlay|band)$"),
                    group_by: str = Query("batch", pattern="^(batch|none)$")) -> dict:
     """先读脚本，再决定要不要下载。
@@ -355,7 +384,7 @@ def export_preview(parent_run_id: str,
     确认它画的是你想要的东西。
     """
     _detail, _table, df = _load_curves(parent_run_id, column)
-    zh_label, en_label = _Y_LABELS[column]
+    zh_label, en_label = _y_labels(parent_run_id, column)
     n_series = df["sample_id"].nunique()
     script = script_export.build_script(
         column=column, y_label=zh_label, y_label_en=en_label, mode=mode,

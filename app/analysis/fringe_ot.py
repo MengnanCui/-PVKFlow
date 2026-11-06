@@ -86,6 +86,16 @@ PLATFORM_ACCURATE_CYCLES = 2.0
 
 # 三档判级在界面上怎么说人话。key 是 status_of() 的返回值。
 STATUS_TEXT = {
+    # 平台层加的一档（不在规范里）：输入本身不完整，FFT 没有可算的东西。
+    # 由膜厚模块在调用之后标上，见 thickness/module.py 的 _mark_frames_without_input。
+    "NO_INPUT": {
+        "label": "无数据",
+        "short": "窗口内光谱有缺失值，这一帧不出数",
+        "detail": (
+            "这一帧在分析窗口里有缺失值（NaN 或无穷大），通常是仪器那一帧没采到、"
+            "或导出时出了问题。FFT 遇到缺失值不会报错，会照样给出一个看起来正常的数 ——"
+            "但那个数和膜厚没有关系，所以平台不出数，也不让它参与时刻平均。"),
+    },
     "OK": {
         "label": "可信",
         "short": "窗内条纹数够，FFT 锁在真峰上",

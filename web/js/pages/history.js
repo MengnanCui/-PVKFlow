@@ -56,7 +56,7 @@ function row(r, ctx, nPins) {
   return h('tr.is-clickable', {
     onclick: () => ctx.nav('batch', { arg: r.analysis_run_id }),
   },
-    h('td.strong', p.title || '未命名对比'),
+    h('td.strong', p.title || '未命名对比', runStatus(r.status)),
     h('td', fmtInt(r.n_children)),
     h('td', r.n_failed
       ? h('span.status.status-warn', `${fmtInt(r.n_failed)} 个`)
@@ -64,6 +64,13 @@ function row(r, ctx, nPins) {
     h('td', nPins ? h('span.tag.tag-accent', `📌 ${fmtInt(nPins)}`) : h('span.dim', '—')),
     h('td.small.muted', band),
     h('td.small.muted', fmtTime(r.started_at)));
+}
+
+// 没跑完的要看得出来：取消了只算了一部分、服务重启时被打断、还在跑。
+// 原来这一列不显示状态，一次只算了 3/40 就被取消的对比，看起来和跑完的一模一样。
+function runStatus(status) {
+  const label = { cancelled: '已取消 · 只有一部分', failed: '没跑完', running: '运行中' }[status];
+  return label ? h('span.status.status-warn.small', { style: { marginLeft: '8px' } }, label) : null;
 }
 
 function parseParams(raw) {

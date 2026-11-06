@@ -216,15 +216,72 @@ def test_reap_interrupted_clears_stuck_tasks(workspace):
     assert tasks.reap_interrupted() == 1
     stuck = tasks.get("task_stuck")
     assert stuck["status"] == "failed" and "重启" in stuck["error"]
+    # 别再承诺做不到的事：代码里从来没有「跳过已完成样品」的逻辑
+    assert "跳过" not in stuck["error"]
 
 
-def test_cancel_stops_the_batch(imported):
-    """取消是「停在这儿」，不是「当没发生过」—— 已跑完的结果保留。"""
+def test_cancel_stops_the_batch(imported, monkeypatch):
+    """取消是「停在这儿」，不是「当没发生过」—— 已跑完的结果保留。
+
+    原来这条测试把 ok 也算通过（「太快跑完也可能来不及取消」），等于没测。
+    而真实情况是：取消信号在 progress() 里抛出、穿过线程池的 with，
+    线程池退出时把还没开始的样品**全部算完**，父运行永远停在 running（自查 §6 #11）。
+    这里把每个样品拖慢到 0.3 s，取消就一定来得及。
+    """
+    real = batch._process_one
+
+    def slow(*args, **kwargs):
+        time.sleep(0.3)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(batch, "_process_one", slow)
     task = tasks.submit(batch.BATCH_SKILL_ID,
                         {"filter": {"has_matrix": True}, "recipe": {}})
+    time.sleep(0.1)
+    started = time.time()
     tasks.cancel(task["task_id"])
     t = _wait(task["task_id"])
-    assert t["status"] in ("cancelled", "ok")     # 太快跑完也可能来不及取消
+
+    assert t["status"] == "cancelled"
+    res = t["result"]
+    assert 0 < res["n_done"] < res["n_total"] == 13       # 停在半路，没有全算完
+    assert time.time() - started < 13 * 0.3 / batch.COMPUTE_WORKERS + 1.5
+
+    run = db.query_one("SELECT status, finished_at, warnings_json FROM analysis_run"
+                       " WHERE analysis_run_id=?", (res["parent_run_id"],))
+    assert run["status"] == "cancelled" and run["finished_at"]   # 父运行收了尾
+    assert "已取消" in run["warnings_json"]
+    # 已经跑完的那部分照样能看
+    assert db.scalar("SELECT COUNT(*) FROM analysis_run WHERE parent_run_id=?",
+                     (res["parent_run_id"],)) == res["n_done"]
+    if res["n_ok"]:
+        assert res["table"]["n_rows"] > 0
+
+
+def test_cancel_right_after_submitting_still_closes_the_parent_run(imported):
+    """提交完马上取消 —— 取消信号在第一次报进度时就抛出。
+
+    旧代码在这条路径上父运行永远停在 running、任务结果是空的（实测）；
+    对比历史里就多了一条永远「运行中」、点进去什么都没有的记录。
+    """
+    task = tasks.submit(batch.BATCH_SKILL_ID, {"filter": {"has_matrix": True}, "recipe": {}})
+    tasks.cancel(task["task_id"])
+    t = _wait(task["task_id"])
+    assert t["status"] == "cancelled"
+    run = db.query_one("SELECT status, finished_at FROM analysis_run WHERE analysis_run_id=?",
+                       (t["result"]["parent_run_id"],))
+    assert run["status"] == "cancelled" and run["finished_at"]
+
+
+def test_restart_also_closes_runs_left_running(workspace):
+    """服务重启后，对比历史里不能永远挂着一条「运行中」。"""
+    from app.storage import results
+
+    rid = results.start_run("batch.abs_thickness", "0.2.0")
+    tasks.reap_interrupted()
+    run = db.query_one("SELECT status, error, finished_at FROM analysis_run"
+                       " WHERE analysis_run_id=?", (rid,))
+    assert run["status"] == "failed" and "重启" in run["error"] and run["finished_at"]
 
 
 # ---------------------------------------------------------------- 导出脚本
@@ -997,3 +1054,71 @@ def test_numeric_looking_names_and_empty_batch_survive_the_round_trip(workspace,
         z = zipfile.ZipFile(io.BytesIO(c.get(f"/api/batch/runs/{rid}/export").content))
     data = z.read("data.csv").decode("utf-8-sig")
     assert ",001," in data and "nan" not in data.lower()
+
+
+# ---------------------------------------------------------------- 结果记下是哪个版本的模块算的（自查 §6 #17）
+def test_results_record_which_module_versions_computed_them(imported):
+    import json
+
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID,
+                           {"filter": {"batch": ["B21"]}, "recipe": {}})["task_id"])
+    rid = t["result"]["parent_run_id"]
+    params = json.loads(db.scalar("SELECT params_json FROM analysis_run WHERE analysis_run_id=?",
+                                  (rid,)))
+    assert params["modules"]["thickness.fringe_ot"] == "1.0.0"
+    versions = {r["version"] for r in db.query(
+        "SELECT DISTINCT k.version FROM key_result k JOIN analysis_run r"
+        " ON r.analysis_run_id = k.analysis_run_id WHERE r.parent_run_id=?", (rid,))}
+    assert len(versions) == 1
+    v = versions.pop()
+    assert v.startswith(batch.BATCH_VERSION + "+")
+    assert "thickness.fringe_ot@1.0.0" in v and "special.slope_integral@1.0.0" in v
+
+
+# ---------------------------------------------------------------- 同事模块的曲线进对比页（自查 §6 #9）
+_COLLEAGUE_MODULE = '''
+from app.modules.base import Control, Curve, Module, ModuleSpec, Op, Panel
+
+class Red(Module):
+    spec = ModuleSpec(
+        id="colleague.red_band", name="红光积分", version="0.3.0",
+        controls=[Control("band", "波段", "band", default=[900, 1000], unit="nm")],
+        panels=[Panel("red", "红光积分 vs 时间", uses=["band"],
+                      y_label="红光积分 (a.u.·nm)", live=Op.band_integral(band="band"))],
+        batch_curves=[Curve("red_integral", from_panel="red")],
+    )
+
+MODULE = Red()
+'''
+
+
+def test_a_colleague_modules_curve_reaches_the_comparison_page(batch_client, imported):
+    """原来对比页 / 导出只认 integral|slope|ot 三个写死的列名 —— 同事模块的曲线
+    写进了长表，却取不出来。「声明了 batch_curves 就自动进对比页」只兑现了一半。"""
+    from app.modules.registry import reload
+
+    d = config.MODULES_DIR / "red_band"
+    d.mkdir(parents=True)
+    (d / "module.py").write_text(_COLLEAGUE_MODULE, encoding="utf-8")
+    assert not reload()["errors"]
+
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID,
+                           {"filter": {"batch": ["B21"]}, "recipe": {}})["task_id"])
+    rid = t["result"]["parent_run_id"]
+
+    detail = batch_client.get(f"/api/batch/runs/{rid}").json()
+    cat = {c["column"]: c for c in detail["curves"]}
+    assert cat["red_integral"]["plottable"] and not cat["red_integral"]["builtin"]
+    assert cat["red_integral"]["y_label"] == "红光积分 (a.u.·nm)"
+    assert cat["red_integral"]["module_name"] == "红光积分"
+    assert cat["ot_ok"]["plottable"] is False                 # 0/1 判级不当曲线画
+
+    cur = batch_client.get(f"/api/batch/runs/{rid}/curves",
+                           params={"column": "red_integral"}).json()
+    assert cur["n_series"] == 4 and all(len(s["y"]) == len(s["x"]) > 0 for s in cur["series"])
+
+    z = _export(batch_client, rid, column="red_integral")
+    assert "红光积分 (a.u.·nm)" in z.read("plot.py").decode("utf-8")
+
+    r = batch_client.get(f"/api/batch/runs/{rid}/curves", params={"column": "nope"})
+    assert r.status_code == 400 and "red_integral" in r.json()["error"]["message"]

@@ -223,7 +223,7 @@ def effective_params(recipe: "Recipe") -> dict[str, dict]:
 
 def _run_modules(lam, M, t, recipe: "Recipe", warnings: list[str], *,
                  all_frames: bool = False, meta: dict | None = None,
-                 artifact_id: str = "") -> dict[str, np.ndarray]:
+                 artifact_id: str = "", modules: list | None = None) -> dict[str, np.ndarray]:
     """跑声明了 batch_curves 的模块，收集它们的曲线。
 
     `all_frames` 选的是哪一批模块：False = 跟着抽稀后的时间轴那些，
@@ -239,11 +239,13 @@ def _run_modules(lam, M, t, recipe: "Recipe", warnings: list[str], *,
     # registry 平时由 web 启动时装好。但批处理跑在任务线程里，也可能被脚本或
     # 测试直接调起来 —— 那些路径没有走过 lifespan。空着就懒加载一次，
     # 否则症状是「批处理静默地一条曲线都不产出」，最难查的那种。
-    if not module_registry.all():
-        module_registry.load_all()
+    if modules is None:
+        if not module_registry.all():
+            module_registry.load_all()
+        modules = module_registry.all()
 
     out: dict[str, np.ndarray] = {}
-    for mod in module_registry.all():
+    for mod in modules:
         spec = mod.spec
         if not spec.batch_curves or bool(spec.batch_all_frames) != all_frames:
             continue
@@ -284,7 +286,7 @@ def _run_modules(lam, M, t, recipe: "Recipe", warnings: list[str], *,
 
 
 # ------------------------------------------------------------------ 单样品
-def _process_one(row: dict, recipe: Recipe) -> SampleOutcome:
+def _process_one(row: dict, recipe: Recipe, modules: list | None = None) -> SampleOutcome:
     """一个样品的计算。不碰数据库 —— 写入统一由主线程做。"""
     out = SampleOutcome(sample_id=row["sample_id"], sample_name=row["name"],
                         batch=row.get("batch"), artifact_id=row["matrix_id"])
@@ -300,7 +302,7 @@ def _process_one(row: dict, recipe: Recipe) -> SampleOutcome:
         # 曲线由**已装的模块**产出 —— 模块声明了 batch_curves，
         # 平台就自动把它接进长表、对比页叠图、时刻切片和导出脚本。
         # 同事加一个模块，这些地方一处都不用改。
-        out.module_curves = _run_modules(lam, M, t, recipe, out.warnings,
+        out.module_curves = _run_modules(lam, M, t, recipe, out.warnings, modules=modules,
                                          meta=sm.meta,
                                          artifact_id=row["matrix_id"])
         integ = out.module_curves.get("integral")
@@ -329,6 +331,7 @@ def _process_one(row: dict, recipe: Recipe) -> SampleOutcome:
         # 这里跑的是**和单样品页同一个模块** —— 批处理里另写一份 FFT 的话，
         # 两个页面对同一个样品会给出不同的膜厚，而且没人知道该信哪个。
         out.full_curves = _run_modules(sm.lam, sm.M, sm.t, recipe, out.warnings,
+                                       modules=modules,
                                        all_frames=True, meta=sm.meta,
                                        artifact_id=row["matrix_id"])
         if out.full_curves:
@@ -388,63 +391,97 @@ def run_batch(ctx: tasks.TaskContext) -> dict:
     if not total:
         raise ValueError("筛选式没有命中任何带光谱矩阵的样品")
 
+    # 这一批用哪些模块，开跑时定下来、整批不变。中途有人点「重载」或装了新模块，
+    # 影响的是下一批 —— 不然同一次对比里前一半样品和后一半样品是两套模块算的。
+    from app.modules.registry import registry as module_registry
+
+    if not module_registry.all():
+        module_registry.load_all()
+    modules = list(module_registry.all())
+    # 这批结果是哪个版本的算法算的。原来 key_result.version 永远写批处理自己的
+    # 版本号，改了膜厚模块重跑，两批结果在库里分不出来（自查 §6 #17）。
+    used = {m.spec.id: m.spec.version for m in modules}
+    version_tag = f"{BATCH_VERSION}+" + ",".join(f"{k}@{v}" for k, v in sorted(used.items()))
+
     parent_id = results.start_run(
         skill_id=BATCH_SKILL_ID, skill_version=BATCH_VERSION,
         skill_name="批处理 · 吸收光谱与膜厚",
         params={"recipe": recipe.as_dict(), "filter": flt, "n_samples": total,
-                "title": (ctx.params.get("title") or "").strip()},
+                "title": (ctx.params.get("title") or "").strip(), "modules": used},
         source="skill")
-
-    ctx.progress(0, total, f"准备处理 {total} 个样品")
 
     outcomes: list[SampleOutcome] = []
     n_ok = n_failed = 0
     cancelled = False
 
-    # numpy 会放开 GIL，所以计算并行有效；数据库写入留在这个线程里做
-    with ThreadPoolExecutor(max_workers=COMPUTE_WORKERS) as pool:
-        futures = {pool.submit(_process_one, r, recipe): r for r in rows}
-        for i, fut in enumerate(as_completed(futures), start=1):
-            if ctx.is_cancelled:
+    # 父运行一旦建了，**无论怎么结束都要收尾**（ok / failed / cancelled）。
+    # 原来取消信号是在 progress() 里抛出来的：它穿过线程池的 with 往外飞，
+    # 线程池退出时 shutdown(wait=True) 把还没开始的样品全部算完，
+    # 父运行永远停在 running，长表也不写（自查 §6 #11）。
+    try:
+        ctx.progress(0, total, f"准备处理 {total} 个样品")
+        # numpy 会放开 GIL，所以计算并行有效；数据库写入留在这个线程里做
+        with ThreadPoolExecutor(max_workers=COMPUTE_WORKERS) as pool:
+            futures = {pool.submit(_process_one, r, recipe, modules): r for r in rows}
+            try:
+                for i, fut in enumerate(as_completed(futures), start=1):
+                    out = fut.result()
+                    outcomes.append(out)
+                    if out.ok:
+                        n_ok += 1
+                    else:
+                        n_failed += 1
+                    _write_child(parent_id, out, recipe, version_tag)
+                    if i % 5 == 0 or i == total:
+                        ctx.progress(i, total,
+                                     f"{out.sample_name}（{n_ok} 成功 / {n_failed} 失败）")
+                        ctx.tally(n_ok, n_failed)
+                    ctx.check_cancelled()          # 每个样品之后都看一眼
+            except tasks.Cancelled:
                 cancelled = True
+                # 还没开始的全部撤掉；正在算的（最多 COMPUTE_WORKERS 个）让它算完，
+                # 但结果不再落库 —— 用户按的是「停」
                 for f in futures:
                     f.cancel()
-                break
-            out = fut.result()
-            outcomes.append(out)
-            if out.ok:
-                n_ok += 1
-                _write_child(parent_id, out, recipe)
-            else:
-                n_failed += 1
-                _write_child(parent_id, out, recipe)
-            if i % 5 == 0 or i == total:
-                ctx.progress(i, total, f"{out.sample_name}（{n_ok} 成功 / {n_failed} 失败）")
-                ctx.tally(n_ok, n_failed)
+    except tasks.Cancelled:
+        cancelled = True
+    except Exception as exc:
+        results.finish_run(parent_id, "failed", error=f"批处理中途出错：{exc}")
+        raise
 
     ctx.tally(n_ok, n_failed)
 
+    # 取消是「停在这儿」，不是「当没发生过」：已经跑完的样品照样进长表，
+    # 对比页能看到这一部分。
     table_meta = _write_long_table(parent_id, outcomes) if n_ok else None
     ot_meta = _write_thickness_table(parent_id, outcomes) if n_ok else None
-    results.finish_run(
-        parent_id, "cancelled" if cancelled else ("ok" if n_ok else "failed"),
-        warnings=[f"{n_failed} 个样品失败"] if n_failed else [],
-        error=None if n_ok else "全部样品都失败了")
-
+    done = n_ok + n_failed
     if cancelled:
-        raise tasks.Cancelled()
+        status = "cancelled"
+        warnings = [f"已取消：处理了 {done} / {total} 个样品"]
+    else:
+        status = "ok" if n_ok else "failed"
+        warnings = []
+    if n_failed:
+        warnings.append(f"{n_failed} 个样品失败")
+    results.finish_run(parent_id, status, warnings=warnings,
+                       error=None if (n_ok or cancelled) else "全部样品都失败了")
 
-    return {
+    summary = {
         "parent_run_id": parent_id,
-        "n_total": total, "n_ok": n_ok, "n_failed": n_failed,
+        "n_total": total, "n_ok": n_ok, "n_failed": n_failed, "n_done": done,
         "table": table_meta,
         "thickness_table": ot_meta,
         "recipe": recipe.as_dict(),
         "filter": flt,
     }
+    if cancelled:
+        raise tasks.Cancelled(summary)
+    return summary
 
 
-def _write_child(parent_id: str, out: SampleOutcome, recipe: Recipe) -> None:
+def _write_child(parent_id: str, out: SampleOutcome, recipe: Recipe,
+                 version: str = BATCH_VERSION) -> None:
     """每个样品一条子运行 —— 失败的也要留痕，否则你不知道是哪些没跑成。"""
     run_id = results.start_run(
         skill_id=BATCH_SKILL_ID, skill_version=BATCH_VERSION,
@@ -461,7 +498,7 @@ def _write_child(parent_id: str, out: SampleOutcome, recipe: Recipe) -> None:
             [{"field_name": k, "value": v, "unit": _UNITS.get(k, ""),
               "label": _LABELS.get(k, k), "quality": "validated"}
              for k, v in out.metrics.items() if math.isfinite(v)],
-            sample_id=out.sample_id, version=BATCH_VERSION)
+            sample_id=out.sample_id, version=version)
 
     results.finish_run(run_id, "ok" if out.ok else "failed",
                        warnings=out.warnings, error=out.error or None)
@@ -569,6 +606,54 @@ def batch_detail(parent_run_id: str) -> dict:
         "n_failed": sum(1 for c in children if c["status"] == "failed"),
         "tables": tabular.tables_for_run(parent_run_id),
     }
+
+
+# 长表里不是曲线的列
+_META_COLUMNS = {"sample_id", "sample_name", "batch", "t", "label", "group"}
+# 平台自己画的三条（对比页上有固定位置和专门的图注）
+BUILTIN_CURVES = ("ot", "slope", "integral")
+
+
+def curve_catalog(parent_run_id: str) -> list[dict]:
+    """这次批处理的长表里**实际有**哪些曲线列、各叫什么、在哪张表。
+
+    原来对比页 / 切片 / 导出只认 integral / slope / ot 三个写死的列名 ——
+    同事模块声明的批处理曲线确实写进了长表，但对比页取不出来，
+    「声明了 batch_curves 就自动进对比页」只兑现了一半（自查 §6 #9）。
+
+    列以**表里实际存的**为准（模块后来卸了，老对比的列照样能看）；
+    名字和单位从当前已装模块的声明里取，取不到就用列名。
+    `plottable=False` 的是不画在图上的辅助列（Curve 声明了 key=，比如 ot_ok 这种 0/1 判级）。
+    """
+    from app.modules.registry import registry as module_registry
+
+    if not module_registry.all():
+        module_registry.load_all()
+    declared: dict[str, dict] = {}
+    for m in module_registry.all():
+        panels = {pn.id: pn for pn in m.spec.panels}
+        for cv in m.spec.batch_curves:
+            pn = panels.get(cv.from_panel)
+            declared[cv.name] = {
+                "label": cv.label or (pn.title if pn else cv.name),
+                "y_label": cv.label or (getattr(pn, "y_label", "") if pn else "") or cv.name,
+                "module_id": m.spec.id, "module_name": m.spec.name,
+                "plottable": not cv.key,
+            }
+
+    out = []
+    for tbl in tabular.tables_for_run(parent_run_id):
+        if tbl["name"] not in ("batch_curves", "batch_thickness"):
+            continue
+        cols = tbl.get("columns") or json.loads(tbl.get("columns_json") or "[]")
+        for col in cols:
+            if col in _META_COLUMNS or any(c["column"] == col for c in out):
+                continue
+            d = declared.get(col, {"label": col, "y_label": col, "module_id": None,
+                                   "module_name": None, "plottable": col != "ot_ok"})
+            out.append({"column": col, "table": tbl["name"],
+                        "builtin": col in BUILTIN_CURVES, **d})
+    return out
 
 
 def recent_batches(limit: int = 20) -> list[dict]:

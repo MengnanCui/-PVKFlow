@@ -237,3 +237,28 @@ def test_truncated_table_says_how_many_were_folded():
 # ---------------------------------------------------------------- 自检
 def test_selftest_passes():
     assert fo._selftest() == 0
+
+
+# ---------------------------------------------------------------- 输入缺失的帧不出数（自查 §6 #24）
+def test_a_frame_with_missing_input_gets_no_number_not_a_fake_one():
+    """一个 NaN 像素原来就能算出 OT = 122 nm、信噪比无穷大，还参与时刻平均。
+
+    平台层（膜厚模块）把这种帧标成 NO_INPUT、不出数；规范的算法本身一行不动。
+    """
+    from app.modules.builtin.thickness import module as th
+
+    lam, t, M = synth([6000, 5500, 5000, 4500, 4000])
+    k = int(np.searchsorted(lam, 900.0))
+    M[k, 2] = np.nan                                     # 第 3 帧、窗口内一个像素
+
+    panel = th._ot_panel(lam, t, M, [775.0, 1120.0], False, want_report=True)
+    allframes = panel.series[0]
+    assert allframes.y[2] is None                        # 没有数，不是一个假数
+    assert all(v is not None for i, v in enumerate(allframes.y) if i != 2)
+    assert panel.batch_extra["ot_ok"][2] == 0.0
+    assert "NO_INPUT" in {i["key"] for i in panel.info_extra["items"]}
+    assert "NO_INPUT" in panel.text                      # §5 报告里如实写出来
+
+    # 算法层原样：直接调 fringe_ot 仍会给一个有限值 —— 说明拦截确实在平台层
+    raw = fo.extract_series(lam, t, M, target_times_s="all", window_nm=[775.0, 1120.0])
+    assert np.isfinite(raw["points"][2]["ot_nm"])

@@ -162,8 +162,9 @@ def _ot_panel(lam, t, M, window, absorb: bool, want_report: bool = False) -> Pan
                          batch_extra={"ot_ok": [0.0] * len(t)})
 
     pts = res["points"]
+    _mark_frames_without_input(pts, lam, M, window)
     xs = [round(q["t"], 4) for q in pts]
-    ys = [round(q["ot_nm"], 3) for q in pts]
+    ys = [round(q["ot_nm"], 3) if np.isfinite(q["ot_nm"]) else None for q in pts]
     status = [q["status"] for q in pts]
 
     ok_x, ok_y, deg_x, deg_y = [], [], [], []
@@ -219,6 +220,27 @@ def _ot_panel(lam, t, M, window, absorb: bool, want_report: bool = False) -> Pan
         # **max_rows=0 = 逐帧全列** —— 抽样过的报告看不出干燥在哪一秒变坏。
         d.text = fringe_ot.format_report(res, max_rows=0)
     return d
+
+
+def _mark_frames_without_input(points: list[dict], lam, M, window) -> None:
+    """窗口里光谱有缺失值（NaN / Inf）的帧：**不出数**，判级记成 NO_INPUT。
+
+    FFT 遇到 NaN 不会报错，会照样吐出一个有限的、看起来正常的数 ——
+    审查里复现过：一个 NaN 像素就算出 OT = 122 nm、信噪比无穷大，
+    然后它还参与「这 1 秒的平均膜厚」（自查 §6 #24）。
+
+    这不是「判据改数值」：那条规矩说的是**算出来的数**不因为不可信就被改掉；
+    这里是输入本身不完整，那个数从来就不是一次测量。
+    算法本身（fringe_ot，规范的可执行副本）一行不动，这一步在平台层做。
+    """
+    in_win = (np.asarray(lam) >= window[0]) & (np.asarray(lam) <= window[1])
+    bad = ~np.all(np.isfinite(np.asarray(M)[in_win]), axis=0)
+    for q in points:
+        if bad[q["index"]]:
+            q["ot_nm"] = float("nan")
+            q["ok"] = False
+            q["flags"] = list(q["flags"]) + ["NO_INPUT: 窗口内光谱有缺失值（NaN/Inf），这一帧不出数"]
+            q["status"] = "NO_INPUT"
 
 
 def _exp(v: float) -> str:

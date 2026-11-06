@@ -123,6 +123,30 @@ def scan(root: str | Path, recursive: bool = True) -> list[ScannedFile]:
     return out
 
 
+def _store_copy(target: Path, expected_size: int, write) -> None:
+    """把一份原始文件落进 workspace/raw/。**要么完整写进去，要么不留痕。**
+
+    原来是「目标不存在就直接往目标写」：导入到一半断电或被杀，留下半截文件；
+    下次导入看见「已经存在」就跳过，从此这份截断的数据一直被当成正常的（自查 §6 #14）。
+
+    现在先写到同目录的临时文件，写完再原子地换名过去；
+    已经存在的也要核一下大小 —— 对不上就是上次留下的半截，重写。
+    （不重算 sha：那要把文件再读一遍，而截断一定会让大小对不上。）
+    """
+    if target.exists():
+        try:
+            if target.stat().st_size == expected_size:
+                return
+        except OSError:
+            pass
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    try:
+        write(tmp)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def _measurement_key(display_path: str) -> str | None:
     """这个文件能不能凭文件夹名认出「是哪一次测量」。能就返回用来比对的键。
 
@@ -400,8 +424,7 @@ def ingest_paths(
             if mode == "copied":
                 target = raw_target(sha, ext)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                if not target.exists():
-                    shutil.copy2(src, target)
+                _store_copy(target, src.stat().st_size, lambda tmp: shutil.copy2(src, tmp))
                 stored_path = rel_to_workspace(target)
             else:
                 # 引用型：原图不动，只做缩略图（图像才有）
@@ -491,8 +514,7 @@ def ingest_uploads(uploads: Iterable[tuple[str, bytes]], source_hint: str = "") 
 
             target = raw_target(sha, ext)
             target.parent.mkdir(parents=True, exist_ok=True)
-            if not target.exists():
-                target.write_bytes(data)
+            _store_copy(target, len(data), lambda tmp: tmp.write_bytes(data))
 
             m = naming.parse(display, rules)
             sample_id = _ensure_sample(m.sample, m.batch)

@@ -101,6 +101,30 @@ def test_cache_round_trips_and_is_content_addressed(workspace, tmp_path):
     assert np.abs(third.M - M * 0.5).max() < 1e-4
 
 
+def test_a_parser_upgrade_does_not_serve_the_old_cache(workspace, tmp_path, monkeypatch):
+    """文件没变、解析器变了 —— 旧缓存不能再被命中（自查 §6 #13）。"""
+    lam, t, M = _synth()
+    p = tmp_path / "c.csv"
+    _write_wide(p, lam, t, M)
+    matrix.load_cached(p)
+    old_files = list(matrix.cache_dir().glob("*.npz"))
+    assert len(old_files) == 1
+
+    # 模拟「解析器修了 bug」：版本号加一，解析结果也确实变了
+    monkeypatch.setattr(matrix, "PARSER_VERSION", matrix.PARSER_VERSION + 1)
+    real_parse = matrix.parse
+    monkeypatch.setattr(matrix, "parse", lambda path: (
+        lambda sm: matrix.SpectralMatrix(lam=sm.lam, t=sm.t, M=sm.M * 2, meta=sm.meta,
+                                         orientation=sm.orientation))(real_parse(path)))
+    fresh = matrix.load_cached(p)
+    assert np.abs(fresh.M - M * 2).max() < 1e-3        # 拿到的是新解析器的结果
+
+    # 旧版本的缓存在淘汰时被清掉，不再占地方
+    matrix.evict_cache(limit_bytes=10 ** 12)
+    assert not any(f.exists() for f in old_files)
+    assert len(list(matrix.cache_dir().glob("*.npz"))) == 1
+
+
 # ---------------------------------------------------------------- 波数
 def test_wavenumber_resampling_matches_pointwise_interp():
     """向量化实现必须和逐列 np.interp 等价。"""

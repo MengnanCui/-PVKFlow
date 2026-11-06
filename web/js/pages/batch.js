@@ -49,6 +49,7 @@ const S = {
   pins: [],          // 钉在这次对比上的 AI 分析
   // 特殊处理的两条曲线 + 膜厚曲线
   curves: { integral: null, slope: null, ot: null },
+  extra: [],         // 同事模块声明的、能画的批处理曲线（来自 detail.curves）
   mode: 'auto', groupBy: 'batch',
   modules: null, moduleErr: null, axes: null,   // 参数面板照模块声明生成
   // 时刻切片：窗口是**查询参数**，改一下不用重跑（膜厚曲线整条都存着了）
@@ -70,6 +71,7 @@ export function actions(nav) {
 export async function view(host, ctx) {
   S.detail = S.error = null;
   S.curves = { integral: null, slope: null, ot: null };
+  S.extra = [];
   S.slices = S.sliceErr = null;
   S.win2 = null; S.win2Resolved = false; S.tMax = null;
   S.modules = null; S.moduleErr = null; S.axes = null;
@@ -103,6 +105,11 @@ export async function view(host, ctx) {
     mount(host, errorBox(err, () => view(host, ctx)));
     return;
   }
+
+  // 同事模块声明的批处理曲线：长表里有、对比页原来却画不出来（自查 §6 #9）。
+  // 平台那三条有固定位置；其余能画的（不是 ot_ok 这种 0/1 辅助列）各占一格。
+  S.extra = (S.detail.curves || []).filter((c) => c.plottable && !c.builtin);
+  for (const c of S.extra) S.curves[c.column] = null;
 
   const params = S.detail.run.params || {};
   document.querySelector('#pageTitle').textContent = params.title || '对比结果';
@@ -602,7 +609,7 @@ function curveSpot(col, title) {
       着色: S.groupBy === 'batch'
         ? `颜色分批次（${fmtInt(batchCount(data?.series || []))} 个），同批次内按线型分样品`
         : '逐条一色',
-      纵轴: Y_LABEL[col],
+      纵轴: yLabel(col),
       服务端截断: data?.truncated ? `还有 ${data.truncated} 条没取` : '',
     },
     scope: { run_id: S.runId },
@@ -705,14 +712,15 @@ function cell(v) {
 // 左右并排两张：谱斜率 vs 时间 | 波段积分 vs 时间。
 // 对比看的就是这两条 —— 一次全画出来，不用先选一个再切另一个。
 async function loadCurves() {
-  await Promise.all(['integral', 'slope', 'ot'].map(async (col) => {
+  const cols = ['integral', 'slope', 'ot', ...(S.extra || []).map((c) => c.column)];
+  await Promise.all(cols.map(async (col) => {
     try {
       S.curves[col] = await api.batchCurves(S.runId, { column: col, max_series: 1200 });
     } catch (err) {
-      // 膜厚可能整个缺席（老的对比跑在加膜厚之前）。那不该把另外两张图也拖垮 ——
-      // 缺的那一张自己显示原因就行。
-      if (col === 'ot') S.curves.ot = { error: err };
-      else S.error = err;
+      // 膜厚可能整个缺席（老的对比跑在加膜厚之前）；同事模块的一列出问题也一样 ——
+      // 都不该把别的图拖垮，缺的那一张自己显示原因就行。
+      if (col === 'integral' || col === 'slope') S.error = err;
+      else S.curves[col] = { error: err };
     }
     drawChart();
   }));
@@ -758,9 +766,21 @@ function drawChart() {
     h('div.fig-grid-2',
       curveFigure('ot', '光学厚度 vs 时间'),
       curveFigure('slope', '谱斜率 vs 时间')),
-    h('div.fig-grid-2.mt-6',
+    ...curveRows([
       curveFigure('integral', '波段积分 vs 时间'),
-      h('div.figure')));
+      ...(S.extra || []).map((c) => curveFigure(c.column,
+        c.module_name ? `${c.label}（${c.module_name}）` : c.label)),
+    ]));
+}
+
+/** 两张一排。单出来的那张旁边放一格空的，保持左右对齐。 */
+function curveRows(cells) {
+  if (cells.length % 2) cells.push(h('div.figure'));
+  const rows = [];
+  for (let i = 0; i < cells.length; i += 2) {
+    rows.push(h('div.fig-grid-2.mt-6', cells[i], cells[i + 1]));
+  }
+  return rows;
 }
 
 // 和样品页一样的三行结构：标题 / 功能 / 图。没有功能的那一格第二行空着，
@@ -797,14 +817,14 @@ function paintCurve(col, data) {
     const reps = all.filter((_, i) => i % step === 0).slice(0, 6)
       .map((s) => ({ ...s, group: undefined }));
     chart = xyChart({
-      x_label: '时间 (s)', y_label: Y_LABEL[col], band,
+      x_label: '时间 (s)', y_label: yLabel(col), band,
       series: reps.map((s) => ({ ...s, style: 'line' })),
     }, { height: 300 });
     caption = `${fmtInt(n)} 条曲线 —— 显示中位数与四分位区间，另叠了 ${reps.length} 条代表曲线。`
       + `超过 ${SPAGHETTI_LIMIT} 条自动降级，因为上千条叠一起是噪声不是图。`;
   } else {
     chart = xyChart({
-      x_label: '时间 (s)', y_label: Y_LABEL[col],
+      x_label: '时间 (s)', y_label: yLabel(col),
       series: styled(all),
     }, { height: 300 });
     caption = `${fmtInt(n)} 条曲线`
@@ -842,6 +862,11 @@ const batchCount = (series) => new Set(series.map((s) => s.group || '')).size;
 
 const Y_LABEL = { integral: '积分强度 (a.u.·nm)', slope: 'dI/dλ (a.u./nm)',
                   ot: '光学厚度 OT = n·d·cosθ (nm)' };
+
+/** 平台那三条用写好的标签；同事模块的曲线用它自己声明的。 */
+function yLabel(col) {
+  return Y_LABEL[col] || (S.extra || []).find((c) => c.column === col)?.y_label || col;
+}
 
 function select(label, value, options, onChange) {
   return h('label.inline-field',
@@ -953,7 +978,7 @@ function exportDialog(col) {
             '而且论文里那张图是你自己能读、能改、能引用的代码画的 —— ',
             '不是模型在某个沙箱里跑出来的黑箱。'))),
       h('p.xsmall.dim.mt-3',
-        '当前导出：', h('span.mono', `${Y_LABEL[col]} · `
+        '当前导出：', h('span.mono', `${yLabel(col)} · `
           + (mode === 'band' ? '分位数带' : '叠图')
           + ` · 按${S.groupBy === 'batch' ? '批次' : '逐条'}着色`),
         S.groupBy === 'batch'

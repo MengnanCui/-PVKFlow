@@ -35,13 +35,22 @@ class ModuleRegistry:
         self._errors: list[LoadError] = []
         self._dirs: dict[str, Path] = {}      # module_id → 它自己的目录
 
-    def register(self, mod: Module, *, path: Path | None = None) -> None:
+    def register(self, mod: Module, *, path: Path | None = None,
+                 _into: tuple[dict, dict] | None = None) -> None:
         spec = getattr(mod, "spec", None)
         if not isinstance(spec, ModuleSpec):
             raise TypeError(f"{type(mod).__name__} 缺少合法的 spec（要是 ModuleSpec 实例）")
-        self._modules[spec.id] = mod
+        modules, dirs = _into if _into is not None else (self._modules, self._dirs)
+        if spec.id in modules:
+            # 同 id 的第二个**不许静默顶替**第一个。内置模块先装，所以同事的模块
+            # 撞了内置的 id 时，内置的留着、这一个装不上并说清原因 ——
+            # 原来是后来的直接覆盖，平台自己的膜厚模块可能被悄悄换掉（自查 §6 #12）。
+            where = dirs.get(spec.id)
+            raise ValueError(f"模块 id「{spec.id}」已经被占用了"
+                             f"（{where.name if where else '另一个模块'}）。换一个 id 再装")
+        modules[spec.id] = mod
         if path is not None:
-            self._dirs[spec.id] = path
+            dirs[spec.id] = path
 
     def get(self, module_id: str) -> Module:
         if module_id not in self._modules:
@@ -66,34 +75,44 @@ class ModuleRegistry:
 
     # -------------------------------------------------------------- 发现
     def load_all(self) -> None:
-        self._modules.clear()
-        self._errors.clear()
-        self._dirs.clear()
+        """重新发现全部模块。**先装到新的容器里，最后一次性换上。**
+
+        原来是先 clear() 再一个个装：批处理的计算线程这时候去读，
+        读到的是空的或装了一半的 —— 曲线整列变 NaN、样品还标成功，
+        或者直接 "dict changed size during iteration"（自查 §6 #12）。
+        现在读的人拿到的要么是旧的一整套，要么是新的一整套。
+        """
+        modules: dict[str, Module] = {}
+        errors: list[LoadError] = []
+        dirs: dict[str, Path] = {}
         for root, origin in ((config.BUILTIN_MODULES_DIR, "builtin"),
                              (config.MODULES_DIR, "user")):
             if root.exists():
-                self._load_dir(root, origin)
+                self._load_dir(root, origin, (modules, dirs), errors)
+        self._modules, self._errors, self._dirs = modules, errors, dirs
 
-    def _load_dir(self, root: Path, origin: str) -> None:
+    def _load_dir(self, root: Path, origin: str, into: tuple[dict, dict],
+                  errors: list) -> None:
         for entry in sorted(root.iterdir()):
             if entry.name.startswith((".", "_")) or not entry.is_dir():
                 continue
             f = entry / "module.py"
             if not f.is_file():
-                self._errors.append(LoadError(
+                errors.append(LoadError(
                     str(entry), "目录里没有 module.py",
                     "一个模块就是一个目录，里面至少要有 module.py。"
                     "照着 workspace/modules/_template/ 改最省事。"))
                 continue
             try:
-                self._load_one(f, origin, entry)
+                self._load_one(f, origin, entry, into)
             except Exception as exc:
                 # 这里必须吞掉 —— 一个坏模块不能让整个平台起不来
-                self._errors.append(LoadError(
+                errors.append(LoadError(
                     str(entry), f"{type(exc).__name__}: {exc}",
                     traceback.format_exc()[-2000:]))
 
-    def _load_one(self, path: Path, origin: str, folder: Path) -> None:
+    def _load_one(self, path: Path, origin: str, folder: Path,
+                  into: tuple[dict, dict] | None = None) -> None:
         mod_py = load_module_from_path(path, f"hte_module_{folder.name}")
 
         found: list[Module] = []
@@ -113,7 +132,7 @@ class ModuleRegistry:
 
         for m in found:
             object.__setattr__(m.spec, "origin", origin)
-            self.register(m, path=folder)
+            self.register(m, path=folder, _into=into)
 
 
 registry = ModuleRegistry()

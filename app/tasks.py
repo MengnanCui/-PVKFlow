@@ -27,7 +27,15 @@ _cancelled: set[str] = set()
 
 
 class Cancelled(Exception):
-    """任务被取消。不是错误，不该记成 failed。"""
+    """任务被取消。不是错误，不该记成 failed。
+
+    可以带上「取消时已经做完的那部分」的摘要 —— 批处理取消后，
+    已跑完的样品照样有一次对比可看，前端得知道它的 parent_run_id。
+    """
+
+    def __init__(self, result: dict | None = None) -> None:
+        super().__init__("cancelled")
+        self.result = result or {}
 
 
 @dataclass
@@ -99,8 +107,8 @@ def _run(task_id: str, kind: str, params: dict) -> None:
     try:
         result = _HANDLERS[kind](ctx) or {}
         status, error = "ok", None
-    except Cancelled:
-        result, status, error = {}, "cancelled", None
+    except Cancelled as exc:
+        result, status, error = exc.result, "cancelled", None
     except Exception as exc:
         result, status = {}, "failed"
         error = f"{exc}\n\n{traceback.format_exc()[-4000:]}"
@@ -161,13 +169,20 @@ def reap_interrupted() -> int:
     早就死了的东西。
     """
     rows = db.query("SELECT task_id FROM task WHERE status IN ('queued','running')")
-    if not rows:
-        return 0
+    now = db.now()
     with db.tx() as c:
-        c.execute("UPDATE task SET status='failed', error=?, finished_at=?"
-                  " WHERE status IN ('queued','running')",
-                  ("服务重启，任务被中断。已经跑完的样品结果保留，重新提交会跳过它们。",
-                   db.now()))
+        if rows:
+            # 原来这句话还说「重新提交会跳过它们」—— 代码里从来没有跳过的逻辑，
+            # 重新提交会把整批重算一遍。说了做不到的事比不说更糟。
+            c.execute("UPDATE task SET status='failed', error=?, finished_at=?"
+                      " WHERE status IN ('queued','running')",
+                      ("服务重启，任务被中断。已经跑完的样品结果保留；"
+                       "重新提交会把整批重新算一遍。", now))
+        # 任务表之外，分析运行（批处理的父运行和每个样品的子运行）也得收尾 ——
+        # 不然对比历史里永远挂着一条「运行中」（自查 §6 #11）。
+        c.execute("UPDATE analysis_run SET status='failed', finished_at=?,"
+                  " error=COALESCE(error, '服务重启，这次运行被中断')"
+                  " WHERE status='running'", (now,))
     return len(rows)
 
 
