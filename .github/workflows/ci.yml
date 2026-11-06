@@ -98,6 +98,10 @@ jobs:
               Where-Object { $_.CommandLine -like '*app.main*' } |
               ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
             taskkill /PID $p.Id /T /F 2>$null | Out-Null
+            # 上面 Stop-Process 已经把服务连带 cmd 拔掉了，taskkill 找不到进程会返回非零；
+            # Actions 的 pwsh 外壳拿「最后一个外部命令的退出码」当这一步的结果 —— 不清零的话，
+            # 全部通过也会被标成失败（第 4 次运行就是这样）。真出错时上面的 throw 照样让这一步失败
+            $global:LASTEXITCODE = 0
           }
       - name: run.bat 的输出
         if: always()
