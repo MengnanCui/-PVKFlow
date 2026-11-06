@@ -37,6 +37,8 @@ class H(BaseHTTPRequestHandler):
             f.write(json.dumps(req, ensure_ascii=False) + "\n")
         q = next((m["content"] for m in reversed(req.get("messages", []))
                   if m.get("role") == "user"), "")
+        # 只看问题本身。前面的「已知事实」里也可能出现「收窄」（样品多了，平台会提示范围太大）
+        q = q.split("我的问题：")[-1]
         if "收窄" in q:
             parts = ["先收窄到 ZG0014 的两次测量。\n",
                      '```json\n{"action": "narrow", "filter": {"batch": ["ZG0014"]}, '

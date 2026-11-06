@@ -2,6 +2,7 @@
 
 import { api } from '../api.js';
 import { withInfo } from '../components/info.js';
+import { fieldNameCell, unitCell } from '../components/field-cells.js';
 import { h, render, fmtInt, fmtTime, empty, sampleLabel } from '../ui.js';
 
 export const meta = {
@@ -59,7 +60,9 @@ export function view(host, { nav }) {
         ? h('div.section',
             h('div.section-head',
               h('div.section-title', '已有的关键字段'),
-              h('div.section-note', '构效关系分析时可选作 X / Y')),
+              h('div.section-note', data.n_fields > data.fields.length
+                ? `最常见的 ${data.fields.length} 个，共 ${fmtInt(data.n_fields)} 个 · 全部见「构效关系」`
+                : '构效关系分析时可选作 X / Y')),
             h('div.panel.panel-body.flush', fieldTable(data.fields)))
         : null);
   });
@@ -128,8 +131,8 @@ function fieldTable(fields) {
       h('th', '字段'), h('th', '单位'), h('th.num', '条数'),
       h('th.num', '最小'), h('th.num', '最大'))),
     h('tbody', ...fields.map((f) => h('tr',
-      h('td', h('span.mono.strong', f.field_name)),
-      h('td.small.muted', f.unit || '—'),
+      fieldNameCell(f),
+      unitCell(f),
       h('td.num', fmtInt(f.n)),
       h('td.num.small', f.min_v === null ? '—' : Number(f.min_v).toPrecision(4)),
       h('td.num.small', f.max_v === null ? '—' : Number(f.max_v).toPrecision(4))))));

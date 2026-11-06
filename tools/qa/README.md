@@ -30,6 +30,9 @@ NODE_PATH=$(npm root -g) node tools/qa/a2_download_name.js smp_xxx
 NODE_PATH=$(npm root -g) node tools/qa/p44_check.js smp_xxx /tmp/requests.jsonl
 # B（二）：拆页面 / 删死代码 / 共用聊天客户端之后的行为（设置里要配两个模型 fake-1、fake-2）
 NODE_PATH=$(npm root -g) node tools/qa/b2_check.js smp_xxx run_xxx /tmp/requests.jsonl
+# B（三）：键盘选样品、弹窗焦点、提示的读屏、热力图下载出错、停止后的回答、构效关系字段
+# （样品要多于一屏，键盘那一条才量得到虚拟列表重画时焦点丢不丢 —— 复制几十个样品文件夹导进来）
+NODE_PATH=$(npm root -g) node tools/qa/b3_check.js smp_xxx run_xxx
 ```
 
 需要 Playwright（`npm i -g playwright`，或已经装好的）。

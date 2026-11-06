@@ -19,7 +19,7 @@ import { filterSummary } from '../components/facets.js';
 import { virtualList } from '../components/virtual-list.js';
 import { drawFacets, loadSets, publishScope, saveSetDialog, setFilter } from './process-filter.js';
 import { batchDialog, progressBlock, startCompare, stopPolling } from './process-run.js';
-import { beginSelect, extendSelect } from './process-select.js';
+import { beginSelect, extendSelect, rowKey } from './process-select.js';
 import { S, hooks, refs, resetRefs } from './process-state.js';
 
 // 拆出去的文件经 hooks 回调这几个（见 process-state.js）
@@ -170,7 +170,8 @@ function drawList() {
             }),
             h('span.small#selectCount',
               selectedCount ? `已选 ${fmtInt(selectedCount)}` : '全选本页')),
-          h('span.xsmall.dim', '点行选中 · 按住拖着刷一片 · shift+点 选中间一整段 · 双击或「打开」进样品',
+          h('span.xsmall.dim', '点行选中 · 按住拖着刷一片 · shift+点 选中间一整段 · 双击或「打开」进样品'
+            + ' · 键盘：上下键移动、空格选、回车打开',
             infoDot('sample_identity')),
           S.total > all
             ? h('span.xsmall.dim',
@@ -242,6 +243,9 @@ function drawTable() {
     count: S.rows.length,
     renderRow: (i) => renderRow(S.rows[i], i),
   });
+  list.setAttribute('role', 'listbox');
+  list.setAttribute('aria-multiselectable', 'true');
+  list.setAttribute('aria-label', '样品列表');
   refs.vlist = list;
   mount(host, header, list);
 }
@@ -289,8 +293,12 @@ function renderRow(r, index) {
     refs.nav('sample', { arg: r.matrix_id });
   };
   return h('div.vrow.is-pickable', {
+    // 键盘也能选（自查 §6 #30）：Tab 进来，上下键移动，空格勾选，Shift+空格范围选，回车打开
+    role: 'option',
+    tabindex: '0',
     'aria-selected': String(checked),
     dataset: { index: String(index) },
+    onkeydown: (e) => rowKey(e, index, open),
     onpointerdown: (e) => {
       if (e.button !== 0) return;               // 右键留给浏览器菜单
       if (e.target.closest('button')) return;   // 「打开」按钮走自己的路

@@ -3,6 +3,7 @@
 
 import { api } from '../api.js';
 import { h, render, fmtInt, empty } from '../ui.js';
+import { fieldNameCell, unitCell } from '../components/field-cells.js';
 
 export const meta = {
   id: 'relation',
@@ -35,9 +36,10 @@ export function view(host, { nav }) {
                 h('thead', h('tr',
                   h('th', '字段'), h('th', '单位'), h('th.num', '样本数'),
                   h('th.num', '范围'))),
-                h('tbody', ...numeric.slice(0, 40).map((f) => h('tr',
-                  h('td', h('span.mono.strong', f.field_name)),
-                  h('td.small.muted', f.unit || '—'),
+                // 全部列出。原来只列前 40 个、标题却报全部数量 —— 字段多了会以为看全了（自查 §6 #28）
+                h('tbody', ...numeric.map((f) => h('tr',
+                  fieldNameCell(f),
+                  unitCell(f),
                   h('td.num', fmtInt(f.n_numeric)),
                   h('td.num.small.muted',
                     f.min_v === null ? '—'

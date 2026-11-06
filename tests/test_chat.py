@@ -602,3 +602,87 @@ def test_run_id_must_look_like_a_run_id(client, samples):
         r = client.post("/api/chat/conversations",
                         json={"scope": {"topic": "glossary:ot", "run_id": bad}})
         assert r.status_code == 400, bad
+
+
+# ---------------------------------------------------------------- 自查 §6 #16：被打断的回答
+class _SlowProvider(_FakeProvider):
+    """一个字一个字慢慢吐；记下自己的流有没有被关掉（关掉 = 不再占着模型网关的连接）。"""
+
+    def __init__(self, pieces, delay=0.15):
+        super().__init__(pieces)
+        self.delay, self.closed = delay, False
+
+    def chat_stream(self, messages, **kw):
+        import time
+        try:
+            for p in self.pieces:
+                time.sleep(self.delay)
+                yield p
+        finally:
+            self.closed = True
+
+
+def test_an_interrupted_answer_keeps_what_was_already_said(workspace):
+    """点「停止」= 框架在 yield 那儿把生成器关掉。原来存消息的代码在循环后面，根本跑不到 ——
+    那条消息永远是空白的「生成中」。"""
+    cid = conversations.create("t")
+    mid = conversations.add_message(cid, "assistant", "", meta={"pending": True})
+    p = _SlowProvider(["第一段。", "第二段。", "第三段。"], delay=0)
+    gen = chat_api._stream(p, "fake-model", [], cid, mid, {"n_samples": 3, "needs_narrowing": False})
+    assert next(gen).startswith(b"event: meta")
+    next(gen)
+    next(gen)                                   # 已经流出去两段
+    gen.close()                                 # 你点了停止
+
+    msg = conversations.messages(cid)[-1]
+    assert msg["content"] == "第一段。第二段。"
+    assert msg["meta"].get("aborted") is True and "pending" not in msg["meta"]
+    assert p.closed                             # 模型那头的流也关了
+
+
+def test_hanging_up_mid_answer_on_a_real_server(workspace, samples, monkeypatch):
+    """真起一个服务、真的半路断开连接：已经流出来的字落库，标成「被打断」。"""
+    import socket
+    import threading
+    import time
+
+    import httpx
+    import uvicorn
+
+    from app.main import app
+    p = _use(monkeypatch, _SlowProvider([f"第{i}段。" for i in range(20)], delay=0.1))
+    cid = conversations.create("t")
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    t = threading.Thread(target=server.run, daemon=True)
+    t.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(0.05)
+        got = 0
+        with httpx.stream("POST", f"http://127.0.0.1:{port}/api/chat/conversations/{cid}/messages",
+                          json={"content": "说说看"}, headers={"Host": "testserver"},
+                          timeout=10, trust_env=False) as r:
+            for line in r.iter_lines():
+                if line.startswith("event: delta"):
+                    got += 1
+                    if got == 3:
+                        break                   # 收到三段就挂断
+        for _ in range(40):                     # 服务端发现断开、关掉生成器需要一点时间
+            msg = conversations.messages(cid)[-1]
+            if msg["meta"].get("aborted"):
+                break
+            time.sleep(0.1)
+        assert msg["role"] == "assistant"
+        assert msg["meta"].get("aborted") is True, msg
+        assert msg["content"].startswith("第0段。第1段。第2段。")
+        assert len(msg["content"]) < len("".join(p.pieces))
+        assert p.closed
+    finally:
+        server.should_exit = True
+        t.join(timeout=5)

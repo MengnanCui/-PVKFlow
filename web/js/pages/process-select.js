@@ -60,6 +60,55 @@ export function extendSelect(index) {
   hooks.syncSelection();
 }
 
+/**
+ * 键盘（自查 §6 #30：原来只能用鼠标选）。和鼠标的手势一一对应：
+ *   空格        切换这一行，并把锚点挪过来（= 点）
+ *   Shift+空格  锚点到这一行之间加选（= shift+点）
+ *   回车        打开（= 双击）
+ *   上 / 下     移到相邻一行；按住 Shift 就边走边加选
+ */
+export function rowKey(e, index, open) {
+  if (e.target !== e.currentTarget) return;        // 行里的按钮自己处理自己的键
+  const row = S.rows[index];
+  if (!row) return;
+  if (e.key === ' ') {
+    e.preventDefault();                            // 不然页面会往下滚一屏
+    if (e.shiftKey && S.anchor !== null && S.anchor !== index) {
+      selectRange(S.anchor, index, 'add');
+    } else {
+      if (S.checked.has(row.sample_id)) S.checked.delete(row.sample_id);
+      else S.checked.add(row.sample_id);
+      S.anchor = index;
+    }
+    hooks.syncSelection();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    open();
+  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const next = index + (e.key === 'ArrowDown' ? 1 : -1);
+    if (next < 0 || next >= S.rows.length) return;
+    if (e.shiftKey) {
+      selectRange(next, next, 'add');
+      S.anchor ??= index;
+      hooks.syncSelection();
+    }
+    focusRow(next);
+  }
+}
+
+// 相邻那一行多半已经画着（虚拟列表上下各多画几行）；focus() 会顺手把它滚进视口。
+// 万一还没画（一下跳太远），先滚过去，等虚拟列表下一帧把它画出来再聚焦
+function focusRow(i, tries = 6) {
+  const list = refs.vlist;
+  const el = list?.querySelector(`.vrow[data-index="${i}"]`);
+  if (el) { el.focus(); return; }
+  if (!list || tries <= 0) return;
+  const h = list.querySelector('.vrow')?.offsetHeight || 46;
+  list.scrollTop = Math.max(0, i * h - list.clientHeight / 2);
+  requestAnimationFrame(() => focusRow(i, tries - 1));
+}
+
 // 松手可能发生在列表外面（拖出了窗口），所以监听在 window 上，只装一次
 window.addEventListener('pointerup', endDrag);
 window.addEventListener('pointercancel', endDrag);

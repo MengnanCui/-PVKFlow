@@ -2,6 +2,7 @@
 
 import { api } from '../api.js';
 import { infoDot, withInfo } from '../components/info.js';
+import { fieldNameCell, unitCell } from '../components/field-cells.js';
 import { h, mount, clear, render, fmtBytes, fmtInt, fmtTime, empty, latest } from '../ui.js';
 
 export const meta = {
@@ -135,9 +136,8 @@ function fieldTable(fields) {
       h('th', '字段'), h('th', '单位'), h('th.num', '条数'),
       h('th.num', '其中数值'), h('th.num', '最小'), h('th.num', '最大'))),
     h('tbody', ...fields.map((f) => h('tr',
-      h('td', h('span.mono.strong', f.field_name),
-              f.label && f.label !== f.field_name ? h('div.xsmall.dim', f.label) : null),
-      h('td.small.muted', f.unit || '—'),
+      fieldNameCell(f),
+      unitCell(f),
       h('td.num', fmtInt(f.n)),
       h('td.num.small.muted', fmtInt(f.n_numeric)),
       h('td.num.small', f.min_v === null ? '—' : Number(f.min_v).toPrecision(4)),

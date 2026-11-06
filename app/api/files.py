@@ -105,16 +105,18 @@ def import_files(payload: dict = Body(...)) -> dict:
 
 
 @router.post("/upload")
-async def upload(files: list[UploadFile] = File(...)) -> dict:
+def upload(files: list[UploadFile] = File(...)) -> dict:
     """拖拽上传通道。
 
     浏览器不提供原始路径，所以**这里一律复制**，图像也一样。
     需要图像原地引用请用「浏览本机目录」导入。
+
+    写成同步函数：FastAPI 会放到线程池里跑。解析、写库、生成缩略图都是阻塞的活，
+    原来写成 async 直接在事件循环里做，上传大文件期间整个界面（包括进度条）都卡住（自查 §6 #26）。
     """
     payloads = []
     for f in files:
-        data = await f.read()
-        payloads.append((f.filename or "unnamed", data))
+        payloads.append((f.filename or "unnamed", f.file.read()))
     report = ingest.ingest_uploads(payloads, source_hint="浏览器上传")
     return report.as_dict()
 

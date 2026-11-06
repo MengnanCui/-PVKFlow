@@ -5,10 +5,14 @@
 数据没丢但全串了，而且小数据集上根本看不出来。
 （同一类身份 bug 在这个项目里已经栽过两次，所以先写测试。）
 """
+import os
+import time
+from datetime import datetime, timezone
+
 import numpy as np
 import pytest
 
-from app.storage import db, ingest, naming
+from app.storage import db, ingest, naming, selection
 from tests.test_insitu_csv import write_data_csv
 
 
@@ -116,6 +120,31 @@ def test_measured_at_falls_back_to_file_mtime(workspace, tmp_path):
     ingest.ingest_paths(ingest.scan_folders(root)["files"])
     at = db.scalar("SELECT measured_at FROM measurement")
     assert at and at.startswith("20")
+
+
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="改进程时区要 time.tzset（Windows 上没有）")
+def test_the_mtime_fallback_is_local_time_like_the_folder_names(workspace, tmp_path, monkeypatch):
+    """文件夹名里的时间戳是仪器的本地时间；退回文件修改时间时原来写的是 UTC（带 +00:00）。
+    按时间筛选是字符串比较，两种写法混在一起，没有时间戳的那几个就偏 8 小时（自查 §6 #25）。"""
+    monkeypatch.setenv("TZ", "Asia/Shanghai")
+    time.tzset()
+    try:
+        root = tmp_path / "raw"
+        d = root / "没有时间戳的文件夹"
+        d.mkdir(parents=True)
+        write_data_csv(d / "Data.csv")
+        # 北京时间 2026-07-29 18:35:47 = UTC 10:35:47
+        stamp = datetime(2026, 7, 29, 10, 35, 47, tzinfo=timezone.utc).timestamp()
+        os.utime(d / "Data.csv", (stamp, stamp))
+        ingest.ingest_paths(ingest.scan_folders(root)["files"])
+
+        assert db.scalar("SELECT measured_at FROM measurement") == "2026-07-29T18:35:47"
+        # 和文件夹名里解析出来的时间用同一把尺子：按本地时间筛得到它
+        f = selection.normalize({"time": {"from": "2026-07-29T18:00", "to": "2026-07-29T19:00"}})
+        assert selection.count(f) == 1
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()
 
 
 # ---------------------------------------------------------------- is_matrix

@@ -52,8 +52,32 @@ def _m1_add_columns(conn: sqlite3.Connection) -> None:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
+def _m2_measured_at_local(conn: sqlite3.Connection) -> None:
+    """measured_at 统一成「本地时间、不带时区」（自查 §6 #25）。
+
+    文件夹名里解析出来的本来就是这样；文件夹名里没有时间戳、退回文件修改时间的那些，
+    原来存的是 UTC（`…+00:00`）。按时间筛选是字符串比较，混着存就偏 8 小时。
+    换算用的是**这台电脑的时区** —— 和当初导入时是同一台电脑。
+    能重跑：换过的已经不带时区了，第二次什么都不改。
+    """
+    rows = conn.execute("SELECT measurement_id, measured_at FROM measurement"
+                        " WHERE measured_at IS NOT NULL AND measured_at != ''").fetchall()
+    for mid, value in rows:
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            continue                            # 认不出来的原样留着，不猜
+        if dt.tzinfo is None:
+            continue
+        local = dt.astimezone().replace(tzinfo=None).isoformat(timespec="seconds")
+        conn.execute("UPDATE measurement SET measured_at = ? WHERE measurement_id = ?",
+                     (local, mid))
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "补列：analysis_run.parent_run_id、artifact.is_matrix", "pre", _m1_add_columns),
+    Migration(2, "measured_at 统一成本地时间（原来退回文件修改时间的那些存的是 UTC）",
+              "post", _m2_measured_at_local),
 ]
 
 LATEST = max(m.version for m in MIGRATIONS)

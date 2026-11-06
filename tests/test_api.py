@@ -366,3 +366,78 @@ def test_preview_of_a_table_with_blank_cells(client, tmp_path):
     assert rows[1] == [0.2, None, None]
     assert rows[2] == [0.4, None, "x"]
 
+
+
+def test_no_endpoint_blocks_the_event_loop():
+    """`async def` 的路由直接跑在事件循环里：里面一做阻塞的活（解析文件、跑模块、写库），
+    别的请求 —— 包括界面上的进度条轮询 —— 全都得等它（自查 §6 #26：上传和装模块就是这样）。
+    这个平台的路由全是阻塞的活，所以一律写成普通函数，FastAPI 会放进线程池。"""
+    import inspect
+
+    from fastapi.routing import APIRoute
+
+    from app.main import app
+
+    def walk(routes):
+        # FastAPI 新版本里 include_router 进来的不再摊平在 app.routes 上，要一层层往下找
+        for r in routes:
+            if isinstance(r, APIRoute):
+                yield r
+            elif hasattr(r, "original_router"):
+                yield from walk(r.original_router.routes)
+            elif hasattr(r, "routes"):
+                yield from walk(r.routes)
+
+    routes = list(walk(app.routes))
+    assert len(routes) > 50                            # 真的走到了各个子路由里
+    offenders = [f"{r.path} {sorted(r.methods)}" for r in routes
+                 if inspect.iscoroutinefunction(r.endpoint)]
+    assert offenders == [], offenders
+
+
+def test_the_event_loop_stays_free_during_a_slow_upload(workspace, monkeypatch):
+    """真起一个服务：上传卡在解析里的那 1.5 秒，健康检查照样立刻返回。"""
+    import socket
+    import threading
+    import time
+
+    import httpx
+    import uvicorn
+
+    from app.main import app
+    from app.storage import ingest
+
+    real = ingest.ingest_uploads
+
+    def slow(*a, **kw):
+        time.sleep(1.5)
+        return real(*a, **kw)
+    monkeypatch.setattr(ingest, "ingest_uploads", slow)
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    t = threading.Thread(target=server.run, daemon=True)
+    t.start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(0.05)
+        headers = {"Host": "testserver"}
+        up = threading.Thread(target=lambda: httpx.post(
+            f"{base}/api/files/upload", headers=headers, timeout=10, trust_env=False,
+            files={"files": ("a.csv", b"x,y\n1,2\n", "text/csv")}))
+        up.start()
+        time.sleep(0.3)                                # 上传已经进到慢的那一段
+        t0 = time.perf_counter()
+        r = httpx.get(f"{base}/api/health", headers=headers, timeout=10, trust_env=False)
+        waited = time.perf_counter() - t0
+        up.join()
+        assert r.status_code == 200
+        assert waited < 0.5, f"健康检查等了 {waited:.2f} s —— 事件循环被上传占住了"
+    finally:
+        server.should_exit = True
+        t.join(timeout=5)

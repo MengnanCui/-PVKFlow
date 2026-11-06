@@ -10,6 +10,8 @@
 // 颜色逐个写死成属性。
 
 import { h, toast } from './ui.js';
+// CSV 的拼法在 csv.js（不碰 DOM，node 里能直接测）
+import { seriesToCsv } from './csv.js';
 
 /** 触发一次浏览器下载。 */
 function saveBlob(blob, filename) {
@@ -93,46 +95,6 @@ function rasterize(svgBlob, w, hgt, scale = 2) {
   });
 }
 
-// ---------------------------------------------------------------- 数据
-const csvCell = (v) => {
-  const s = v === null || v === undefined ? '' : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
-
-const sameX = (series) => series.length > 1 && series.every((s) =>
-  s.x.length === series[0].x.length && s.x.every((v, i) => v === series[0].x[i]));
-
-/**
- * 图表 spec → CSV。
- *
- * 各条曲线共用同一条 x 轴时用宽表（一列 x + 每条一列），
- * 否则用长表（series,x,y）—— 宽表在 x 不一致时只能靠补齐或插值，
- * 那等于凭空造数。宁可换个形状，也不改数。
- */
-export function seriesToCsv(spec) {
-  const series = (spec.series || []).filter((s) => s && s.x && s.y);
-  if (!series.length) return '';
-  const xl = spec.x_label || 'x';
-  const yl = spec.y_label || 'y';
-  const lines = [];
-
-  if (series.length === 1 || sameX(series)) {
-    lines.push([xl, ...series.map((s) => s.label || yl)].map(csvCell).join(','));
-    for (let i = 0; i < series[0].x.length; i++) {
-      lines.push([series[0].x[i], ...series.map((s) => s.y[i])].map(csvCell).join(','));
-    }
-  } else {
-    lines.push(['series', xl, yl].map(csvCell).join(','));
-    for (const s of series) {
-      for (let i = 0; i < s.x.length; i++) {
-        lines.push([s.label || '', s.x[i], s.y[i]].map(csvCell).join(','));
-      }
-    }
-  }
-  // BOM：不加的话 Excel 打开中文列名是乱码
-  return '﻿' + lines.join('\n') + '\n';
-}
-
 // ---------------------------------------------------------------- 按钮
 /**
  * 「下载 ▾」按钮，点开两个子项：下载图片 / 下载数据(csv)。
@@ -150,7 +112,16 @@ export function downloadMenu({ svg, spec, imageUrl = null, name }) {
     const items = [
       ['下载图片', async () => {
         const url = imageUrl?.();
-        if (url) return saveBlob(await (await fetch(url)).blob(), `${name}.png`);
+        if (url) {
+          // 先看状态码。原来不看：服务端出错时把那段错误 JSON 存成了一个打不开的 .png（自查 §6 #29）
+          const r = await fetch(url);
+          if (!r.ok) {
+            let why = `服务端返回 ${r.status}`;
+            try { why = (await r.json()).error?.message || why; } catch { /* 不是 JSON 就用状态码 */ }
+            throw new Error(why);
+          }
+          return saveBlob(await r.blob(), `${name}.png`);
+        }
         const node = svg?.();
         if (!node) return toast('图还没画出来', 'warn');
         await savePng(node, name);

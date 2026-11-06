@@ -83,7 +83,8 @@ async function fresh(b, hash, init) {
     const ok = await p.$('.modal-foot button.btn-primary');
     if (ok) { await ok.click(); }
     await p.waitForFunction(() => location.hash.startsWith('#batch/'), null, { timeout: 15000 }).catch(() => {});
-    await sleep(5000);
+    // 跑多久看样品数（45 个样品要十几秒）；等到叠图出来为止
+    await p.waitForSelector('#chartHost svg', { timeout: 60000 }).catch(() => {});
     const h = await p.evaluate(() => location.hash);
     const title = await p.textContent('#pageTitle');
     rec('直接跑对比并跳到对比页', h.startsWith('#batch/') && !!(await p.$('#chartHost svg')), `地址 ${h.slice(0, 30)}，标题「${title}」`);

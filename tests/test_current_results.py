@@ -89,3 +89,30 @@ def test_per_sample_result_count_counts_fields_not_runs(two_runs):
     rows = selection.page(selection.normalize({}), limit=10)["rows"]
     n = {r["sample_id"]: r["n_results"] for r in rows}
     assert n["smp_a"] == 2                  # ot_last_ok + only_old，不是 3
+
+
+def test_a_field_with_two_units_is_listed_once_and_flagged(workspace):
+    """自查 §6 #28：字段列表按（字段, 单位）分组 —— 同一个字段换了单位就列两行，
+    「N 个不同字段」也跟着多算；中文名是从组里随便挑的一行。"""
+    from app.storage import db, results
+
+    now = db.now()
+    with db.tx() as c:
+        for sid in ("smp_1", "smp_2", "smp_3"):
+            c.execute("INSERT INTO sample(sample_id, name, created_at) VALUES(?,?,?)", (sid, sid, now))
+    for sid, unit in (("smp_1", "nm"), ("smp_2", "nm"), ("smp_3", "µm")):
+        rid = results.start_run("batch.abs_thickness", "0.2.0", sample_id=sid)
+        results.write_results(rid, [{"field_name": "thickness", "label": "膜厚", "value": 500.0,
+                                     "unit": unit}], sample_id=sid)
+    rid = results.start_run("x", "1.0.0", sample_id="smp_1")
+    results.write_results(rid, [{"field_name": "plain", "value": 1.0}], sample_id="smp_1")
+
+    rows = [f for f in results.list_fields() if f["field_name"] == "thickness"]
+    assert len(rows) == 1
+    f = rows[0]
+    assert f["units"] == ["nm", "µm"]           # 多的在前
+    assert f["mixed_units"] is True and f["unit"] == "nm / µm"
+    assert f["label"] == "膜厚" and f["n"] == 3 and f["n_numeric"] == 3
+
+    plain = next(x for x in results.list_fields() if x["field_name"] == "plain")
+    assert plain["label"] == "" and plain["units"] == [] and plain["mixed_units"] is False

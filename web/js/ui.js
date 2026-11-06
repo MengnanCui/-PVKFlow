@@ -93,12 +93,14 @@ export function fmtTime(iso) {
 }
 
 // ------------------------------------------------------------------ Toast
-const toastStack = h('div.toast-stack');
+// 读屏软件靠 aria-live 才知道这里冒出了一条提示（自查 §6 #30）。出错的那种单独用 role=alert，会打断着念
+const toastStack = h('div.toast-stack', { role: 'status', 'aria-live': 'polite' });
 document.addEventListener('DOMContentLoaded', () => document.body.appendChild(toastStack));
 
 export function toast(message, kind = 'info', ms = 3600) {
   if (!toastStack.isConnected) document.body.appendChild(toastStack);
-  const node = h(`div.toast.toast-${kind}`, h('div.grow', message));
+  const urgent = kind === 'err' || kind === 'danger';
+  const node = h(`div.toast.toast-${kind}`, urgent ? { role: 'alert' } : null, h('div.grow', message));
   toastStack.appendChild(node);
   setTimeout(() => {
     node.style.transition = 'opacity .18s, transform .18s';
@@ -110,13 +112,32 @@ export function toast(message, kind = 'info', ms = 3600) {
 }
 
 // ------------------------------------------------------------------ Modal
-export function modal({ title, body, foot, width, onClose, flush = false }) {
-  const close = () => { backdrop.remove(); document.removeEventListener('keydown', onKey); onClose?.(); };
-  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+let modalSeq = 0;
 
-  const panel = h('div.modal', { style: width ? { width } : null },
+/**
+ * 弹窗。无障碍（自查 §6 #30）：是一个 dialog、标题就是它的名字；
+ * Tab 只在弹窗里转（不会跑到后面被遮住的页面上）；关掉之后焦点回到打开它的那个按钮。
+ */
+export function modal({ title, body, foot, width, onClose, flush = false }) {
+  const opener = document.activeElement;
+  const close = () => {
+    backdrop.remove();
+    document.removeEventListener('keydown', onKey);
+    onClose?.();
+    if (opener?.isConnected && typeof opener.focus === 'function') opener.focus();
+  };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); return; }
+    if (e.key === 'Tab') trapTab(e, panel);
+  };
+
+  const titleId = `modal-title-${++modalSeq}`;
+  const panel = h('div.modal', {
+    role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': titleId,
+    style: width ? { width } : null,
+  },
     h('div.modal-head',
-      h('h3', title),
+      h(`h3#${titleId}`, title),
       // 右上角是「关掉这个窗」的通用手势，用 × 图标；
       // 底部那排才是这个窗自己的动作（取消 / 确定 / 关闭）。
       // 以前两处都是文字「关闭」，看起来像有两种不同的关闭方式。
@@ -133,6 +154,21 @@ export function modal({ title, body, foot, width, onClose, flush = false }) {
   document.body.appendChild(backdrop);
   panel.querySelector('input,select,textarea,button')?.focus();
   return { close, panel, backdrop };
+}
+
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),'
+  + 'select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+/** Tab / Shift+Tab 到了弹窗的头尾就绕回来；焦点不知怎么跑到外面去了，拉回第一个。 */
+function trapTab(e, panel) {
+  const items = [...panel.querySelectorAll(FOCUSABLE)].filter((x) => x.offsetParent !== null);
+  if (!items.length) { e.preventDefault(); return; }
+  const first = items[0];
+  const last = items[items.length - 1];
+  const active = document.activeElement;
+  if (!panel.contains(active)) { e.preventDefault(); first.focus(); }
+  else if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
 }
 
 export function confirmDialog(message, { confirmLabel = '确定', danger = false } = {}) {

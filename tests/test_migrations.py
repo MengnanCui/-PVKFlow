@@ -115,3 +115,39 @@ def test_only_the_newest_backups_are_kept(ws):
         (d / f"hte.db.v0-2026010{i}-000000.bak").write_bytes(b"x")
     migrations.prune_backups(keep=5)
     assert len(list(d.glob("*.bak"))) == 5
+
+
+@pytest.mark.skipif(not hasattr(__import__("time"), "tzset"), reason="改进程时区要 time.tzset")
+def test_step_2_turns_utc_measured_at_into_local_time(ws, monkeypatch):
+    """自查 §6 #25：退回文件修改时间的那些原来存成 UTC。升级后和文件夹名里的时间同一种写法。"""
+    import time
+
+    monkeypatch.setenv("TZ", "Asia/Shanghai")
+    time.tzset()
+    try:
+        _old_workspace(ws)
+        conn = sqlite3.connect(ws / "hte.db")
+        conn.executemany(
+            "INSERT INTO measurement(measurement_id, sample_id, method, measured_at, created_at)"
+            " VALUES(?, 'smp_old', 'spectrum', ?, '2026-08-26T00:00:00+00:00')",
+            [("mea_utc", "2026-07-29T10:35:47+00:00"),      # 退回 mtime 的老写法
+             ("mea_folder", "2026-07-29T18:25:04.01"),      # 文件夹名里解析的：不动
+             ("mea_odd", "看不懂的时间")])                     # 认不出来的：不动
+        conn.commit()
+        conn.close()
+
+        from app.storage import db
+        db.init()
+        got = {r["measurement_id"]: r["measured_at"]
+               for r in db.query("SELECT measurement_id, measured_at FROM measurement")}
+        assert got == {"mea_utc": "2026-07-29T18:35:47",
+                       "mea_folder": "2026-07-29T18:25:04.01",
+                       "mea_odd": "看不懂的时间"}
+
+        migrations._m2_measured_at_local(db.connect())            # 再跑一遍：什么都不变
+        again = {r["measurement_id"]: r["measured_at"]
+                 for r in db.query("SELECT measurement_id, measured_at FROM measurement")}
+        assert again == got
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()

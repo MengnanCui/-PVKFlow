@@ -21,6 +21,7 @@ import logging
 import re
 from typing import Iterator
 
+import anyio
 from fastapi import APIRouter, Body, Query
 from fastapi.responses import StreamingResponse
 
@@ -222,11 +223,39 @@ def post_message(conversation_id: str, payload: dict = Body(...)):
         conversation_id, "assistant", "",
         meta={"model": model, "provider": provider.name, "pending": True})
 
-    return StreamingResponse(
+    return _ClosingStream(
         _stream(provider, model, messages, conversation_id, assistant_id, built),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class _ClosingStream(StreamingResponse):
+    """流结束（不管是说完了、还是你点了停止 / 关了页面）时**亲手**把生成器关掉。
+
+    Starlette 发现客户端断开后只是不再往下取，并不关生成器 —— 生成器停在 yield 上，
+    它的 finally（存下已经说出来的字）要等垃圾回收哪天碰巧跑到才执行。实测断开 4 秒后
+    消息仍是空白的「生成中」（自查 §6 #16）。
+    """
+
+    def __init__(self, gen, **kw):
+        self._gen = gen
+        super().__init__(gen, **kw)
+
+    async def stream_response(self, send) -> None:
+        try:
+            await super().stream_response(send)
+        finally:
+            # 关生成器会写库、关模型那头的连接：放到线程里做；并且不许被这次请求的取消打断，
+            # 不然断开时恰恰最需要跑的这一步会被跳过
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(self._close)
+
+    def _close(self) -> None:
+        try:
+            self._gen.close()
+        except ValueError:          # 极少数情况下它正在别的线程里跑着；那就让它自己跑完
+            pass
 
 
 def _stream(provider, model, messages, conversation_id, assistant_id,
@@ -243,16 +272,29 @@ def _stream(provider, model, messages, conversation_id, assistant_id,
 
     chunks: list[str] = []
     error: str | None = None
+    finished = False
+    stream = provider.chat_stream(messages, model=model, temperature=0.3, max_tokens=2000)
     try:
-        for piece in provider.chat_stream(messages, model=model,
-                                          temperature=0.3, max_tokens=2000):
-            chunks.append(piece)
-            yield _frame("delta", {"text": piece})
-    except ProviderUnavailable as exc:
-        error = str(exc)
-    except Exception as exc:                       # noqa: BLE001 — 见上面的说明
-        log.exception("流式回答出错")
-        error = f"模型调用出错：{exc}"
+        try:
+            for piece in stream:
+                chunks.append(piece)
+                yield _frame("delta", {"text": piece})
+        except ProviderUnavailable as exc:
+            error = str(exc)
+        except Exception as exc:                   # noqa: BLE001 — 见上面的说明
+            log.exception("流式回答出错")
+            error = f"模型调用出错：{exc}"
+        finished = True
+    finally:
+        if not finished:
+            # 你点了「停止」、关了页面、断了网：框架在上面的 yield 那儿把这个生成器关掉
+            # （GeneratorExit），下面的代码一行都不会跑。原来存消息就在下面 ——
+            # 被打断的回答永远是一条空白的「生成中」（自查 §6 #16）。
+            # 这里不能再 yield，只把已经说出来的存下来，并关掉模型那头的流（别白占着网关）。
+            getattr(stream, "close", lambda: None)()
+            conversations.update_message(assistant_id, "".join(chunks), meta={
+                "model": model, "provider": provider.name,
+                "scope_n_samples": built["n_samples"], "aborted": True})
 
     text = "".join(chunks)
     card = _card_from(text) if text else None

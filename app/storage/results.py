@@ -107,14 +107,47 @@ def set_quality(result_id: int, quality: str) -> None:
 
 
 def list_fields() -> list[dict]:
-    """有哪些字段可用——构效关系页选 X/Y 时的候选来源。"""
-    return db.query(
+    """有哪些字段可用——构效关系页选 X/Y 时的候选来源，总览 / 存储页的字段表。
+
+    **一个字段一行。** 原来按（字段, 单位）分组：同一个字段换了单位就列两行，
+    「N 个不同字段」也跟着多算；中文名是从组里随便挑的一行（自查 §6 #28）。
+    现在：`units` 按出现次数从多到少；不止一个单位时 `mixed_units` 为真 —— 这时的
+    min / max 是把不同单位的数混在一起算的，界面要提醒，不能当真。
+    `label` 取出现最多的那个（没写中文名时它和字段名一样，那就给空串）。
+    """
+    rows = db.query(
         "SELECT field_name, label, unit,"
         "       COUNT(*) AS n,"
         "       SUM(CASE WHEN value_num IS NOT NULL THEN 1 ELSE 0 END) AS n_numeric,"
         "       MIN(value_num) AS min_v, MAX(value_num) AS max_v"
-        " FROM key_result_current GROUP BY field_name, unit ORDER BY n DESC"
+        " FROM key_result_current GROUP BY field_name, unit, label"
     )
+    merged: dict[str, dict] = {}
+    for r in rows:
+        f = merged.setdefault(r["field_name"], {
+            "field_name": r["field_name"], "n": 0, "n_numeric": 0,
+            "min_v": None, "max_v": None, "_units": {}, "_labels": {}})
+        f["n"] += r["n"]
+        f["n_numeric"] += r["n_numeric"] or 0
+        for key, pick in (("min_v", min), ("max_v", max)):
+            if r[key] is not None:
+                f[key] = r[key] if f[key] is None else pick(f[key], r[key])
+        if r["unit"]:
+            f["_units"][r["unit"]] = f["_units"].get(r["unit"], 0) + r["n"]
+        if r["label"] and r["label"] != r["field_name"]:
+            f["_labels"][r["label"]] = f["_labels"].get(r["label"], 0) + r["n"]
+
+    out = []
+    for f in merged.values():
+        units = sorted(f.pop("_units").items(), key=lambda kv: (-kv[1], kv[0]))
+        labels = sorted(f.pop("_labels").items(), key=lambda kv: (-kv[1], kv[0]))
+        f["units"] = [u for u, _ in units]
+        f["unit"] = " / ".join(f["units"])
+        f["mixed_units"] = len(units) > 1
+        f["label"] = labels[0][0] if labels else ""
+        out.append(f)
+    out.sort(key=lambda f: (-f["n"], f["field_name"]))
+    return out
 
 
 def query_results(

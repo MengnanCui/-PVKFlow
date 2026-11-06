@@ -13,10 +13,13 @@ router = APIRouter(prefix="/api", tags=["results"])
 def overview() -> dict:
     """总览页的数字。全部来自数据库，为零就是零。"""
     counts = results.overview_counts()
+    fields = results.list_fields()
     return {
         "counts": counts,
         "recent_runs": results.recent_runs(8),
-        "fields": results.list_fields()[:12],
+        # 总览只摆最常见的 12 个；总数一起给，界面上要说「共 N 个」，别让人以为看全了
+        "fields": fields[:12],
+        "n_fields": len(fields),
         "recent_files": db.query(
             "SELECT artifact_id, filename, ext, size, storage_mode, created_at"
             " FROM artifact WHERE kind='raw' ORDER BY created_at DESC, rowid DESC LIMIT 8"

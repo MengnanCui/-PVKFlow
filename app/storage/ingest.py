@@ -84,14 +84,19 @@ _SKIP_DIRS = {".git", "__pycache__", ".venv", "node_modules", ".idea", ".vscode"
 
 
 def _mtime_iso(path: Path) -> str:
-    """文件修改时间，ISO 8601。文件夹名里没有时间戳时的退路。"""
-    from datetime import datetime, timezone
+    """文件修改时间，ISO 8601。文件夹名里没有时间戳时的退路。
+
+    写成**本地时间、不带时区**，和文件夹名里解析出来的时间（仪器写的本地时间）同一种写法。
+    原来写的是 UTC（带 +00:00）：按时间筛选是字符串比较，两种写法混在一起，
+    没有时间戳的那几个在中国就偏 8 小时（自查 §6 #25）。已经存成 UTC 的由第 2 步迁移改过来。
+    """
+    from datetime import datetime
 
     try:
         ts = path.stat().st_mtime
     except OSError:
         return ""
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="seconds")
+    return datetime.fromtimestamp(ts).isoformat(timespec="seconds")
 
 
 def scan(root: str | Path, recursive: bool = True) -> list[ScannedFile]:

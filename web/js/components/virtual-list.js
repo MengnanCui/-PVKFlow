@@ -27,6 +27,11 @@ export function virtualList({ height = 480, rowHeight = 46, count = 0,
     if (!force && first === lastRange[0] && last === lastRange[1]) return;
     lastRange = [first, last];
 
+    // 键盘在列表里走的时候，焦点在某一行上。下面整块重画会把那个节点换掉，焦点就掉回 <body> ——
+    // 每往下走几行就要重新 Tab 进来。重画完把焦点放回同一个序号的那一行
+    const active = document.activeElement;
+    const keep = canvas.contains(active) ? active.closest('[data-index]')?.dataset.index : null;
+
     clear(canvas);
     canvas.style.transform = `translateY(${first * rowHeight}px)`;
     for (let i = first; i < last; i++) {
@@ -35,6 +40,9 @@ export function virtualList({ height = 480, rowHeight = 46, count = 0,
         row.style.height = `${rowHeight}px`;
         canvas.appendChild(row);
       }
+    }
+    if (keep !== null && keep !== undefined) {
+      canvas.querySelector(`[data-index="${keep}"]`)?.focus({ preventScroll: true });
     }
   }
 

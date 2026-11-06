@@ -127,6 +127,80 @@ def test_builtin_modules_cannot_be_uninstalled(client):
     assert r.status_code == 400 and r.json()["error"]["kind"] == "builtin"
 
 
+# ---------------------------------------------------------------- 自查 §6 #15
+def _versions(client) -> dict[str, str]:
+    return {m["id"]: m["version"] for m in client.get("/api/modules").json()["modules"]}
+
+
+def test_a_module_in_a_chinese_folder_can_be_exported(client):
+    """文档示例鼓励起中文名。原来导出时文件名直接塞进响应头，非 ASCII 就是 500。"""
+    assert _install(client, _zip({"红光积分/module.py": GOOD})).json()["installed"]
+    r = client.get("/api/modules/colleague.red_band/export")
+    assert r.status_code == 200, r.text
+    cd = r.headers["content-disposition"]
+    assert "filename*=UTF-8''%E7%BA%A2%E5%85%89%E7%A7%AF%E5%88%86.zip" in cd
+    assert 'filename="' in cd                      # 老浏览器的 ASCII 兜底名也在
+    assert "红光积分/module.py" in zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+
+
+def test_a_different_module_in_a_same_named_folder_does_not_replace_the_first(client, workspace):
+    """目录名一样、id 不一样 = 两个不同的模块。原来后装的会把先装的整个目录删掉。"""
+    other = GOOD.replace("colleague.red_band", "colleague.blue_band").replace("红光", "蓝光")
+    assert _install(client, _zip({"band/module.py": GOOD})).json()["installed"]
+    r = _install(client, _zip({"band/module.py": other})).json()
+    assert r["installed"], r
+    assert {"colleague.red_band", "colleague.blue_band"} <= set(_versions(client))
+    assert r["folder"] != "band"                   # 换了个不撞车的目录名
+    assert (workspace / "modules" / "band" / "module.py").read_text(encoding="utf-8") == GOOD
+
+
+def test_importing_the_same_id_again_upgrades_it(client, workspace):
+    """同事发来新版本：原来报「id 重名」，只能先卸载再装。现在是升级，换掉的是它自己的目录。"""
+    assert _install(client, _zip({"red_band/module.py": GOOD})).json()["installed"]
+    newer = GOOD.replace('version="0.3.0"', 'version="0.4.0"')
+    r = _install(client, _zip({"red_band_v2/module.py": newer})).json()
+    assert r["installed"] and r["upgraded"] == {"from": "0.3.0", "to": "0.4.0"}, r
+    assert _versions(client)["colleague.red_band"] == "0.4.0"
+    assert r["folder"] == "red_band"               # 装回原来的目录，不多出一份
+    assert not (workspace / "modules" / "red_band_v2").exists()
+
+
+def test_a_module_cannot_take_over_a_builtin_id(client):
+    hijack = GOOD.replace("colleague.red_band", "thickness.fringe_ot")
+    r = _install(client, _zip({"x/module.py": hijack})).json()
+    assert r["installed"] is False
+    assert any("平台自带" in e for e in r["report"]["errors"]), r["report"]
+
+
+def test_reimporting_fixes_a_broken_module_in_the_same_folder(client, workspace):
+    """目录里是一个装坏了（加载失败）的模块：重新导入就是为了修它，应该原地换掉。"""
+    from app.modules.registry import reload
+
+    broken = workspace / "modules" / "red_band"
+    broken.mkdir(parents=True)
+    (broken / "module.py").write_text("this is not python", encoding="utf-8")
+    reload()
+    r = _install(client, _zip({"red_band/module.py": GOOD})).json()
+    assert r["installed"] and r["folder"] == "red_band", r
+    assert client.get("/api/modules").json()["errors"] == []
+
+
+def test_the_unpacked_size_is_limited_too(client, monkeypatch, workspace):
+    """压缩后很小、解开很大（zip 炸弹）：按 zip 里声明的解压后大小先拦住，一个字节都不写。"""
+    from app.api import modules as api_modules
+
+    monkeypatch.setattr(api_modules, "MAX_UNZIPPED_BYTES", 10_000)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("red_band/module.py", GOOD)
+        z.writestr("red_band/padding.txt", "0" * 50_000)
+    blob = buf.getvalue()
+    assert len(blob) < 10_000
+    r = _install(client, blob)
+    assert r.status_code == 400 and r.json()["error"]["kind"] == "too_big", r.text
+    assert not (workspace / "modules" / "red_band").exists()
+
+
 # ---------------------------------------------------------------- 计算
 @pytest.fixture()
 def matrix_id(client, tmp_path):

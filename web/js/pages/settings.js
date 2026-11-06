@@ -194,8 +194,11 @@ function moduleSection(mods) {
       try {
         const r = await api.importModule(f);
         if (r.installed) {
-          mount(status, h('div.notice.notice-ok', h('div.grow',
-            h('div.small', `装好了：${r.report.module_id}`))));
+          // 同一个 id 再导入一次是升级（换掉的是它自己的目录），要说出来
+          const msg = r.upgraded
+            ? `已升级：${r.report.module_id}  ${r.upgraded.from} → ${r.upgraded.to}`
+            : `装好了：${r.report.module_id}`;
+          mount(status, h('div.notice.notice-ok', h('div.grow', h('div.small', msg))));
           reloadSoon(700);
         } else {
           // 装不上要把每一条都摊开 —— 同事（和他的模型）就靠这段改
