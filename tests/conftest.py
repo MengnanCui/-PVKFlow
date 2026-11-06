@@ -10,6 +10,13 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 
 
+@pytest.fixture(autouse=True)
+def _testclient_host(monkeypatch):
+    """TestClient 发的 Host 是 testserver。平台只认本机名字（app/security.py），
+    测试里把它加进白名单 —— 跨站 / 重绑定那几条测试会显式换成别的 Host。"""
+    monkeypatch.setenv("HTE_ALLOWED_HOSTS", "testserver")
+
+
 @pytest.fixture()
 def workspace(tmp_path, monkeypatch):
     ws = tmp_path / "ws"

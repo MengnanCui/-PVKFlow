@@ -15,7 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import config
+from app import config, security
 from app.api import (artifacts, assist, batch, chat, files, results, selection,
                      settings, skills, spectra)
 from app.api import modules as modules_api
@@ -62,6 +62,10 @@ app = FastAPI(
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
 )
+
+# 只认本机、只认平台自己的页面 —— 见 app/security.py 开头那段。
+# 放在所有路由之前：被拒的请求连路由都进不去，副作用一个都不会发生。
+app.middleware("http")(security.middleware)
 
 for router in (files.router, skills.router, results.router, artifacts.router,
                assist.router, settings.router, spectra.router,

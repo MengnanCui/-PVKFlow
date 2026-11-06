@@ -169,6 +169,15 @@ function moduleSection(mods) {
     onchange: async (e) => {
       const f = e.target.files?.[0];
       if (!f) return;
+      // 模块是可执行的 Python：**验证这一步就会运行它**，不是装好之后才跑。
+      // 平台不做沙箱（你确认过，P-43），所以把「信不信得过这个人」交还给你，
+      // 并且在任何代码运行之前问。
+      const ok = await confirmDialog(
+        `「${f.name}」里的 module.py 是可以执行的 Python 程序，`
+        + '验证和安装时都会在你电脑上运行，平台不做隔离。'
+        + '只装你信得过的人给的模块。继续吗？',
+        { confirmLabel: '我信得过，继续' });
+      if (!ok) { e.target.value = ''; return; }
       mount(status, h('div.small.muted', '正在验证…'));
       try {
         const r = await api.importModule(f);
