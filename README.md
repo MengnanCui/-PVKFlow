@@ -12,11 +12,13 @@
 
 ## 一、跑起来需要什么
 
-只有一件事：**Python 3.11 或更高版本**。
+只有一件事：**Python 3.11 到 3.15 之间的任何一个版本**（拿不准就装 3.13）。
 
 - Windows：到 [python.org](https://www.python.org/downloads/) 下载安装，
   安装时**务必勾选 "Add python.exe to PATH"**（这一步漏了，双击 `run.bat` 会告诉你）
 - macOS / Linux：一般自带，`python3 --version` 看一眼
+- 电脑上装了好几个 Python 也没关系：`run.bat` 会挑范围内最新的那个，并在第一行告诉你用的是哪个。
+  **比 3.15 还新的不用** —— 依赖还没有给它出 Windows 安装包，硬装会在「正在安装依赖」卡住
 
 其余的依赖（FastAPI、numpy、pandas…）**首次启动时自动装**，你不用管。
 

@@ -1,6 +1,6 @@
 # 每次推送都跑一遍。三件事：
 #   lint     —— ruff，只开抓 bug 的规则（见 pyproject.toml）
-#   test     —— pytest，Linux 两个 Python 版本 + Windows。
+#   test     —— pytest，Linux 两个 Python 版本 + Windows 支持范围的两头。
 #               Windows 上**故意不设 PYTHONUTF8**：同事双击 run.bat 时也没有它，
 #               编码类的毛病要在这里先露出来
 #   startup  —— 真的跑一遍 run.bat（Windows）和 run.sh（Linux）：建虚拟环境、装依赖、
@@ -35,7 +35,10 @@ jobs:
         include:
           - { os: ubuntu-latest, python: "3.11" }
           - { os: ubuntu-latest, python: "3.13" }
+          # Windows 上测支持范围的两头（3.11 和 3.15，见 requirements.txt 开头）。
+          # 同事从 python.org 下的多半是最新版 —— 依赖在最新版上有没有预编译包，要在这里先知道
           - { os: windows-latest, python: "3.11" }
+          - { os: windows-latest, python: "3.15" }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -49,7 +52,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: python -m pip install -r requirements-dev.txt
+      # 和 run.bat 一样只装预编译包：哪个依赖在这个 Python 上没有 wheel，这一步就红
+      - run: python -m pip install -r requirements-dev.txt --only-binary=:all:
       - run: python -m pytest -q
 
   startup-windows:

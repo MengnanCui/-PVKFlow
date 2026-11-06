@@ -342,3 +342,27 @@ def test_bad_query_params_speak_the_same_language_as_everything_else(client):
     r = client.get("/api/spectra/art_x/frames", params={"max_time_points": "abc"})
     assert r.status_code == 400
     assert "要是数字" in r.json()["error"]["message"]
+
+
+def test_preview_of_a_table_with_blank_cells(client, tmp_path):
+    """空格子（数值列、文本列都有）和 inf：预览 200，缺的地方是 null。
+
+    JSON 不允许 NaN。这里能过，靠的是路由标了 `-> dict`，FastAPI 按 pydantic 的 JSON 模式输出（NaN → null）。
+    pandas 3 起文本列的空格子也是 NaN 而不是 None —— 升级依赖时补这一条，免得哪天去掉返回类型标注才发现。
+    """
+    src = tmp_path / "gaps"
+    src.mkdir()
+    (src / "G1_gaps.csv").write_text(
+        "Voltage(V),Current density(mA/cm2),note\n0.0,25.6,ok\n0.2,,\n0.4,inf,x\n",
+        encoding="utf-8")
+    scan = client.post("/api/files/scan", json={"path": str(src)}).json()
+    client.post("/api/files/import", json={"files": scan["files"]})
+    aid = client.get("/api/files", params={"q": "gaps"}).json()["rows"][0]["artifact_id"]
+
+    r = client.get(f"/api/artifacts/{aid}/preview")
+    assert r.status_code == 200, r.text
+    rows = r.json()["rows"]
+    assert rows[0] == [0.0, 25.6, "ok"]
+    assert rows[1] == [0.2, None, None]
+    assert rows[2] == [0.4, None, "x"]
+

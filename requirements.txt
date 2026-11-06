@@ -3,19 +3,29 @@
 #
 # 装完约 220 MB，其中 pandas + numpy 占了六成。这个数字值得盯着：
 # 用户是双击 run.bat 装的，装多久、占多大，全算在「上手成本」里。
+#
+# 支持 Python 3.11 – 3.15。升级任何一个版本号之前，先确认它在这 5 个版本上
+# **都有 Windows 预编译包（wheel）**：没有 wheel 时 pip 会在用户电脑上从源码编译，
+# 没装编译器就卡死在「正在安装依赖」—— 2026-11 的 CI 就是这样发现的
+# （runner 上的 py -3 是 3.14，原来钉的 numpy 2.2 / pandas 2.2 没有 3.14 的 wheel）。
+# 查法：pip download --no-deps --only-binary=:all: --platform win_amd64
+#       --python-version 3.1x <包==版本>
+# 上限改了的话，run.bat / run.sh 里的版本范围和 CI 矩阵一起改（tests/test_launchers.py 守着）。
 
-fastapi==0.115.6
+fastapi==0.162.0
 # 用 uvicorn 而不是 uvicorn[standard]：那个 extra 会额外拖进
 # uvloop(14MB) + httptools + watchfiles + websockets ≈ 19 MB，
 # 而这四个我们一个都没用到 —— 本地单用户、一个浏览器，纯 asyncio 够了。
-uvicorn==0.34.0
-pydantic==2.10.4
-python-multipart==0.0.20
+uvicorn==0.54.0
+pydantic==2.14.3
+python-multipart==0.0.33
 
-pandas==2.2.3
-numpy==2.2.1
+pandas==3.1.1
+# 没有一个 numpy 版本同时覆盖 3.11 和 3.15：2.5 起不再支持 3.11，2.4 没有 3.15 的 wheel
+numpy==2.4.6; python_version < "3.12"
+numpy==2.5.4; python_version >= "3.12"
 openpyxl==3.1.5          # xlsx 解析
-Pillow==11.1.0           # 图像元信息与缩略图
+Pillow==13.0.0           # 图像元信息与缩略图
 
 httpx==0.28.1            # OpenAI 兼容模型调用
 

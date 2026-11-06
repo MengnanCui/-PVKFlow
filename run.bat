@@ -11,25 +11,39 @@ echo   HTE Studio
 echo   ----------------------------------------
 echo.
 
-rem ---- 1. 找一个可用的 Python (>= 3.11) -------------------------------
+rem ---- 1. 找一个可用的 Python（3.11 到 3.15）--------------------------
+rem 依赖只在这几个版本上都有 Windows 预编译包（见 requirements.txt 开头）。
+rem 不能直接用 py -3：它给的是这台电脑上最新的 Python，可能比依赖支持的还新，
+rem 那样 pip 会去从源码编译，没有编译器就一直卡在「正在安装依赖」。
+rem 装了好几个时从新到旧挑第一个在范围内的。改范围要连 run.sh、CI 一起改。
+set "PYOK=import sys; sys.exit(0 if (3, 11) <= sys.version_info[:2] <= (3, 15) else 1)"
 set "PY="
-py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)" >nul 2>&1
-if not errorlevel 1 set "PY=py -3"
+for %%v in (3.15 3.14 3.13 3.12 3.11) do (
+    if not defined PY (
+        py -%%v -c "!PYOK!" >nul 2>&1
+        if not errorlevel 1 set "PY=py -%%v"
+    )
+)
 
 if not defined PY (
-    python -c "import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)" >nul 2>&1
+    python -c "!PYOK!" >nul 2>&1
     if not errorlevel 1 set "PY=python"
 )
 
 if not defined PY (
-    echo   [x] 没有找到 Python 3.11 或更高版本。
+    echo   [x] 没有找到 Python 3.11 到 3.15。
+    for /f "delims=" %%o in ('py -3 --version 2^>nul') do echo       这台电脑上的 py -3 是 %%o，不在支持范围内。
+    for /f "delims=" %%o in ('python --version 2^>nul') do echo       这台电脑上的 python 是 %%o，不在支持范围内。
     echo.
-    echo       请到 https://www.python.org/downloads/ 安装 Python 3.11+，
-    echo       安装时务必勾选 "Add python.exe to PATH"，然后重新双击本文件。
+    echo       请到 https://www.python.org/downloads/ 安装 Python 3.13
+    echo       （3.11 到 3.15 之间哪个都行），安装时务必勾选 "Add python.exe to PATH"，
+    echo       然后重新双击本文件。
     echo.
     pause
     exit /b 1
 )
+for /f "delims=" %%o in ('%PY% --version 2^>^&1') do set "PYVER=%%o"
+echo   使用 %PYVER%（%PY%）
 
 rem ---- 2. 首次运行：建虚拟环境 ---------------------------------------
 if not exist ".venv\Scripts\python.exe" (
@@ -46,10 +60,11 @@ if not exist ".venv\Scripts\python.exe" (
 
 set "VPY=.venv\Scripts\python.exe"
 
-rem 虚拟环境可能坏掉（比如系统 Python 被升级过），先确认它还能跑
-"%VPY%" -c "pass" >nul 2>&1
+rem 虚拟环境可能坏掉（比如系统 Python 被升级过），或是以前用不支持的 Python 建的：
+rem 先确认它还能跑、版本在范围内
+"%VPY%" -c "!PYOK!" >nul 2>&1
 if errorlevel 1 (
-    echo   [!] 虚拟环境不可用，正在重建...
+    echo   [!] 虚拟环境不可用（或 Python 版本不在支持范围内），正在重建...
     rmdir /s /q .venv
     %PY% -m venv .venv
     if errorlevel 1 (
@@ -69,11 +84,14 @@ if exist "%STAMP%" set /p OLDHASH=<"%STAMP%"
 if not "%OLDHASH%"=="%REQHASH%" (
     echo   [2/3] 正在安装依赖，首次约需 1 分钟...
     "%VPY%" -m pip install --upgrade pip --quiet --disable-pip-version-check
-    "%VPY%" -m pip install -r requirements.txt --quiet --disable-pip-version-check
+    rem --only-binary：只装预编译包。宁可马上报错，也不要在没有编译器的电脑上编译到天荒地老
+    "%VPY%" -m pip install -r requirements.txt --only-binary=:all: --quiet --disable-pip-version-check
     if errorlevel 1 (
         echo.
-        echo   [x] 依赖安装失败。常见原因：没有联网，或公司网络需要代理。
-        echo       可以手动执行： .venv\Scripts\python.exe -m pip install -r requirements.txt
+        echo   [x] 依赖安装失败。常见原因：
+        echo       1. 没有联网，或公司网络需要代理
+        echo       2. 某个依赖还没有出这个 Python 版本的安装包 —— 装 Python 3.13 再试
+        echo       可以手动执行： .venv\Scripts\python.exe -m pip install -r requirements.txt --only-binary=:all:
         echo       如果还是不行，删掉 .venv 文件夹再双击一次。
         echo.
         pause
