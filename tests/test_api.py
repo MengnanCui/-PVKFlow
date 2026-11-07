@@ -396,7 +396,13 @@ def test_no_endpoint_blocks_the_event_loop():
 
 
 def test_the_event_loop_stays_free_during_a_slow_upload(workspace, monkeypatch):
-    """真起一个服务：上传卡在解析里的那 1.5 秒，健康检查照样立刻返回。"""
+    """真起一个服务：上传卡在解析里的那 3 秒，健康检查照样返回 —— 在上传结束**之前**。
+
+    第一版只看「健康检查等了多久 < 0.5 秒」：CI 的 Windows 机器慢，有一次等了 0.84 秒，
+    代码没坏、测试红了。现在判的是先后：健康检查在上传还没做完时就回来了（事件循环被占住的话，
+    它只能排在上传后面，要等约 2.7 秒）；时长只留一个宽松的上限。先打一次热身请求，
+    连接和首个请求的开销不算进去。
+    """
     import socket
     import threading
     import time
@@ -410,7 +416,7 @@ def test_the_event_loop_stays_free_during_a_slow_upload(workspace, monkeypatch):
     real = ingest.ingest_uploads
 
     def slow(*a, **kw):
-        time.sleep(1.5)
+        time.sleep(3.0)
         return real(*a, **kw)
     monkeypatch.setattr(ingest, "ingest_uploads", slow)
 
@@ -421,23 +427,30 @@ def test_the_event_loop_stays_free_during_a_slow_upload(workspace, monkeypatch):
     t = threading.Thread(target=server.run, daemon=True)
     t.start()
     base = f"http://127.0.0.1:{port}"
+    headers = {"Host": "testserver"}
     try:
-        for _ in range(100):
+        for _ in range(200):
             if server.started:
                 break
             time.sleep(0.05)
-        headers = {"Host": "testserver"}
-        up = threading.Thread(target=lambda: httpx.post(
-            f"{base}/api/files/upload", headers=headers, timeout=10, trust_env=False,
-            files={"files": ("a.csv", b"x,y\n1,2\n", "text/csv")}))
+        assert httpx.get(f"{base}/api/health", headers=headers, timeout=10,
+                         trust_env=False).status_code == 200          # 热身
+        upload_done = {}
+
+        def upload():
+            httpx.post(f"{base}/api/files/upload", headers=headers, timeout=30, trust_env=False,
+                       files={"files": ("a.csv", b"x,y\n1,2\n", "text/csv")})
+            upload_done["at"] = time.perf_counter()
+        up = threading.Thread(target=upload)
         up.start()
         time.sleep(0.3)                                # 上传已经进到慢的那一段
         t0 = time.perf_counter()
-        r = httpx.get(f"{base}/api/health", headers=headers, timeout=10, trust_env=False)
-        waited = time.perf_counter() - t0
+        r = httpx.get(f"{base}/api/health", headers=headers, timeout=30, trust_env=False)
+        health_done = time.perf_counter()
         up.join()
         assert r.status_code == 200
-        assert waited < 0.5, f"健康检查等了 {waited:.2f} s —— 事件循环被上传占住了"
+        assert health_done < upload_done["at"], "健康检查排在了上传后面 —— 事件循环被上传占住了"
+        assert health_done - t0 < 1.5, f"健康检查等了 {health_done - t0:.2f} s"
     finally:
         server.should_exit = True
         t.join(timeout=5)

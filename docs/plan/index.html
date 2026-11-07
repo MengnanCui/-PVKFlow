@@ -186,10 +186,10 @@ ol.steps li, ul.plain li { margin: 4px 0; }
   <h1>HTE Studio 开发计划与进度</h1>
   <div class="meta">
     <span>版本 v4.1</span><span>更新于 2026-11-07（P13 进行中：L 组）</span>
-    <span>基于提交 <code>4796732</code> + C050</span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
+    <span>基于提交 <code>97c2792</code> + C051</span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
   </div>
   <div class="cards">
-    <div class="card"><div class="k">修改报告</div><div class="v">50</div><div class="d">C001 – C050</div></div>
+    <div class="card"><div class="k">修改报告</div><div class="v">51</div><div class="d">C001 – C051</div></div>
     <div class="card"><div class="k">阶段</div><div class="v">P1–P12</div><div class="d">P12 = C + B</div></div>
     <div class="card"><div class="k">测试</div><div class="v">440</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 12 + 15 + 13 + 8 条</div></div>
     <div class="card"><div class="k">你明确指定的</div><div class="v">44</div><div class="d">P-01 … P-44（P-44 已落实）</div></div>
@@ -508,7 +508,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
       原来钉的依赖在最新的 Python 上没有 Windows 安装包，同事照 README 装会卡死 —— 依赖升级、启动脚本只挑 3.11–3.15、只装预编译包，现在 29 秒起服务。
       B：旧 Skill 机制退役、死代码删除、对比页 / 数据处理页拆开、抽屉和 ⓘ 共用聊天客户端、自查剩下 7 条全修、文档按现状重写。<strong>自查 30 条全部处理完。</strong></p>
       <p class="note"><a href="phases/P12_2026-W45_C-B.md">阶段报告 P12</a></p></li>
-    <li class="now"><span class="t">P13 L 组（进行中）</span><span class="d">11-07 · W45 · C050 · → 440 测试</span>
+    <li class="now"><span class="t">P13 L 组（进行中）</span><span class="d">11-07 · W45 · C050–C051 · → 440 测试</span>
       <p>你说「解决新发现的问题」：打开 AI 抽屉不再建空会话（已攒的由第 3 步迁移清掉）；批处理导出的 data.csv 防公式、plot.py 读回时还原；
       对比历史能用键盘打开，「只能鼠标点」以后由测试拦住；模块控件生成只留一份。<code>xyChart</code> 留到 E 组。阶段报告等这一阶段结束时写。</p></li>
   </ul>
@@ -684,6 +684,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C048_2026-11-06_本提交.md">C048</a></td><td class="nowrap">11-06</td><td>P12</td><td>B（四）：「是不是光谱矩阵」只剩一份判断；ARCHITECTURE / DATA_MODEL 按现状重写</td><td class="small">§7 B 组；CI 第 6 次运行</td></tr>
 <tr><td class="id"><a href="changes/C049_2026-11-06_本提交.md">C049</a></td><td class="nowrap">11-06</td><td>P12</td><td>P12 收尾：阶段报告 + 计划文档 v4</td><td class="small">记录规则（阶段结束）</td></tr>
 <tr><td class="id"><a href="changes/C050_2026-11-07_本提交.md">C050</a></td><td class="nowrap">11-07</td><td>P13</td><td>L 组：空的「新对话」不再堆积、导出 data.csv 防公式、对比历史能用键盘、控件生成只留一份</td><td class="small">你的指令「解决新发现的问题！」（理解为 §7 L 组，推断）</td></tr>
+<tr><td class="id"><a href="changes/C051_2026-11-07_本提交.md">C051</a></td><td class="nowrap">11-07</td><td>P13</td><td>CI 第 8 次红了：一条计时测试门槛太紧（Windows 慢了一次），改成判先后</td><td class="small">我自查：CI 第 8 次运行</td></tr>
     </tbody>
   </table></div>
 </section>
