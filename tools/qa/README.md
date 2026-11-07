@@ -33,6 +33,8 @@ NODE_PATH=$(npm root -g) node tools/qa/b2_check.js smp_xxx run_xxx /tmp/requests
 # B（三）：键盘选样品、弹窗焦点、提示的读屏、热力图下载出错、停止后的回答、构效关系字段
 # （样品要多于一屏，键盘那一条才量得到虚拟列表重画时焦点丢不丢 —— 复制几十个样品文件夹导进来）
 NODE_PATH=$(npm root -g) node tools/qa/b3_check.js smp_xxx run_xxx
+# L 组：打开 AI 抽屉不再建空会话、对比历史键盘打开（参数是工作区的 hte.db）
+NODE_PATH=$(npm root -g) node tools/qa/l_check.js /tmp/hte-qa/hte.db
 ```
 
 需要 Playwright（`npm i -g playwright`，或已经装好的）。

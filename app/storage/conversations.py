@@ -44,8 +44,16 @@ def list_recent(limit: int = 50, topic: str | None = None) -> list[dict]:
     的历史。存在 scope 里而不是 localStorage —— 换台机器、清了浏览器缓存，
     问过的话都还在，而且在抽屉的历史列表里也找得到。
     """
-    where = "" if topic is None else " WHERE json_extract(c.scope_json, '$.topic') = ?"
-    args: tuple = (limit,) if topic is None else (topic, limit)
+    if topic is None:
+        # 没说过一句话的会话不列。原来每打开一次 AI 抽屉就建一个，历史里攒一串「新对话 · 0 条」；
+        # 现在抽屉第一次发送才建，但发送可能在开流之前就失败（还没配模型），那样仍会留下一个空的。
+        # 术语 ⓘ 的线（下面那个分支）照列：ⓘ 靠它找回这个词下面问过的话，空的也要复用
+        where = (" WHERE EXISTS (SELECT 1 FROM message m"
+                 "               WHERE m.conversation_id = c.conversation_id)")
+        args: tuple = (limit,)
+    else:
+        where = " WHERE json_extract(c.scope_json, '$.topic') = ?"
+        args = (topic, limit)
     rows = db.query(
         "SELECT c.*, ("
         "   SELECT COUNT(*) FROM message m WHERE m.conversation_id = c.conversation_id"

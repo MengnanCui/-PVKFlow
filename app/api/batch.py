@@ -343,6 +343,10 @@ def export_script(parent_run_id: str,
     df = df.copy()
     df["label"] = [f"{b}/{n}" if b else str(n)
                    for b, n in zip(df["batch"].fillna(""), df["sample_name"])]
+    # 名字来自文件夹名：以 = + - @ 开头的，Excel 打开 data.csv 会当公式执行。前面加 '，
+    # 导出的 plot.py 读回时去掉（script_export.guard_formula）
+    for c in script_export.TEXT_COLUMNS:
+        df[c] = [script_export.guard_formula(v) for v in df[c]]
     cols = ["sample_id", "sample_name", "batch", "label", "t", column]
     csv_bytes = df[cols].to_csv(index=False).encode("utf-8-sig")
 

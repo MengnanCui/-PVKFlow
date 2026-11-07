@@ -1120,3 +1120,40 @@ def test_a_colleague_modules_curve_reaches_the_comparison_page(batch_client, imp
 
     r = batch_client.get(f"/api/batch/runs/{rid}/curves", params={"column": "nope"})
     assert r.status_code == 400 and "red_integral" in r.json()["error"]["message"]
+
+
+def test_exported_data_csv_cannot_run_formulas_and_plot_py_still_reads_the_names(
+        batch_client, imported, tmp_path):
+    """样品名、批次来自文件夹名 —— 是别人给的数据。以 `=` `@` 开头的，Excel 打开导出的
+    data.csv 时会当公式执行。文字格子前面加 `'`；导出的 plot.py 读回时去掉，图例上还是原名。"""
+    import csv as csv_mod
+
+    pytest.importorskip("matplotlib", reason="要真的跑一遍导出的 plot.py")
+    with db.tx() as c:
+        c.execute("UPDATE sample SET name='=HYPERLINK(\"http://x\",\"x\")' WHERE batch='B20' AND name='S1'")
+        c.execute("UPDATE sample SET batch='@evil' WHERE batch='B21' AND name='S2'")
+    t = _wait(tasks.submit(batch.BATCH_SKILL_ID, {
+        "filter": {"batch": ["B20", "@evil"]}, "recipe": {}})["task_id"])
+    z = _export(batch_client, t["result"]["parent_run_id"], column="integral",
+                mode="overlay", group_by="batch")
+
+    rows = list(csv_mod.DictReader(io.StringIO(z.read("data.csv").decode("utf-8-sig"))))
+    names = {r["sample_name"] for r in rows}
+    batches = {r["batch"] for r in rows}
+    assert "'=HYPERLINK(\"http://x\",\"x\")" in names
+    assert "'@evil" in batches
+    assert not any(v.startswith(("=", "+", "-", "@")) for r in rows
+                   for k, v in r.items() if k in ("sample_id", "sample_name", "batch", "label"))
+    assert all(float(r["integral"]) == float(r["integral"]) or r["integral"] == "" for r in rows)
+
+    out = tmp_path / "exp"
+    z.extractall(out)
+    env = {**os.environ, "MPLBACKEND": "Agg"}
+    probe = ("import plot; print(sorted(set(plot.df['sample_name'])));"
+             " print(sorted(set(plot.df['batch'])))")
+    proc = subprocess.run([sys.executable, "-c", probe], cwd=out, env=env,
+                          capture_output=True, encoding="utf-8", timeout=180)
+    assert proc.returncode == 0, proc.stderr
+    assert "'=HYPERLINK" in proc.stdout                  # repr 打出来是 '=HYPERLINK(...)'
+    assert "\\'=HYPERLINK" not in proc.stdout              # 残留的 ' 会打成 \'=HYPERLINK
+    assert "'@evil'" in proc.stdout and "\"'@evil\"" not in proc.stdout

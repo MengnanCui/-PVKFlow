@@ -96,12 +96,13 @@ B 档（自己写 `compute()` 的）松手后由后端算。
 
 版本号存在 SQLite 的 `PRAGMA user_version`，每一步另记一行 `schema_migration`。
 已有数据的工作区**升级前先备份** `hte.db` 到 `workspace/backups/`（只留最近 5 份）；全新工作区直接建到最新。
-加一步迁移 = 在 `migrations.MIGRATIONS` 末尾追加，**已发出的迁移不改、每一步都能重跑**。目前到第 2 步：
+加一步迁移 = 在 `migrations.MIGRATIONS` 末尾追加，**已发出的迁移不改、每一步都能重跑**。目前到第 3 步：
 
 | 版本 | 内容 |
 |---|---|
 | 1 | 补列：`analysis_run.parent_run_id`、`artifact.is_matrix` |
 | 2 | `measurement.measured_at` 统一成本地时间（原来退回文件修改时间的那些存的是 UTC） |
+| 3 | 清掉攒下的空会话（原来每打开一次 AI 抽屉就建一个；术语 ⓘ 的线不动） |
 
 ## 前端
 

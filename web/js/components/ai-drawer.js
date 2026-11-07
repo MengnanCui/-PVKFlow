@@ -42,6 +42,7 @@ const D = {
   abort: null,
   model: null,         // {provider, model}；null = 用设置里的默认
   modelReady: null,    // null = 还没探过
+  creating: null,      // 正在库里建会话的那个请求（第一次发送时才建）
 };
 
 let refs = {};
@@ -98,7 +99,9 @@ function toggle(force) {
     // 只在建的时候拉一次的话，你去设置页配好回来，下拉还是空的。
     drawModelSwitch();
     refreshScope();
-    if (!D.conv) startConversation();
+    // 打开抽屉不建会话 —— 原来每打开一次就在库里建一个，历史里攒一串「新对话 · 0 条」。
+    // 第一次发送时才建（ensureConversation）
+    if (!D.conv && !D.messages.length) paint();
     refs.input?.focus();
   }
 }
@@ -209,14 +212,16 @@ function setFull(on) {
 
 // ------------------------------------------------------------------ 菜单
 function openMenu(evt) {
+  // 还没发过一句话时，这个对话在库里还不存在：重命名 / 导出 / 删除都无从谈起，不摆出来
+  const saved = !!D.conv;
   const items = [
     ['新对话', () => startConversation()],
     ['历史对话', () => showHistory()],
-    ['重命名', () => renameCurrent()],
-    ['导出为 Markdown', () => exportMarkdown()],
+    saved && ['重命名', () => renameCurrent()],
+    saved && ['导出为 Markdown', () => exportMarkdown()],
     [D.full ? '退出全屏' : '全屏', () => setFull(!D.full)],
-    ['删除这个对话', () => deleteCurrent(), 'danger'],
-  ];
+    saved && ['删除这个对话', () => deleteCurrent(), 'danger'],
+  ].filter(Boolean);
   const menu = h('div.ai-menu',
     ...items.map(([label, fn, kind]) =>
       h(`button.ai-menu-item${kind === 'danger' ? '.is-danger' : ''}`, {
@@ -234,9 +239,16 @@ function openMenu(evt) {
 }
 
 // ------------------------------------------------------------------ 会话
-async function startConversation() {
+/**
+ * 开一个新对话 —— 只是把屏幕清空。库里的会话等第一次发送时才建（ensureConversation）。
+ *
+ * 原来这里立刻 POST 一个会话：每打开一次抽屉、每点一次「新对话」就在库里多一个，
+ * 一句话没说的也算，历史里攒一串「新对话 · 0 条」（P12 浏览器验收时发现）。
+ */
+function startConversation() {
   stopStreamingForSwitch();
   D.conv = null;
+  D.creating = null;
   D.narrowed = null;
   D.scopeTouched = false;      // 新对话回到「跟着你的选择走」的默认
   D.messages = [];
@@ -244,16 +256,28 @@ async function startConversation() {
   D.view = 'chat';
   refs.title.textContent = D.title;
   paint();
-  try {
-    const r = await api.newConversation(scopeFilter(D.scopeMode));
-    D.conv = r.conversation.conversation_id;
-  } catch (err) {
-    showError(err);
-  }
+}
+
+/**
+ * 发送前确保库里有这个会话。连按两下回车只建一个：建的过程中再来的复用同一个请求。
+ * 建好之前你又点了「新对话」或打开了历史（D.creating 被换掉），这个结果就不认了。
+ */
+function ensureConversation() {
+  if (D.conv) return Promise.resolve(D.conv);
+  if (D.creating) return D.creating;
+  const mine = D.creating = api.newConversation(scopeFilter(D.scopeMode))
+    .then((r) => {
+      if (D.creating === mine) D.conv = r.conversation.conversation_id;
+      return D.conv;
+    })
+    .catch((err) => { showError(err); return null; })
+    .finally(() => { if (D.creating === mine) D.creating = null; });
+  return mine;
 }
 
 async function openConversation(id) {
   stopStreamingForSwitch();
+  D.creating = null;
   try {
     const r = await api.conversation(id);
     D.conv = id;
@@ -400,10 +424,15 @@ function drawScopeBar() {
 async function send() {
   const text = refs.input.value.trim();
   if (!text || D.streaming) return;
-  if (!D.conv) { await startConversation(); if (!D.conv) return; }
 
+  // 先清输入框再去建会话：建的那一下要等后端，这期间再按一次回车看到的是空框，不会发两遍
   refs.input.value = '';
   autoGrow();
+  if (!D.conv && !await ensureConversation()) {
+    refs.input.value = text;             // 没建成（出错已经提示了）：话还给你
+    autoGrow();
+    return;
+  }
 
   D.messages.push({ role: 'user', content: text, meta: {} });
   // 后端会拿第一句话给对话起名（chat.py 里那段），这里跟着改，

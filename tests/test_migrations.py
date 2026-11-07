@@ -151,3 +151,26 @@ def test_step_2_turns_utc_measured_at_into_local_time(ws, monkeypatch):
     finally:
         monkeypatch.delenv("TZ")
         time.tzset()
+
+
+def test_step_3_clears_the_pile_of_empty_conversations(ws):
+    """原来每打开一次 AI 抽屉就建一个会话。已经攒下的空会话一次清掉；
+    有消息的、术语 ⓘ 的线（空的也留着，ⓘ 要复用）不动。"""
+    from app.storage import conversations, db
+
+    db.init()                                                # 新库，直接到最新
+    for cid, scope in (("conv_empty1", "{}"), ("conv_empty2", '{"mode": "all"}'),
+                       ("conv_used", "{}"), ("conv_term", '{"topic": "term:ot"}')):
+        with db.tx() as c:
+            c.execute("INSERT INTO conversation(conversation_id, title, scope_json, created_at,"
+                      " updated_at) VALUES(?, '新对话', ?, '2026-11-01', '2026-11-01')", (cid, scope))
+    conversations.add_message("conv_used", "user", "问过一句")
+    with db.tx() as c:                                       # 装作还停在第 2 步
+        c.execute("DELETE FROM schema_migration WHERE version >= 3")
+        c.execute("PRAGMA user_version = 2")
+    db.close()
+
+    report = migrations.run(db.connect(), (config.ROOT / "app/storage/schema.sql").read_text(encoding="utf-8"))
+    assert report["applied"] and report["applied"][-1] == 3 and report["backup"]
+    left = {r["conversation_id"] for r in db.query("SELECT conversation_id FROM conversation")}
+    assert left == {"conv_used", "conv_term"}

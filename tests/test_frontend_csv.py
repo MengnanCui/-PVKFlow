@@ -53,3 +53,15 @@ def test_a_whole_export_with_a_hostile_sample_name():
               "{label: 'ZG0014', x: [0, 1], y: [4, NaN]}]})")
     lines = csv.lstrip("﻿").splitlines()
     assert lines == ["t (s),'=1+1,ZG0014", "0,-2,4", "1,3,"]
+
+
+@pytest.mark.parametrize("raw", ["=1+1", "-0.5", "+5", "@x", "S1", "-", "\tTAB", "-Infinity",
+                                 "+cmd", " =x", "ZG0014", "1e-3", "--"])
+def test_python_export_guards_exactly_what_the_frontend_guards(raw):
+    """同一条规则写在两处：前端「下载数据（CSV）」（csv.js）和批处理导出的 data.csv（script_export）。
+    两边对同一个值必须做同一件事。"""
+    from app.plotting.script_export import guard_formula
+
+    js = _js(f"csvCell({json.dumps(raw)})")
+    py = guard_formula(raw)
+    assert js.lstrip('"').startswith("'") == py.startswith("'"), (raw, js, py)

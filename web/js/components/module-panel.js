@@ -16,7 +16,7 @@
 import { h, mount, fmtInt, fmtNum, errorBox, skeletonRows } from '../ui.js';
 import { xyChart } from '../chart.js';
 import { heatmap } from './heatmap.js';
-import { figure, bandControl, numberControl, selectControl } from './figure.js';
+import { figure, specControl } from './figure.js';
 import { infoDot, withInfo } from './info.js';
 import { downloadMenu } from '../download.js';
 import { runOp } from '../ops.js';
@@ -79,46 +79,17 @@ export function moduleView(host, spec, { frames, compute, sampleName = '样品',
   function buildControl(c) {
     const live = () => { changed.add(c.key); paintLocal(c.key); scheduleExact(); };
     const commit = () => { changed.add(c.key); scheduleExact(0); };
-
-    // 声明说「跟着波长/时间轴」就用数据的实际范围。写死一个数只对一台仪器成立。
     const axis = (kind) => {
       if (!frames) return null;
       if (kind === 'lambda') return [frames.lambda[0], frames.lambda[frames.lambda.length - 1]];
       if (kind === 'time') return [frames.time[0], frames.time[frames.time.length - 1]];
       return null;
     };
-
-    if (c.type === 'band') {
-      const [lo, hi] = c.default || [0, 1];
-      // 波段天然是波长上的一段，默认就跟着波长轴走
-      const [min, max] = axis(c.range_from || 'lambda') || [lo, hi];
-      return bandControl(min, max, () => params[c.key],
-        (a, b) => { params[c.key] = [a, b]; live(); }, commit,
-        { label: c.label, unit: c.unit || 'nm', step: c.step ?? 1 });
-    }
-    if (c.type === 'number') {
-      const auto = axis(c.range_from);
-      const min = auto ? auto[0] : (c.min ?? 0);
-      const max = auto ? auto[1] : (c.max ?? 1e6);
-      // 拖动时只在本地重画（A 档实时），**松手才打后端**。
-      // 原来每一帧都 live() + commit()，commit 是「立刻取精确结果」——
-      // 拖一下滑块就向后端发几十个请求（自查 §6 #19）。和 bandControl 同一个约定。
-      return numberControl(c.label, params[c.key], min, max,
-        c.step ?? 1, (v) => { params[c.key] = v; live(); }, () => commit());
-    }
-    if (c.type === 'select') {
-      return selectControl(c.label, params[c.key],
-        (c.options || []).map((o) => [o, String(o)]),
-        (v) => { params[c.key] = v; live(); commit(); });
-    }
-    if (c.type === 'bool') {
-      return h('label.inline-field',
-        h('input', { type: 'checkbox', checked: !!params[c.key],
-          onchange: (e) => { params[c.key] = e.target.checked; live(); commit(); } }),
-        h('span.small.muted', c.label));
-    }
-    // 认不出来的类型不该静默忽略 —— 那样用户会以为控件坏了
-    return h('span.xsmall.danger', `认不出的控件类型：${c.type}`);
+    // 控件怎么从声明长出来，和对比页的配方面板共用一份（figure.specControl）
+    return specControl(c, {
+      get: () => params[c.key], set: (v) => { params[c.key] = v; },
+      axis, onLive: live, onCommit: commit,
+    });
   }
 
   // ── A 档：本地跑算子，立刻重画

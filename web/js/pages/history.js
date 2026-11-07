@@ -53,8 +53,15 @@ function row(r, ctx, nPins) {
     ? `${Number(recipe.band_min)}–${Number(recipe.band_max)} nm`
     : '—';
 
+  const open = () => ctx.nav('batch', { arg: r.analysis_run_id });
   return h('tr.is-clickable', {
-    onclick: () => ctx.nav('batch', { arg: r.analysis_run_id }),
+    onclick: open,
+    // 键盘也能打开：Tab 走到这一行，回车或空格。原来只能用鼠标点（P12 之后补）
+    tabindex: '0',
+    onkeydown: (e) => {
+      if (e.target !== e.currentTarget) return;
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+    },
   },
     h('td.strong', p.title || '未命名对比', runStatus(r.status)),
     h('td', fmtInt(r.n_children)),

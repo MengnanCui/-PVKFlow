@@ -10,6 +10,7 @@ Mengnan 的 matplotlib 规范，不是"差不多"的版本。
 from __future__ import annotations
 
 import io
+import math
 import zipfile
 
 # ---- 以下四块逐字对应 matplotlib-mengnan-style skill，改动前先看那份规范 ----
@@ -92,6 +93,26 @@ def _title_line(title: str, title_en: str) -> str:
     return f"ax.set_title(L({title!r}, {title_en or title!r}))"
 
 
+# ---------------------------------------------------------------- data.csv 的公式防护
+# 样品名、批次来自文件夹名 —— 是别人给的数据。Excel / WPS 打开 CSV 时，以这些字符开头的
+# 文字格子会被当成公式执行（`=HYPERLINK(...)` 一类）。这种格子前面加一个 `'`，Excel 就当纯文字；
+# 导出的 plot.py 读回时再去掉。规则和前端「下载数据（CSV）」那份（web/js/csv.js）一样。
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+TEXT_COLUMNS = ("sample_id", "sample_name", "batch", "label")
+
+
+def guard_formula(value):
+    """文字格子防公式。数（包括 -0.5 这种负数）原样 —— 不然一列数就全变成文字了。"""
+    if not isinstance(value, str) or not value.startswith(FORMULA_START):
+        return value
+    try:
+        if math.isfinite(float(value)):
+            return value
+    except ValueError:
+        pass
+    return "'" + value
+
+
 def build_script(*, column: str, y_label: str, y_label_en: str, mode: str,
                  group_by: str, n_series: int, title: str = "",
                  title_en: str = "") -> str:
@@ -148,6 +169,11 @@ HERE = Path(__file__).parent
 df = pd.read_csv(HERE / "data.csv",
                  dtype={{"sample_id": str, "sample_name": str, "batch": str}},
                  keep_default_na=False, na_values={{{column!r}: ["", "nan", "NaN"], "t": [""]}})
+# data.csv 里以 = + - @ 开头的名字前面加了一个 '（防 Excel 把它当公式执行），这里去掉
+_GUARDED = ("=", "+", "-", "@", "\\t", "\\r")
+for _c in ("sample_id", "sample_name", "batch", "label"):
+    df[_c] = [v[1:] if isinstance(v, str) and v[:1] == "'" and v[1:2] in _GUARDED else v
+              for v in df[_c]]
 
 Y_COLUMN = {column!r}
 Y_LABEL = L({y_label!r}, {y_label_en!r})
@@ -245,6 +271,7 @@ README = """# {title}
 
 - `plot.py`   绘图脚本，样式已按 matplotlib 规范设好
 - `data.csv`  长表数据：`sample_id, sample_name, batch, label, t, {column}`
+  （名字以 `= + - @` 开头的，前面加了一个 `'`，免得 Excel 打开时当公式执行；`plot.py` 读回时会去掉）
 
 ## 怎么跑
 

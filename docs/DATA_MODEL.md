@@ -139,7 +139,7 @@ pyarrow 缺失或列类型异常时会退回 CSV —— 宁可格式降级也不
 | `import_batch` | 一次导入（从哪个目录、什么时候），便于回溯 |
 | `sample_set` | 保存的样品集：动态的存筛选式（随新数据生长），钉死的存一份 ID 快照 |
 | `task` | 后台任务（批处理）：进度、取消、出错原因；服务重启时正在跑的标成 `interrupted`，不会永远挂在「进行中」 |
-| `conversation` / `message` | AI 对话。被打断的回答也存（`meta.aborted`），已经说出来的字不丢 |
+| `conversation` / `message` | AI 对话。抽屉第一次发送时才建会话；没有消息的会话不进历史列表。被打断的回答也存（`meta.aborted`），已经说出来的字不丢 |
 | `ai_pin` | 钉在某次对比上的 AI 分析 |
 | `app_setting` | 平台设置（模型密钥不在这里，在 `workspace/config/providers.json`） |
 | `schema_migration` | 数据库升级到了第几步、每一步什么时候做的 |

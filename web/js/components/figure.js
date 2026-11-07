@@ -36,6 +36,52 @@ export function figure(title, { head = null, ctl = null, body = null, note = nul
 }
 
 // ------------------------------------------------------------------ 控件
+/**
+ * 把模块的一条控件声明（ModuleSpec.controls 里的一项）变成一个控件。
+ *
+ * 样品页的模块面板（module-panel.js）和对比页的配方面板（batch-recipe.js）都要做这件事，
+ * 原来各写一份、几乎逐行相同 —— 加一种控件类型、修一个坑，就得记得改两处
+ * （默认配方曾经分成三份，就是这么漂移的，自查 §6 #8）。现在只有这一份。
+ *
+ *   get() / set(v)  当前值从哪读、写到哪（不负责重画）
+ *   axis(kind)      'lambda' | 'time' → [min, max]；声明了 range_from 时用数据的实际范围
+ *   onLive()        拖动中每一帧：前端算得起的事跟着走。可不给
+ *   onCommit()      松手 / 选定：要打后端的等这一下。可不给
+ */
+export function specControl(c, { get, set, axis = () => null, onLive = null, onCommit = null }) {
+  const live = () => onLive?.();
+  const pick = () => { onLive?.(); onCommit?.(); };       // 下拉、勾选：选定即松手
+
+  if (c.type === 'band') {
+    const [lo, hi] = get() || c.default || [0, 1];
+    // 波段天然是波长上的一段，默认就跟着波长轴走
+    const [min, max] = axis(c.range_from || 'lambda') || [lo, hi];
+    return bandControl(min, max, get, (a, b) => { set([a, b]); live(); }, onCommit,
+      { label: c.label, unit: c.unit || 'nm', step: c.step ?? 1 });
+  }
+  if (c.type === 'number') {
+    // 声明说「跟着波长/时间轴」就用数据的实际范围。写死一个数只对一台仪器成立
+    const auto = axis(c.range_from);
+    const min = auto ? auto[0] : (c.min ?? 0);
+    const max = auto ? auto[1] : (c.max ?? 1e6);
+    // 拖动时只走 onLive，**松手才 onCommit**（原来每一帧都打后端，自查 §6 #19）
+    return numberControl(c.label, get(), min, max, c.step ?? 1,
+      (v) => { set(v); live(); }, onCommit ? () => onCommit() : null);
+  }
+  if (c.type === 'select') {
+    return selectControl(c.label, get(), (c.options || []).map((o) => [o, String(o)]),
+      (v) => { set(v); pick(); });
+  }
+  if (c.type === 'bool') {
+    return h('label.inline-field',
+      h('input', { type: 'checkbox', checked: !!get(),
+        onchange: (e) => { set(e.target.checked); pick(); } }),
+      h('span.small.muted', c.label));
+  }
+  // 认不出来的类型不该静默忽略 —— 那样用户会以为控件坏了
+  return h('span.xsmall.danger', `认不出的控件类型：${c.type}`);
+}
+
 export function selectControl(label, value, options, onChange) {
   return h('label.inline-field',
     h('span.small.muted', label),

@@ -74,10 +74,26 @@ def _m2_measured_at_local(conn: sqlite3.Connection) -> None:
                      (local, mid))
 
 
+def _m3_drop_empty_conversations(conn: sqlite3.Connection) -> None:
+    """清掉攒下的空会话。
+
+    原来每打开一次 AI 抽屉就建一个会话，历史里攒一串「新对话 · 0 条」（P12 浏览器验收时发现）。
+    前端改成第一次发送才建之后，已经攒下的这些一次清掉。
+    只删「一条消息都没有」的；术语 ⓘ 的线（scope 里带 topic）空的也留着 —— ⓘ 要复用它。
+    钉住的分析存的是正文快照，不依赖会话（而且空会话也不可能被钉过）。能重跑：第二次没有可删的。
+    """
+    conn.execute(
+        "DELETE FROM conversation"
+        " WHERE NOT EXISTS (SELECT 1 FROM message m WHERE m.conversation_id = conversation.conversation_id)"
+        "   AND json_extract(scope_json, '$.topic') IS NULL")
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "补列：analysis_run.parent_run_id、artifact.is_matrix", "pre", _m1_add_columns),
     Migration(2, "measured_at 统一成本地时间（原来退回文件修改时间的那些存的是 UTC）",
               "post", _m2_measured_at_local),
+    Migration(3, "清掉攒下的空会话（原来每打开一次 AI 抽屉就建一个）", "post",
+              _m3_drop_empty_conversations),
 ]
 
 LATEST = max(m.version for m in MIGRATIONS)

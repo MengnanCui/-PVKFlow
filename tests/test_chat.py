@@ -84,6 +84,20 @@ def test_empty_assistant_messages_are_left_out_of_model_history(workspace):
     assert [m["content"] for m in hist] == ["问题一", "问题二"]
 
 
+def test_history_leaves_out_conversations_that_never_got_a_message(workspace):
+    """原来每打开一次 AI 抽屉就建一个会话，历史里攒一串「新对话 · 0 条」。
+    现在抽屉第一次发送才建；就算建了没说上话（比如还没配模型），历史里也不列。
+    术语 ⓘ 的那条线照列 —— ⓘ 靠它找回「这个词下面问过的话」，空的也要复用。"""
+    used = conversations.create("问过的")
+    conversations.add_message(used, "user", "一句话")
+    conversations.create()                                   # 空的
+    term = conversations.create("术语", {"topic": "term:ot"})  # ⓘ 的线，还空着
+
+    ids = [c["conversation_id"] for c in conversations.list_recent()]
+    assert ids == [used]
+    assert [c["conversation_id"] for c in conversations.list_recent(topic="term:ot")] == [term]
+
+
 # ---------------------------------------------------------------- 钉住
 def test_pinned_note_survives_the_conversation_being_deleted(workspace):
     """钉住的是正文快照，不是外键。
@@ -442,11 +456,16 @@ def test_each_term_gets_its_own_thread(client, samples, monkeypatch):
     assert [c["conversation_id"] for c in only_ot["conversations"]] \
         == [a["conversation"]["conversation_id"]]
 
-    # 不带 topic 还是全都列出来 —— 抽屉的历史列表里也找得到这些
+    # 不带 topic 就是抽屉的历史列表：术语下问过的话也找得到。
+    # 还没问过一句的（b）不列 —— 空的会话在历史里只是一行「0 条」（P12 之后改的）；
+    # ⓘ 自己按 topic 取，照样拿得到它、接着用
     every = client.get("/api/chat/conversations").json()["conversations"]
     ids = {c["conversation_id"] for c in every}
     assert a["conversation"]["conversation_id"] in ids
-    assert b["conversation"]["conversation_id"] in ids
+    assert b["conversation"]["conversation_id"] not in ids
+    only_cycles = client.get("/api/chat/conversations", params={"topic": "glossary:cycles"}).json()
+    assert [c["conversation_id"] for c in only_cycles["conversations"]] \
+        == [b["conversation"]["conversation_id"]]
 
 
 def test_the_definition_on_screen_is_what_the_model_is_told(client, samples, monkeypatch):

@@ -4,8 +4,8 @@
 import { api } from '../api.js';
 import { withInfo } from '../components/info.js';
 import { h, mount, toast, busy, fmtInt, fmtNum } from '../ui.js';
-import { numberControl, bandControl, selectControl } from '../components/figure.js';
-import { S, refs, select } from './batch-state.js';
+import { specControl } from '../components/figure.js';
+import { S, refs } from './batch-state.js';
 
 // ------------------------------------------------------------------ 参数面板
 //
@@ -121,42 +121,15 @@ function rerunTag(recipe) {
 /**
  * 按一条控件声明渲染一个控件，值写进 `recipe.module_params[模块][控件]`。
  *
- * 控件长什么样不在这里决定 —— 和样品页、和同事的模块面板共用
- * figure.js 里那同一套 bandControl / numberControl / selectControl。
+ * 控件怎么从声明长出来，和样品页的模块面板共用一份（figure.specControl）。
+ * 这里只改配方、不打后端：改完点「重跑」才算，所以不给 onLive / onCommit。
  */
 function moduleControl(m, c, recipe) {
   const bag = (recipe.module_params[m.id] ||= {});
   if (bag[c.key] === undefined) bag[c.key] = c.default;
   const axis = (kind) => (S.axes && kind === 'lambda' ? S.axes.lambda
                         : S.axes && kind === 'time' ? S.axes.time : null);
-
-  if (c.type === 'band') {
-    const [lo, hi] = bag[c.key] || c.default || [0, 1];
-    const [min, max] = axis(c.range_from || 'lambda') || [lo, hi];
-    return bandControl(min, max, () => bag[c.key],
-      (a, b) => { bag[c.key] = [a, b]; }, null,
-      { label: c.label, unit: c.unit || 'nm', step: c.step ?? 1 });
-  }
-  if (c.type === 'number') {
-    const auto = axis(c.range_from);
-    const min = auto ? auto[0] : (c.min ?? 0);
-    const max = auto ? auto[1] : (c.max ?? 1e6);
-    return numberControl(c.label, bag[c.key], min, max, c.step ?? 1,
-      (v) => { bag[c.key] = v; });
-  }
-  if (c.type === 'select') {
-    return selectControl(c.label, bag[c.key],
-      (c.options || []).map((o) => [o, String(o)]),
-      (v) => { bag[c.key] = v; });
-  }
-  if (c.type === 'bool') {
-    return h('label.inline-field',
-      h('input', { type: 'checkbox', checked: !!bag[c.key],
-        onchange: (e) => { bag[c.key] = e.target.checked; } }),
-      h('span.small.muted', c.label));
-  }
-  // 认不出来的类型不该静默忽略 —— 那样用户会以为控件坏了
-  return h('span.xsmall.danger', `认不出的控件类型：${c.type}`);
+  return specControl(c, { get: () => bag[c.key], set: (v) => { bag[c.key] = v; }, axis });
 }
 
 /**
