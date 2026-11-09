@@ -185,15 +185,15 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <header class="doc">
   <h1>HTE Studio 开发计划与进度</h1>
   <div class="meta">
-    <span>版本 v7</span><span>更新于 2026-11-09（P15 结束）</span>
-    <span>基于提交 <code>99439e5</code></span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
+    <span>版本 v8</span><span>更新于 2026-11-09（P16 结束）</span>
+    <span>基于提交 <code>f0df0bc</code></span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
   </div>
   <div class="cards">
-    <div class="card"><div class="k">修改报告</div><div class="v">60</div><div class="d">C001 – C060</div></div>
-    <div class="card"><div class="k">阶段</div><div class="v">P1–P15</div><div class="d">P15 = 网关 + pi-agent</div></div>
-    <div class="card"><div class="k">测试</div><div class="v">545</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 9 组（12 + 15 + 13 + 8 + 13 + 22 + 15 + 5 + 8 条）</div></div>
-    <div class="card"><div class="k">你明确指定的</div><div class="v">49</div><div class="d">P-01 … P-49（P-48 网关、P-49 读写文件 / 批处理 / 任务已落实）</div></div>
-    <div class="card"><div class="k">我自行决定的</div><div class="v">150</div><div class="d">D-01 … D-150，<b>18</b> 项还待你确认</div></div>
+    <div class="card"><div class="k">修改报告</div><div class="v">63</div><div class="d">C001 – C063</div></div>
+    <div class="card"><div class="k">阶段</div><div class="v">P1–P16</div><div class="d">P16 = 权限 + 命令 + 轻量窗口</div></div>
+    <div class="card"><div class="k">测试</div><div class="v">563</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 10 组（12 + 15 + 13 + 8 + 13 + 22 + 15 + 5 + 8 + 10 条）</div></div>
+    <div class="card"><div class="k">你明确指定的</div><div class="v">53</div><div class="d">P-01 … P-53（P-50 内设网关、P-51 权限、P-52 跑命令、P-53 模式与轻量窗口已落实）</div></div>
+    <div class="card"><div class="k">我自行决定的</div><div class="v">161</div><div class="d">D-01 … D-161，<b>17</b> 项还待你确认</div></div>
     <div class="card"><div class="k">自查发现</div><div class="v">30 / 30</div><div class="d"><b>全部处理完</b>（P10 12 条 · P11 11 条 · P12 7 条）</div></div>
   </div>
 </header>
@@ -272,7 +272,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
       <tr><td rowspan="6">AI</td><td>侧栏：流式、数据范围、动作卡片、钉住、对话历史</td><td><span class="chip ok">完成</span></td><td>收窄范围生效、换对话先停流（C037）；点停止后已说的字保存（C047）；抽屉和 ⓘ 共用一个客户端（C045）；打开抽屉不再建空会话（C050）；用本地假网关测过</td></tr>
       <tr><td>曲线摘要：每个样品的曲线按时间分段取平均给模型（P-44）</td><td><span class="chip ok">完成</span></td><td>C038；假网关端到端验过</td></tr>
       <tr><td>ⓘ 术语浮层 + 带读数提问（33 个 ⓘ，25 个带数）</td><td><span class="chip ok">完成</span></td><td></td></tr>
-      <tr><td>智能体：模型自己调工具查数、审结果、<strong>读写文件、跑批处理、管任务</strong>；会改东西的先问你（设计照 IFlow）</td><td><span class="chip ok">完成</span></td><td>23 个工具（16 只读 / 6 改得回来 / 1 删除）；文件只在你给的文件夹里、写前备份可撤销（C055 C058 C059）</td></tr>
+      <tr><td>智能体（轻量 pi-agent 式窗口）：查数、读写文件、<strong>跑命令</strong>、跑批处理、管任务；询问 / 自动、直接执行 / 先出计划、斜杠命令</td><td><span class="chip ok">完成</span></td><td>只写专用目录 workspace/agent/，平台核心永不可写、跑命令后检查（C055 C058 C059 C062）</td></tr>
       <tr><td>模型网关：OpenAI 兼容 / Anthropic、退避重试、思考参数、拒收降级、拉取并测速（照 IFlow）</td><td><span class="chip ok">完成</span></td><td>C057；AI 助手、智能体、设置页都走这一层</td></tr>
       <tr><td>在你真实网关 / 模型上的回答质量（AI 助手 + 智能体）</td><td><span class="chip">未验证</span></td><td>需要你的反馈；智能体的工具调用格式各家网关不一样</td></tr>
       <tr><td rowspan="8">平台</td><td>模块化（契约 / 验证器 / zip 分发 / 命令行检查）</td><td><span class="chip ok">完成</span></td><td>同事写 <code>module.py</code> 即可；同 id 再导入 = 升级，中文目录名能导出（C047）</td></tr>
@@ -585,10 +585,14 @@ ol.steps li, ul.plain li { margin: 4px 0; }
       自查顺带修了<strong>确认框点「确定」永远等于「取消」</strong>（装模块前确认、删 AI 对话、卸载模块从界面上一直点不动）。
       你加的要求：<strong>「智能体」页</strong> —— 参考 IFlow，模型自己调工具查数据、帮你审结果，会改数据的先停下来问你。</p>
       <p class="note"><a href="phases/P14_2026-W46_D-智能体.md">阶段报告 P14</a></p></li>
-    <li class="now"><span class="t">P15 网关 + pi-agent（本次）</span><span class="d">11-09 · W46 · C057–C060 · → 545 测试</span>
+    <li><span class="t">P15 网关 + pi-agent</span><span class="d">11-09 · W46 · C057–C060 · → 545 测试</span>
       <p>你说「参考 iflow 改网关，然后做 pi-agent：读写文件、跑批处理、任务」：网关照 IFlow 重写一层（Anthropic 协议、退避重试、思考参数缺省关、拒收降级、拉取并测速）；
       智能体能在你给的文件夹里读写文件（写前备份、卡片上一键撤销、密钥打码）、提交批处理并等它跑完看汇总、查看 / 停止后台任务。自查修了改文件凭空加 BOM。</p>
       <p class="note"><a href="phases/P15_2026-W46_网关-pi-agent.md">阶段报告 P15</a></p></li>
+    <li class="now"><span class="t">P16 权限 + 命令 + 轻量窗口（本次）</span><span class="d">11-09 · W46 · C061–C063 · → 563 测试</span>
+      <p>内网 NewAPI 网关成了内设预设；智能体只写专用目录 <code>workspace/agent/</code>、平台核心永远改不了；能跑命令（危险命令每次问、改了核心一定报）；
+      顶栏「询问 / 自动」「直接执行 / 先出计划」；智能体页变成一栏的轻量 pi-agent 式窗口，带斜杠命令和 /undo。</p>
+      <p class="note"><a href="phases/P16_2026-W46_权限-命令-轻量窗口.md">阶段报告 P16</a></p></li>
   </ul>
 </section>
 
@@ -688,11 +692,11 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id">I</td><td><strong>AI 的真实效果</strong>：先做你要的 <b>P-44 曲线摘要</b>（每个样品的曲线下采样到几十个点给模型），再在你的网关上跑一组真实问题，按回答质量调</td><td>D-28「只看标量」的取舍够不够</td><td>半天 + 你的反馈</td><td><span class="chip ok">P-44 已完成 C038</span> 还剩：在你的真实网关上试</td></tr>
 <tr><td class="id">K</td><td><strong>万级样品准备</strong>：批处理流式写表、分批提交、选择上限显式化、样品列表接口分页、关键结果清理策略</td><td>§6.3「上万样品时」</td><td>1–2 天</td><td>数据量接近时再做</td></tr>
 <tr><td class="id">L</td><td><strong>零碎</strong>（P12 里发现、没顺手做的）：每打开一次 AI 抽屉就新建一个空的「新对话」；批处理导出的 <code>data.csv</code> 公式防护（要和 <code>plot.py</code> 一起改）；其余页面的键盘操作；<code>xyChart</code> 一个函数约 440 行；控件构建两份</td><td>小毛病和剩下的技术债</td><td>半天到 1 天</td><td><span class="chip ok">已完成 C050</span> 只剩 <code>xyChart</code> 留到 E 组（D-105）</td></tr>
-<tr><td class="id">M</td><td><strong>智能体</strong>（你在 P14 加的，P-47）：模型自己调工具查数据、审结果，会改数据的先问；设计照 IFlow</td><td>从「问一句答一句」到「让它去查」</td><td>1 天</td><td><span class="chip ok">已完成 C055 C058</span> 读写文件、跑批处理、任务、Anthropic 协议都有了；还剩：在你的网关上试、要不要加跑命令（D-147）、计划模式</td></tr>
+<tr><td class="id">M</td><td><strong>智能体</strong>（你在 P14 加的，P-47）：模型自己调工具查数据、审结果，会改数据的先问；设计照 IFlow</td><td>从「问一句答一句」到「让它去查」</td><td>1 天</td><td><span class="chip ok">已完成 C055 C058 C062</span> 读写文件、跑命令、批处理、任务、计划模式、轻量窗口都有了；还剩：在你的网关上试、真正的沙箱</td></tr>
 <tr><td class="id">E2</td><td><strong>构效关系第二步</strong>：异常识别（偏离趋势的样品挑出来、标在图上、点进去回溯到原始文件）+ 让模型写一段总结（可以直接用智能体的工具：相关、按批次比较、样品结果）</td><td>第三层「看出问题」</td><td>1–2 天</td><td><span class="chip danger">建议下一个</span></td></tr>
     </tbody>
   </table></div>
-  <div class="callout warn"><b>等你定（P15 之后）：</b>网关和智能体这一轮做完了。现在最有价值的一步只有你能做：<b>在你的真实网关上试 AI 助手和智能体</b>（设置 → 模型里点「拉取并测速」挑一个快的；智能体不调工具的话右侧改成「JSON 动作协议」）。代码这边我建议接着做 <b>E2</b>（构效关系的异常识别 + 模型总结，智能体的工具可以直接当底子）。另一件只有你能做的：<b>Windows 实机清单</b>。§4 里 <b>18 项</b>「还待你确认」随时可以答，D-02（Absorption 是不是百分比）最要紧；本阶段新增三项：D-137（内网网关要不要放进预设）、D-141（modules 等目录只读）、D-147（要不要给它跑命令）。</div>
+  <div class="callout warn"><b>等你定（P16 之后）：</b>智能体这一块你要的都有了。现在最有价值的一步只有你能做：<b>在内网网关上试智能体</b>（设置 → 模型里地址已经填好了，填上密钥、拉取并测速；智能体先用「询问」模式）。代码这边我建议接着做 <b>E2</b>（构效关系的异常识别 + 模型总结）。另一件只有你能做的：<b>Windows 实机清单</b>。§4 里 <b>17 项</b>「还待你确认」，D-02 最要紧；本阶段新增两项都关于跑命令：D-155（哪些命令每次都问）、D-156（自动模式下普通命令直接跑）。</div>
 </section>
 
 <!-- ================================================================ 8 -->
@@ -776,6 +780,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C060_2026-11-09_本提交.md">C060</a></td><td class="nowrap">11-09</td><td>P15</td><td>P15 收尾：阶段报告 + 计划文档 v7</td><td class="small">记录规则（阶段结束）</td></tr>
 <tr><td class="id"><a href="changes/C061_2026-11-09_本提交.md">C061</a></td><td class="nowrap">11-09</td><td>P16</td><td>内设网关：IFlow 的内网 NewAPI 网关进预设，没配过时默认填上</td><td class="small">你的要求「请加入内设的网关」（P-50）</td></tr>
 <tr><td class="id"><a href="changes/C062_2026-11-09_本提交.md">C062</a></td><td class="nowrap">11-09</td><td>P16</td><td>智能体：权限整理（只写专用目录、核心不可改）、跑命令、询问 / 自动 + 计划 / 直接执行、轻量对话窗口</td><td class="small">你的要求（P-51 P-52 P-53）</td></tr>
+<tr><td class="id"><a href="changes/C063_2026-11-09_本提交.md">C063</a></td><td class="nowrap">11-09</td><td>P16</td><td>P16 收尾：阶段报告 + 计划文档 v8</td><td class="small">记录规则（阶段结束）</td></tr>
     </tbody>
   </table></div>
 </section>
