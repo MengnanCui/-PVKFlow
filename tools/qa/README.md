@@ -48,6 +48,9 @@ NODE_PATH=$(npm root -g) node tools/qa/gateway_check.js
 NODE_PATH=$(npm root -g) node tools/qa/pi_check.js /tmp/hte-qa
 # 权限整理、跑命令、询问 / 自动、计划 / 直接执行、轻量窗口与斜杠命令
 NODE_PATH=$(npm root -g) node tools/qa/power_check.js /tmp/hte-qa
+# QFLS 成像：要一个**新的**工作区（不用假网关），从空状态点「生成演示数据并处理」开始
+HTE_WORKSPACE=/tmp/hte-qfls HTE_PORT=8799 HTE_NO_BROWSER=1 .venv/bin/python -m app.main &
+NODE_PATH=$(npm root -g) node tools/qa/qfls_check.js /tmp/hte-qfls
 ```
 
 B2 的对比页那一条要用**样品数 ≤ 24** 的那次批处理 —— 超过 24 个，切片柱状图本来就不画（挤不下）。

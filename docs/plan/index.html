@@ -189,11 +189,11 @@ ol.steps li, ul.plain li { margin: 4px 0; }
     <span>基于提交 <code>f0df0bc</code></span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
   </div>
   <div class="cards">
-    <div class="card"><div class="k">修改报告</div><div class="v">65</div><div class="d">C001 – C065</div></div>
+    <div class="card"><div class="k">修改报告</div><div class="v">66</div><div class="d">C001 – C066</div></div>
     <div class="card"><div class="k">阶段</div><div class="v">P1–P16</div><div class="d">P16 = 权限 + 命令 + 轻量窗口</div></div>
     <div class="card"><div class="k">测试</div><div class="v">563</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 10 组（12 + 15 + 13 + 8 + 13 + 22 + 15 + 5 + 8 + 10 条）</div></div>
     <div class="card"><div class="k">你明确指定的</div><div class="v">58</div><div class="d">P-01 … P-58（P-54 … P-58 是 QFLS 成像的规格）</div></div>
-    <div class="card"><div class="k">我自行决定的</div><div class="v">177</div><div class="d">D-01 … D-177，<b>27</b> 项还待你确认</div></div>
+    <div class="card"><div class="k">我自行决定的</div><div class="v">182</div><div class="d">D-01 … D-182，<b>27</b> 项还待你确认</div></div>
     <div class="card"><div class="k">自查发现</div><div class="v">30 / 30</div><div class="d"><b>全部处理完</b>（P10 12 条 · P11 11 条 · P12 7 条）</div></div>
   </div>
 </header>
@@ -260,7 +260,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
       <tr><td rowspan="4">样品页</td><td>光谱处理：热力图 + 多时刻叠加谱</td><td><span class="chip ok">完成</span></td><td>仍是 <code>sample.js</code> 手写，<strong>没迁成模块</strong></td></tr>
       <tr><td>膜厚处理：四宫格 + 规范 §5 报告</td><td><span class="chip ok">完成</span></td><td>模块（B 档）</td></tr>
       <tr><td>特殊处理：谱斜率 / 波段积分，拖动实时</td><td><span class="chip ok">完成</span></td><td>模块（A 档，算子拼）</td></tr>
-      <tr><td>荧光 &amp; 荧光、荧光 &amp; 散射、QFLS</td><td><span class="chip plan">规划中</span></td><td>tab 灰着；没有数据格式、没有算法</td></tr>
+      <tr><td>荧光 &amp; 荧光、荧光 &amp; 散射、QFLS</td><td><span class="chip plan">规划中</span></td><td>样品页里这几个 tab 仍灰着；<strong>QFLS 改成了单独的「QFLS 成像」页</strong>（见下）</td></tr>
       <tr><td rowspan="4">批处理与对比</td><td>后台批处理（进度、取消、每样品一条子运行）</td><td><span class="chip ok">完成</span></td><td>取消 / 重启后都会收尾（C035）</td></tr>
       <tr><td>对比页：叠图 / 分位数带 / 两时刻平均膜厚 / 参数和曲线都按模块声明生成 / 重跑</td><td><span class="chip ok">完成</span></td><td>同事模块的曲线自己占一格（C035）；离开不再串台、重试真的重来（C037）；页面拆成 5 个文件（C045）</td></tr>
       <tr><td>对比历史、命名、钉住的 AI 分析</td><td><span class="chip ok">完成</span></td><td></td></tr>
@@ -269,6 +269,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
       <tr><td>关键结果长表（当前值 + 全部历史）、运行可追溯（含模块版本）</td><td><span class="chip ok">完成</span></td><td>C034 / C035</td></tr>
       <tr><td>结果质量审核（可信 / 待查 / 作废）</td><td><span class="chip ok">完成</span></td><td>样品页「关键结果」、构效关系页就地审；作废后当前值退回上一次，带理由和时间（C054）。批处理写入时就是「可信」（D-115 待你确认）</td></tr>
       <tr><td>构效关系</td><td>X / Y 散点（按批次着色）、皮尔逊 / 斯皮尔曼（带 p 值）、按批次的箱线图</td><td><span class="chip ok">第一版</span></td><td>C052；统计对着 scipy 的参考值验过。异常识别、模型总结还没做</td></tr>
+      <tr><td>QFLS 成像</td><td>按层级扫描（实验 / 批次 / slot / point）、逐帧校验、15 项指标、综合分 / ABCD / 异常、独立输出目录；总览 / 排名与筛选 / 单点详情 / 多点对比 / 方法说明、导出当前筛选；假想演示数据</td><td><span class="chip ok">第一版</span></td><td>C065 C066；<strong>只在假想数据上验过</strong>；10 项阈值待你确认；qvdf 真实格式未知</td></tr>
       <tr><td rowspan="6">AI</td><td>侧栏：流式、数据范围、动作卡片、钉住、对话历史</td><td><span class="chip ok">完成</span></td><td>收窄范围生效、换对话先停流（C037）；点停止后已说的字保存（C047）；抽屉和 ⓘ 共用一个客户端（C045）；打开抽屉不再建空会话（C050）；用本地假网关测过</td></tr>
       <tr><td>曲线摘要：每个样品的曲线按时间分段取平均给模型（P-44）</td><td><span class="chip ok">完成</span></td><td>C038；假网关端到端验过</td></tr>
       <tr><td>ⓘ 术语浮层 + 带读数提问（33 个 ⓘ，25 个带数）</td><td><span class="chip ok">完成</span></td><td></td></tr>
@@ -547,10 +548,15 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr data-c="数据" data-confirm="1"><td class="id">D-171</td><td class="nowrap">数据</td><td>变异函数：先 4 × 4 合并像素，横竖两个方向平均，最大滞后 = 短边 1/3，基台 = 方差，变程 = γ 第一次到 95% 基台的距离（线性插值）；没到就记空并标「未到基台」。有像素尺寸时同时给 µm</td><td>实用变程的常见定义。<span class="why">基台和 95% 的口径决定变程数值</span></td><td>C065</td><td class="loc">app/qfls/metrics.py</td><td><span class="chip warn">建议你确认</span></td></tr>
 <tr data-c="数据" data-confirm="1"><td class="id">D-172</td><td class="nowrap">数据</td><td>综合质量分 = 100 − 七项扣分（各自封顶）：离散 P90−P10（15→75 meV 扣 0→25）、低值占比（3%→10% 扣 0→15）、最大低值连通域（0→1% 画面扣 0→15）、划痕（每条 10，封顶 20）、|边缘−中心|（5→30 meV 扣 0→10）、Moran's I（0.15→0.5 扣 0→10）、亮点密度（0→100 个/百万像素扣 0→5）。<strong>绝对 QFLS 水平不进分数</strong>（不同物镜不可比）。等级 ≥85 A、≥70 B、≥55 C、其余 D</td><td>分数只看「均匀不均匀、有没有缺陷」。<span class="why">这是平台定的，不是标准；权重和分档决定排名和 ABCD</span></td><td>C065</td><td class="loc">app/qfls/metrics.py</td><td><span class="chip warn">建议你确认</span></td></tr>
 <tr data-c="数据" data-confirm="1"><td class="id">D-173</td><td class="nowrap">数据</td><td>异常标记分三级：error（数据无效）、warn（超范围、文件名不规范、物镜和 qvdf 对不上、大面积低值 &gt; 1% 画面、划痕、Moran's I &gt; 0.15、|边缘−中心| &gt; 20 meV、平行点离群、整帧不变）、info（缺 qvdf、尺寸和多数不同、采集条件不同、变异函数未到基台）。有 warn / error 就算「异常」。<strong>平行点离群</strong>：同一 slot、同一物镜至少 4 个点时，中位数的稳健 z（按 MAD）|z| &gt; 3.5</td><td>同一实验里不同 slot 是不同处理，拿它们比会把处理效果当成异常。<span class="why">决定哪些点被高亮</span></td><td>C065</td><td class="loc">app/qfls/metrics.py · pipeline.py</td><td><span class="chip warn">建议你确认</span></td></tr>
-<tr data-c="数据"><td class="id">D-174</td><td class="nowrap">数据</td><td>组内标准化 z = (x − 组均值) / 组标准差，组 = 实验 × 物镜，组里少于 3 个有效点为空；排名给全局和物镜内两种；多点对比用的「同物镜同色标」= 该物镜所有帧 P1 / P99 的中位数</td><td>你说「按实验及物镜分组的标准化数值」。</td><td>C065</td><td class="loc">app/qfls/pipeline.py</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="数据"><td class="id">D-174</td><td class="nowrap">数据</td><td>组内标准化 z = (x − 组均值) / 组标准差，组 = 实验 × 物镜，组里少于 3 个有效点为空；排名给全局和物镜内两种；多点对比用的「同物镜同色标」= 该物镜所有帧 P1 的第 5 百分位到 P99 的第 95 百分位（C066 改，原来取中位数，见 D-181）</td><td>你说「按实验及物镜分组的标准化数值」。</td><td>C065</td><td class="loc">app/qfls/pipeline.py</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="平台"><td class="id">D-175</td><td class="nowrap">平台</td><td>输出目录 <code>workspace/qfls/&lt;run_id&gt;/</code>：run.json、scan.json、points.json / .csv、summary.json、README.md、global/、points/&lt;key&gt;/（7 张图 + 数据）。图照你的 matplotlib 规范画，只是保存 110 dpi（网页素材，一次几百张）；图里文字英文 + 编号（E1-B1-S2P3-20X），对照表在 summary.json 和网页上 —— 服务器上不一定有中文字体。CSV 是 UTF-8 带 BOM、文字格子防公式</td><td>「所有输出写入独立目录」。</td><td>C065</td><td class="loc">app/qfls/pipeline.py · render.py</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="数据"><td class="id">D-176</td><td class="nowrap">数据</td><td>演示数据（假想）：3 个实验（退火温度、钝化剂、衬底）12 种情形，暗斑、划痕、亮点、边缘衰减、倾斜、大尺度不均都是造的；100X 故意比 20X 低 24 meV（说明物镜间不可比）；4 帧故意做坏（少一个值、空字段、3% 像素是 0、行数不同）；一个实验目录名做成乱码；放了历史产物和非实验目录。默认 304 × 456（真实尺寸的 1/4，60 帧约 65 MB），可选真实尺寸。生成到 <code>workspace/qfls_demo/</code>，每次重新生成</td><td>你要「基于自己生成的数据进行分析」。</td><td>C065</td><td class="loc">app/qfls/demo.py</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="平台"><td class="id">D-177</td><td class="nowrap">平台</td><td>处理走后台任务（一次一个，逐帧报进度、能停）；一帧出错不影响别的帧；停了的处理留下已做的部分并标「已停止」；删除一次处理只删它的输出目录</td><td>和批处理一样的做法。</td><td>C065</td><td class="loc">app/api/qfls.py</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="显示"><td class="id">D-178</td><td class="nowrap">显示</td><td>QFLS 页的结构：侧栏「分析」组一个导航项「QFLS 成像」，里面四个标签（总览 / 排名与筛选 / 多点对比 / 方法说明，地址栏 <code>#qfls/rank</code> 这样记）+ 单点详情下钻页；筛选（实验、物镜、等级、异常类型、只看异常、搜编号）在标签和详情之间共用；对比篮子最多 6 个，按处理编号记在这台浏览器</td><td>你要的五个页面，放进一个入口里不占侧栏。</td><td>C066</td><td class="loc">pages/qfls*.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="显示"><td class="id">D-179</td><td class="nowrap">显示</td><td>「不同物镜不可比、单光强不做 JV」的提示常驻在每个标签顶上；总览的箱线图<strong>永远按物镜分开画</strong>（相对量也分开，只在说明里注明可比）；总览四个数：筛出的样点、有效、有异常、A 级占比</td><td>P-58 的限制要摆在眼前，不能只写在方法说明里。</td><td>C066</td><td class="loc">pages/qfls-views.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="显示"><td class="id">D-180</td><td class="nowrap">显示</td><td>排名表：默认按综合分降序，点表头换排序（第一次点：分数降序、其它升序）；无效帧永远排最后；有 warn 的整行浅黄、error 的整行浅红（info 不标色）；可切到「组内 z」显示，|z| ≥ 2 标色；差值显示成 meV、占比显示成 %</td><td>异常高亮（你要的）落在整行上，一眼能扫到。</td><td>C066</td><td class="loc">pages/qfls-views.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="显示"><td class="id">D-181</td><td class="nowrap">显示</td><td>多点对比：热图用同一物镜同一色标（<strong>改了 D-174 的色标口径</strong>：该物镜所有帧 P1 的第 5 百分位到 P99 的第 95 百分位 —— 原来取中位数，最好的那几帧整片饱和）；直方图 / 水平剖面 / 变异函数叠加（有像素尺寸时横轴换成 µm）；指标对照表每行把「最好」的加粗，只标有好坏方向的指标，物镜不同时绝对量不标</td><td>物镜不同时会提示哪些数不要横着比。</td><td>C066</td><td class="loc">pages/qfls-views.js · app/qfls/pipeline.py</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="显示"><td class="id">D-182</td><td class="nowrap">显示</td><td>「导出当前筛选」在浏览器里生成 CSV：中文表头、UTF-8 带 BOM、36 列指标与身份 + 5 列组内 z（中位数、P90−P10、低值占比、Moran's I、综合分），文件名 <code>QFLS_&lt;处理编号&gt;_筛选_&lt;n&gt;点.csv</code>；「全部样点 CSV」是输出目录里那份 points.csv（英文列名，全部指标和 z）</td><td>筛选结果导出（你要的）。</td><td>C066</td><td class="loc">pages/qfls.js</td><td><span class="chip info">可随时改</span></td></tr>
     </tbody>
   </table></div>
 </section>
@@ -804,6 +810,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C063_2026-11-09_本提交.md">C063</a></td><td class="nowrap">11-09</td><td>P16</td><td>P16 收尾：阶段报告 + 计划文档 v8</td><td class="small">记录规则（阶段结束）</td></tr>
 <tr><td class="id"><a href="changes/C064_2026-11-09_本提交.md">C064</a></td><td class="nowrap">11-09</td><td>P16</td><td>修 Windows CI：测试里写中文没指定编码</td><td class="small">我自查（CI 红）</td></tr>
 <tr><td class="id"><a href="changes/C065_2026-11-09_本提交.md">C065</a></td><td class="nowrap">11-09</td><td>P17</td><td>QFLS 成像：假想数据生成、按层级扫描、校验、指标、评分、出图、独立输出目录、接口</td><td class="small">你的要求（P-54 … P-56、P-58）</td></tr>
+<tr><td class="id"><a href="changes/C066_2026-11-09_本提交.md">C066</a></td><td class="nowrap">11-09</td><td>P17</td><td>QFLS 成像（网页）：总览、排名与筛选、单点详情、多点对比、方法说明、导出；修图宽度跟不上容器的老问题</td><td class="small">你的要求（P-57）+ 我自查</td></tr>
     </tbody>
   </table></div>
 </section>

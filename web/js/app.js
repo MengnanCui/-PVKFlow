@@ -12,9 +12,11 @@ import * as storage from './pages/storage.js';
 import * as relation from './pages/relation.js';
 import * as settings from './pages/settings.js';
 import * as agent from './pages/agent.js';
+import * as qfls from './pages/qfls.js';
+import * as qflsPoint from './pages/qfls-point.js';
 import { initDrawer } from './components/ai-drawer.js';
 
-const PAGES = [overview, process_, sample, batchPage, history, storage, relation, agent, settings];
+const PAGES = [overview, process_, sample, batchPage, history, storage, relation, qfls, qflsPoint, agent, settings];
 const BY_ID = Object.fromEntries(PAGES.map((p) => [p.meta.id, p]));
 
 // sample 不出现在侧栏 —— 它是从数据处理页下钻进去的。
@@ -23,7 +25,7 @@ const BY_ID = Object.fromEntries(PAGES.map((p) => [p.meta.id, p]));
 // 「分析」是回头看已经跑过的东西。对比历史属于后者，跟前面三个不是一个层级，
 // 所以单独成组排在后面，而不是塞进主线里当第三项。
 const MAIN_NAV = ['overview', 'process', 'storage', 'relation'];
-const ANALYSIS_NAV = ['history', 'agent'];
+const ANALYSIS_NAV = ['history', 'qfls', 'agent'];
 const SYSTEM_NAV = ['settings'];
 
 const viewport = $('#viewport');

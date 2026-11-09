@@ -1168,3 +1168,53 @@ tr.is-rejected td .quality-ctl, tr.is-rejected td .xsmall { text-decoration: non
 .agent-plan ol { margin: 6px 0; padding-left: 20px; line-height: 1.7; }
 .agent-help { display: grid; gap: 2px; padding: 6px 10px; border: 1px dashed var(--line); border-radius: var(--r-sm); max-width: 620px; }
 .agent-foot { padding-top: 2px; }
+
+/* ================================================================ QFLS 成像 */
+.mb-4 { margin-bottom: var(--s4x); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.qfls-bar { display: flex; align-items: center; gap: var(--s2x); flex-wrap: wrap; margin-bottom: var(--s4x); }
+.qfls-run-sel { max-width: 420px; }
+.qfls-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: var(--s3x); }
+.qfls-tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 14px; font: inherit;
+            font-size: var(--t-sm); color: var(--ink-3); cursor: pointer; margin-bottom: -1px; }
+.qfls-tab:hover { color: var(--ink); }
+.qfls-tab[aria-selected="true"] { color: var(--accent-ink); border-bottom-color: var(--accent); font-weight: 600; }
+.qfls-filter { display: flex; flex-direction: column; gap: var(--s2x); }
+.qfls-frow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.qfls-frow .input { max-width: 220px; }
+.qfls-flabel { font-size: var(--t-xs); color: var(--ink-4); min-width: 2.5em; }
+.qfls-flabel.ml { margin-left: var(--s4x); }
+.qfls-limits { font-size: var(--t-sm); }
+.qfls-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: var(--s5x); align-items: start; }
+.qfls-grid > * { min-width: 0; }
+.qfls-img { display: block; border: 1px solid var(--line); border-radius: var(--r-sm); background: #fff; overflow: hidden; }
+.qfls-img img, .qfls-heat { display: block; width: 100%; height: auto; }
+.qfls-heat { border-radius: var(--r-sm); image-rendering: pixelated; margin-top: 6px; }
+.qfls-cbar { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.qfls-cbar i { flex: 1; height: 8px; border-radius: 2px; }
+.qfls-grade { display: inline-block; min-width: 1.8em; text-align: center; font-weight: 700; font-size: var(--t-xs);
+              padding: 1px 6px; border-radius: 4px; border: 1px solid currentColor; }
+.qfls-grade.g-A { color: var(--ok); }
+.qfls-grade.g-B { color: var(--accent); }
+.qfls-grade.g-C { color: var(--warn); }
+.qfls-grade.g-D { color: var(--danger); }
+.qfls-grade.g-x { color: var(--ink-4); font-weight: 500; }
+table.qfls-rank td, table.qfls-rank th { white-space: nowrap; }
+table.qfls-rank tr.lv-warn td { background: var(--warn-wash); }
+table.qfls-rank tr.lv-error td { background: var(--danger-wash); }
+table.qfls-rank tr.lv-warn:hover td, table.qfls-rank tr.lv-error:hover td { background: var(--surface-2); }
+.qfls-sortable { cursor: pointer; user-select: none; }
+.qfls-sortable:hover { color: var(--ink); }
+.qfls-flags { display: flex; gap: 4px; flex-wrap: nowrap; }
+.qfls-z-hi { color: var(--warn); font-weight: 600; }
+.qfls-best { color: var(--ok); }
+.qfls-pick { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 4px 2px 10px; }
+.qfls-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s4x); flex-wrap: wrap; }
+.qfls-code { font-size: var(--t-md); }
+.qfls-score { display: flex; align-items: center; gap: var(--s3x); }
+.qfls-score .qfls-grade { font-size: var(--t-md); padding: 4px 10px; }
+.qfls-flag { padding: 8px 12px; margin-top: 6px; font-size: var(--t-sm); }
+.qfls-facts { gap: var(--s5x); }
+.qfls-method p { margin: 0 0 8px; font-size: var(--t-sm); line-height: 1.65; max-width: 90ch; }
+.qfls-method ul { margin: 0 0 8px; padding-left: 1.3em; font-size: var(--t-sm); line-height: 1.7; }
+.qfls-method table.data td { vertical-align: top; }

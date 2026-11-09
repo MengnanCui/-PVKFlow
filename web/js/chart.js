@@ -57,6 +57,11 @@ export function trackWidth(host, apply, hint = 0) {
   if (typeof ResizeObserver === 'function') {
     // 挂上去会立刻回调一次 —— 构造时的兜底值就是在那一下被校正的。
     const ro = new ResizeObserver(() => {
+      // 从页面上拿掉时观察者也会回调一次（尺寸变 0）：进过页面又离开了的，就地断开
+      if (!host.isConnected && host.__settled) {
+        ro.disconnect(); if (host.__widthObserver === ro) host.__widthObserver = null; watched.delete(host);
+        return;
+      }
       const w = measure();
       // 8px 以内不重画：滚动条出现/消失会让宽度抖一两个像素，
       // 跟着抖就是每帧重建一次骨架。
@@ -67,10 +72,20 @@ export function trackWidth(host, apply, hint = 0) {
     // 原来每画一次就多一个观察者、旧的从不断开（那个断开函数没有人调用）。两种情况：
     // 同一个容器反复重画 —— 上一次挂的先断开；整块换成新容器（切显示方式、换页）——
     // 旧容器已经不在页面上了，挂新的之前把这些顺手清掉。
+    // 但同一轮同步代码里先造好几张图、最后才一起挂进页面时（QFLS 总览的箱线图），先造的那张这时
+    // 也还没进页面 —— 原来连它的观察者一起断掉，宽度就永远停在兜底的 760。所以刚造的不算：
+    // 这一轮跑完（setTimeout 0）还没进页面的，才是被丢掉的。
     host.__widthObserver?.disconnect();
     for (const old of watched) {
-      if (!old.isConnected) { old.__widthObserver?.disconnect(); watched.delete(old); }
+      if (old.__settled && !old.isConnected) { old.__widthObserver?.disconnect(); watched.delete(old); }
     }
+    host.__settled = false;
+    setTimeout(() => {
+      host.__settled = true;
+      if (!host.isConnected && host.__widthObserver === ro) {      // 造了没用上的，马上断开
+        ro.disconnect(); host.__widthObserver = null; watched.delete(host);
+      }
+    }, 0);
     host.__widthObserver = ro;
     watched.add(host);
     ro.observe(host);

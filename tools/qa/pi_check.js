@@ -79,14 +79,14 @@ const lastBot = (p) => p.evaluate((L) => [...document.querySelectorAll(`${L} .ag
 
   // 5. 跑批处理：先问（说清楚几个样品、配方）；批了 → 等任务 → 汇总
   const nZ = (await get(p, '/api/samples')).samples.filter((s) => s.batch === 'ZG0013').length;
-  const before = (await get(p, '/api/batch/runs')).runs?.length ?? (await get(p, '/api/batch/runs')).rows.length;
+  const before = (await get(p, '/api/batch/runs?limit=100')).runs.length;
   await ask(p, '跑批处理 ZG0013');
   const bc = p.locator(`${L} .agent-approval.is-open`).last();
   const bpv = await bc.textContent().catch(() => '');
   rec('跑批处理先问', bpv.includes(`对 ${nZ} 个样品跑一次批处理（批次 ZG0013）`) && bpv.includes('配方：默认'), bpv.replace(/\s+/g, ' ').slice(0, 70));
   await bc.locator('button:has-text("批准")').click();
   await sleep(12000);
-  const runs = await get(p, '/api/batch/runs');
+  const runs = await get(p, '/api/batch/runs?limit=100');  // 默认只给 20 条：工作区攒够 20 次之后「多了一次」就数不出来
   const list = runs.runs || runs.rows;
   const names = await p.$$eval(`${L} details.agent-tool`, (xs) => xs.slice(-3).map((x) => x.dataset.name));
   rec('批处理跑完并汇总', list.length === before + 1 && names.join() === 'run_batch,get_task,batch_summary'

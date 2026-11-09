@@ -79,6 +79,14 @@ app/
     ├─ commands.py   ★ 跑命令：专用目录里跑、平台的 Python、超时 / 停止杀进程树、危险命令每次问、核心快照对比
     ├─ driver.py     问模型「下一步」：原生 tool_calls（流式拼参数）；网关不认 tools 就退到 JSON 动作协议并记住
     └─ loop.py       ★ 控制回路：调模型 → 跑工具 → 回灌；三道闸；停在审批上的那一轮存进会话；计划模式（只读 + propose_plan）
+└─ qfls/             QFLS 成像（「QFLS 成像」页）。**不用数据库**：一次处理 = workspace/qfls/<run_id>/ 一个目录的文件
+    ├─ scan.py       按层级识别 实验 / 批次 / slotN / pointN / QFLS，只 stat 不打开；认不出的写原因
+    ├─ names.py      中文乱码修复（只修显示名）、文件名拆 物镜 / 光强 / 时间戳 / uuid
+    ├─ frame.py      读一帧 + 校验（行列一致、无缺失、范围）；qvdf 认 JSON / XML / INI
+    ├─ metrics.py    ★ 指标、综合分、等级、异常（PARAMS 是全部阈值）；连通域「行程 + 并查集」自写，没有 scipy
+    ├─ render.py     每点 7 张图 + 全局 3 张（matplotlib Figure + Agg，不碰 pyplot 全局状态）
+    ├─ pipeline.py   ★ 一次处理：扫描 → 逐帧 → 组内 z / 平行点离群 / 排名 → 落盘；原始数据只用 "rb" 打开
+    └─ demo.py       假想演示数据（照规格造，含乱码目录、历史产物、坏帧）
 ```
 
 智能体的会话存在 `agent_session` 一行里：给模型的上下文、给界面回放的事件、停在审批上的那一轮。

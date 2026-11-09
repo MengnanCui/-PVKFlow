@@ -260,6 +260,17 @@ export const api = {
     '/api/settings/models/presets?' + new URLSearchParams({ base_url: baseUrl }),
     { method: 'DELETE' }),
   modelExample: () => get('/api/settings/models/example'),
+
+  // QFLS 成像（P-54 … P-58）：处理结果全在输出目录里，这些接口只是把它读出来
+  qflsMethod: () => get('/api/qfls/method'),
+  qflsScan: (root) => post('/api/qfls/scan', { root }),
+  qflsRuns: () => get('/api/qfls/runs'),
+  qflsStart: (body) => post('/api/qfls/runs', body),
+  qflsRun: (id) => get(`/api/qfls/runs/${id}`),
+  qflsPoints: (id) => get(`/api/qfls/runs/${id}/points`),
+  qflsPoint: (id, key) => get(`/api/qfls/runs/${id}/points/${key}`),
+  qflsDelete: (id) => request(`/api/qfls/runs/${id}`, { method: 'DELETE' }),
+  qflsFile: (id, path) => `/api/qfls/runs/${id}/files/${path}`,
 };
 
 export { ApiError };

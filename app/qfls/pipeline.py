@@ -312,7 +312,7 @@ def process(root: str | Path, *, run_id: str | None = None, params: dict | None 
         scales = {}
         for obj in sorted({r["objective"] or "?" for r in rows if r["valid"]}):
             vs = [r for r in rows if r["valid"] and (r["objective"] or "?") == obj]
-            scales[obj] = [float(np.median([r["p1"] for r in vs])), float(np.median([r["p99"] for r in vs]))]
+            scales[obj] = [float(np.percentile([r["p1"] for r in vs], 5)), float(np.percentile([r["p99"] for r in vs], 95))]
         if figures:
             for r in rows:
                 if r["key"] in smalls:
