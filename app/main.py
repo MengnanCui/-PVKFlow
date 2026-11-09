@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import config, security
-from app.api import (agent, artifacts, assist, batch, chat, files, relation, results, selection,
+from app.api import (agent, artifacts, assist, batch, chat, files, qfls, relation, results, selection,
                      settings, spectra)
 from app.api import modules as modules_api
 from app.api.common import error_response
@@ -73,7 +73,7 @@ for router in (files.router, results.router, artifacts.router,
                assist.router, settings.router, spectra.router,
                selection.router, batch.router, batch.tasks_router,
                modules_api.router,
-               chat.router, relation.router, agent.router):
+               chat.router, relation.router, agent.router, qfls.router):
     app.include_router(router)
 
 
