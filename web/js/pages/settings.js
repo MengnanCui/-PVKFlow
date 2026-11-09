@@ -362,7 +362,8 @@ function simpleForm(providers, presets) {
   const url = h('input.input', {
     type: 'text', placeholder: 'https://你的网关/v1',
     // 填过一次就一直回填 —— 你的网关地址存在本机配置里，不在仓库里
-    value: first.base_url || '', style: { width: '100%' } });
+    // 还没配过：直接填上内设的内网网关（P-50），填密钥就能用
+    value: first.base_url || (presets || []).find((x) => x.internal)?.base_url || '', style: { width: '100%' } });
   const key = h('input.input', {
     // type=password 免得在会议室投屏时把密钥直接投出去
     type: 'password', placeholder: 'sk-…',
@@ -438,7 +439,7 @@ function simpleForm(providers, presets) {
       // 没起名字时就只写地址 —— 「★ http://…/v1 — http://…/v1」把同一个地址
       // 写两遍，读起来像是两个不同的东西
       ...presetList.map((p) => h('option', { value: p.base_url },
-        (p.origin === 'user' ? '★ ' : '')
+        (p.origin === 'user' ? '★ ' : p.internal ? '◆ ' : '')
         + (p.name && p.name !== p.base_url ? `${p.name} — ${p.base_url}`
                                            : p.base_url))));
   }

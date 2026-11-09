@@ -254,11 +254,13 @@ def test_connection(provider_name: str | None = None, model: str | None = None) 
 
 
 # ---------------------------------------------------------------- 模型发现
-# 公共服务商的地址预设。**这里只放公开地址** —— 内网网关的地址和密钥一样，
-# 属于用户自己的配置，只存在 workspace/config/providers.json（已 gitignore）。
-# 界面上填过一次之后会一直回填，不需要写进仓库。
+# 地址预设（照 IFlow 的 lib/llm/config.ts）：带协议、模型提示、要不要密钥。
+# 第一条是**内设的内网网关**（P-50：你要求加进来，和 IFlow 同一个地址）—— 只放地址，
+# **密钥永远不进仓库**，各人在设置页填自己的。其余是公共服务商和本机地址。
 PRESETS = [
-    # 照 IFlow 的预设（lib/llm/config.ts）：带协议、模型提示、要不要密钥。内网那条不进仓库（见上）
+    {"name": "内网 NewAPI 网关（内设）", "base_url": "http://newapi.catl.com/v1", "api": "openai-completions",
+     "model_hint": "", "internal": True,
+     "note": "公司内网网关，密钥向管理员要；填好后点「拉取并测速」挑模型"},
     {"name": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "api": "openai-completions",
      "model_hint": "deepseek-chat"},
     {"name": "Qwen · 通义（DashScope）", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",

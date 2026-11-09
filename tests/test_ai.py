@@ -201,13 +201,16 @@ def test_a_rejected_key_says_so_instead_of_dumping_the_status_code(monkeypatch):
     assert "密钥" in str(e.value)
 
 
-def test_presets_never_contain_a_private_gateway():
-    """预设里只放公共服务商。内网地址和密钥一样，属于本机配置，
-    进了仓库就等于泄露。"""
+def test_presets_carry_addresses_only_and_mark_the_internal_one():
+    """预设只放地址，永远不带密钥。内网地址只有明确标了 internal 的那一条（P-50：内设的 NewAPI 网关）。"""
     blob = json.dumps(openai_compat.PRESETS, ensure_ascii=False)
-    for url in (p["base_url"] for p in openai_compat.PRESETS):
-        assert url.startswith(("https://", "http://127.0.0.1")), url
-    assert "sk-" not in blob
+    assert "sk-" not in blob and "apiKey" not in blob and "api_key" not in blob
+    internal = [p for p in openai_compat.PRESETS if p.get("internal")]
+    assert [p["base_url"] for p in internal] == ["http://newapi.catl.com/v1"]
+    assert openai_compat.PRESETS[0] is internal[0]                 # 排第一个：最常用的那个
+    for p in openai_compat.PRESETS:
+        if not p.get("internal"):
+            assert p["base_url"].startswith(("https://", "http://127.0.0.1")), p["base_url"]
 
 
 def test_discover_uses_the_saved_key_and_never_returns_it(workspace, monkeypatch):
