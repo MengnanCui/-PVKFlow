@@ -105,20 +105,21 @@ const quality = async (p, sid, field) => (await get(p, `/api/results/by-sample/$
   rec('批了才删', gone, `样品集${gone ? '已删' : '还在'}`);
 
   // 6. 停在审批上时刷新页面：从会话列表打开，还能批（新开一个会话 —— 上一个里「审核结果」已经勾了不再问）
-  await p.click('#page-agent button:has-text("新任务")'); await sleep(300);
+  await p.click('#page-agent button[title^="新会话"]'); await sleep(300);
   await ask(p, '现在平台里有什么数据？');
   await ask(p, `作废结果 ${f0.current.id}`);
   const sid = (await get(p, '/api/agent/sessions')).sessions[0].session_id;
   await p.reload({ waitUntil: 'networkidle' }); await sleep(1000);
-  const waitingTag = await p.$eval('#page-agent .agent-session-row', (x) => x.textContent);
-  await p.locator('#page-agent .agent-session-row').first().locator('button.linklike').click(); await sleep(800);
+  // 轻量窗口（P-53）：会话在顶栏的下拉里，停在审批上的标 ⏸
+  const waitingTag = await p.$eval(`#page-agent .agent-session-sel option[value="${sid}"]`, (x) => x.textContent);
+  await p.selectOption('#page-agent .agent-session-sel', sid); await sleep(800);
   const replay = await p.evaluate((L) => ({
     cards: document.querySelectorAll(`${L} details.agent-tool`).length,
     open: document.querySelectorAll(`${L} .agent-approval.is-open`).length,
     closed: document.querySelectorAll(`${L} .agent-approval:not(.is-open)`).length,
   }), L);
-  rec('刷新后会话原样回放', waitingTag.includes('等确认') && replay.cards === 3 && replay.open === 1 && replay.closed === 0,
-      `列表上${waitingTag.includes('等确认') ? '标着' : '没标'}「等确认」；工具卡 ${replay.cards}、待批 ${replay.open}、已处理 ${replay.closed}`);
+  rec('刷新后会话原样回放', waitingTag.includes('⏸') && replay.cards === 3 && replay.open === 1 && replay.closed === 0,
+      `下拉里${waitingTag.includes('⏸') ? '标着' : '没标'}「⏸」；工具卡 ${replay.cards}、待批 ${replay.open}、已处理 ${replay.closed}`);
   await p.locator(`${L} .agent-approval.is-open`).last().locator('button:has-text("拒绝")').click(); await sleep(2500);
   const s6 = await get(p, `/api/agent/sessions/${sid}`);
   const q6 = (await quality(p, s0.sample_id, 'qa_x')).history.find((x) => x.id === f0.current.id).quality;
@@ -126,12 +127,12 @@ const quality = async (p, sid, field) => (await get(p, `/api/results/by-sample/$
       `pending ${s6.pending.length}；拒绝后结果仍是 ${q6}`);
 
   // 7. 轮数上限：如实说停在哪
-  await p.click('#page-agent button:has-text("新任务")'); await sleep(300);
+  await p.click('#page-agent button[title^="新会话"]'); await sleep(300);
   await ask(p, '一直查', 9000);
   rec('撞上轮数上限如实说', (await lastDone(p)).includes('轮数上限'), `「${await lastDone(p)}」`);
 
   // 8. 停止
-  await p.click('#page-agent button:has-text("新任务")'); await sleep(300);
+  await p.click('#page-agent button[title^="新会话"]'); await sleep(300);
   await ask(p, '一直查', 600);
   await p.click('#page-agent button:has-text("停止")'); await sleep(1500);
   const sid8 = (await get(p, '/api/agent/sessions')).sessions[0].session_id;
@@ -140,7 +141,7 @@ const quality = async (p, sid, field) => (await get(p, `/api/results/by-sample/$
       `界面「${await lastDone(p)}」；库里最后一条 ${s8.events.at(-1).type}/${s8.events.at(-1).reason}`);
 
   // 9. 网关不认 tools：自动退到动作协议，照样能查
-  await p.click('#page-agent button:has-text("新任务")'); await sleep(300);
+  await p.click('#page-agent button[title^="新会话"]'); await sleep(300);
   await p.selectOption('#page-agent select.model-switch', { label: 'fake-notools' }); await sleep(200);
   await ask(p, '现在平台里有什么数据？', 3000);
   const said9 = await p.evaluate((L) => [...document.querySelectorAll(`${L} .agent-msg.is-bot`)].pop()?.textContent || '', L);

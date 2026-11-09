@@ -49,8 +49,10 @@ def request_stop(session_id: str) -> None:
 
 
 def system_prompt() -> str:
-    folders = "\n".join(f"  · {r['path']}（{'读写' if r['write'] else '只读'}{'，工作区' if r['builtin'] else ''}）"
+    kinds = {"agent": "，专用目录：你写的脚本、报告、中间数据都放这儿", "workspace": "，工作区"}
+    folders = "\n".join(f"  · {r['path']}（{'读写' if r['write'] else '只读'}{kinds.get(r.get('kind'), '')}）"
                          for r in files.roots())
+    cmd = commands_enabled()
     return "\n".join([
         "你是 HTE Studio（一个本地的高通量实验数据平台）里的智能体。",
         "平台里的数据：钙钛矿薄膜的原位吸收光谱，一次测量 = 一个样品，样品按「批次」（样品号，如 ZG0013）分组；",
@@ -71,15 +73,22 @@ def system_prompt() -> str:
         "3. 读到什么说什么；没读到的不要说。相关系数、p 值、分组统计一律用 correlate / compare_batches / batch_summary 算，不要自己估。",
         "4. 提到样品、结果、文件时带上名字、编号或路径，让人能自己去核对。",
         "5. 工具结果被截断、或者有 next_offset，就是没看完 —— 要么接着查，要么在回答里说只看了一部分。",
-        "6. 会改东西的工具（审核结果、存 / 删样品集、写文件、撤销文件改动、跑批处理、停任务）执行前会停下来问用户。",
+        "6. 会改东西的工具（审核结果、存 / 删样品集、写文件、撤销文件改动、跑命令、跑批处理、停任务）执行前可能会停下来问用户。",
         "   被拒绝了就不要重试同一个操作。离群不等于测错 —— 除非用户说了，不要自己提议作废。",
         "7. 回答用中文，简短、具体。不要复述工具的原始 JSON；表格只在确实要并排比较时用。",
         "",
-        "**文件**：你只能碰下面这些文件夹（相对路径从工作区算）：",
+        "**文件与权限**：你只能碰下面这些文件夹（相对路径从工作区算）：",
         folders,
-        "  工作区里的 raw/（原始数据复制件）、config/（密钥）、modules/（功能模块）、tables/、derived/、cache/ 和数据库文件是只读的。",
+        f"  **你自己的东西（脚本、报告、中间数据）一律写在专用目录 {files.AGENT_DIR}/ 里**，比如 {files.AGENT_DIR}/plot_thickness.py。",
+        "  工作区其余部分只读；平台的安装目录（网站的核心：app/、web/ 等）任何时候都不许改。",
         "  改文件前先 read_file 拿原文；改一段用 find + replace（原文逐字一致、只出现一次），整个重写才用 content。",
-        "  每次写之前会自动备份，写错了用 rollback_file 撤销。要碰名单外的文件夹，请用户在智能体页右侧加上。",
+        "  每次写之前会自动备份，写错了用 rollback_file 撤销。要碰名单外的文件夹，请用户在智能体页加上。",
+        *([
+            "",
+            f"**跑命令**：run_command 在专用目录 {files.AGENT_DIR}/ 里跑（Windows 是 cmd，其它是 sh）；python 是平台那套，有 numpy / pandas。",
+            "  要分析就写脚本到专用目录再跑；别 pip install、别碰数据库和密钥文件；跑完看退出码和输出，失败了先读报错再改。",
+            "  结果里出现 core_changed / warning，说明平台核心被改了 —— 停下来，如实告诉用户。",
+        ] if cmd else ["", "（跑命令现在被用户关掉了：需要的话请用户在智能体页打开。）"]),
         "",
         "**批处理与任务**：run_batch 提交后是后台任务；用 get_task(wait_seconds=60) 等它跑完（可以多等几次），",
         "  跑完拿到 run_id 再 batch_summary 看结果。每跑一次，每个样品都会多一套关键结果并成为当前值 —— 别为了「看看」随手跑。",
@@ -174,8 +183,33 @@ def _step_streaming(provider, model, system, messages, toolset, mode, cancel,
 
 
 # ------------------------------------------------------------------ 主回路
+def commands_enabled() -> bool:
+    from app.storage import db
+    return bool(db.get_setting("agent.commands", True))
+
+
+def plan_prompt(text: str) -> str:
+    return "\n".join([
+        f"【计划模式】{text}", "",
+        "现在是计划模式：**只调研、不改任何东西**（你手上只有只读工具）。",
+        "1. 先用只读工具把需要的事实查清（数据在哪、有多少、现状如何）；",
+        "2. 然后调用 propose_plan 交出执行计划：目标一句话；每步写清做什么、要调哪个工具、会改什么；",
+        "   列出风险，需要用户先回答的放 questions；",
+        "3. 调用 propose_plan 后这一轮结束 —— 用户批准后才会执行。",
+    ])
+
+
+def execute_prompt(text: str, plan: dict) -> str:
+    return "\n".join([
+        f"【按已批准的计划执行】{text}", "", tools.plan_markdown(plan), "",
+        "按上面的计划一步步做；会改东西的操作照常按权限设置问用户。需要偏离计划（多做、少做、换做法）时先说明原因。每做完一步用一句话汇报。",
+    ])
+
+
 def run(session_id: str, *, provider, model: str, prompt: str | None = None,
-        resume: dict | None = None, permission: str = "ask", mode: str = "auto") -> Iterator[dict]:
+        resume: dict | None = None, permission: str = "ask", mode: str = "auto",
+        run_mode: str = "exec", approved_plan: dict | None = None) -> Iterator[dict]:
+    """run_mode：exec = 直接执行；plan = 先调研、交计划，批准后再执行（approved_plan 带着批准的那份计划）。"""
     """跑一轮（新的一句话，或者批完接着跑）。逐个产出事件；结束时（包括你点了停止）把会话存回去。"""
     s = sessions.get(session_id)
     messages: list[dict] = s["messages"]
@@ -188,7 +222,8 @@ def run(session_id: str, *, provider, model: str, prompt: str | None = None,
     turns = 0
     answer = ""
     finished = False
-    toolset = tools.TOOLS
+    planning = run_mode == "plan"
+    toolset = tools.toolset("plan" if planning else "exec", commands_enabled())
     system = system_prompt()
 
     def emit(e: dict) -> dict:
@@ -241,8 +276,10 @@ def run(session_id: str, *, provider, model: str, prompt: str | None = None,
                     yield emit({"type": "decision", "id": c["id"], "name": c["name"], "decision": "rejected", "stale": True})
                 pending = None
             text = (prompt or "").strip()
-            messages.append({"role": "user", "content": text})
-            yield emit({"type": "user", "text": text})
+            content = plan_prompt(text) if planning else execute_prompt(text, approved_plan) if approved_plan else text
+            messages.append({"role": "user", "content": content})
+            yield emit({"type": "user", "text": text, **({"run_mode": "plan"} if planning else {}),
+                        **({"approved_plan": True} if approved_plan else {})})
             if title == sessions.DEFAULT_TITLE:
                 title = text[:40]
 
@@ -296,7 +333,7 @@ def run(session_id: str, *, provider, model: str, prompt: str | None = None,
 
             calls = [{"id": c.id, "name": c.name, "args": c.args} for c in step.calls]
             messages.append({"role": "assistant", "content": step.text, "calls": calls})
-            risk = {c["id"]: getattr(tools.BY_NAME.get(c["name"]), "risk", tools.READ) for c in calls}
+            risk = {c["id"]: tools.risk_of(c["name"], c["args"]) for c in calls}
             for c in calls:
                 yield emit({"type": "tool_call", "id": c["id"], "name": c["name"], "args": c["args"], "risk": risk[c["id"]]})
 
@@ -304,6 +341,29 @@ def run(session_id: str, *, provider, model: str, prompt: str | None = None,
             for c in calls:
                 if risk[c["id"]] == tools.READ:
                     yield from call_tool(c)
+
+            if planning:
+                # 计划模式：会改东西的一律不跑，告诉模型；交了计划就收工、等用户批准
+                for c in calls:
+                    if risk[c["id"]] != tools.READ:
+                        msg = "现在是计划模式，只能调研、不能动手。把这一步写进 propose_plan 的计划里。"
+                        messages.append({"role": "tool", "call_id": c["id"], "name": c["name"], "content": msg})
+                        yield emit({"type": "tool_result", "id": c["id"], "name": c["name"], "ok": False, "ms": 0,
+                                    "summary": msg, "detail": msg})
+                plan_call = next((c for c in calls if c["name"] == "propose_plan"), None)
+                if plan_call:
+                    try:
+                        plan = tools.t_propose_plan(**{k: v for k, v in plan_call["args"].items()
+                                                       if k in ("goal", "steps", "risks", "questions")})
+                    except (TypeError, ValueError):
+                        plan = None
+                    if plan:
+                        answer = tools.plan_markdown(plan)
+                        yield emit({"type": "plan", "plan": plan, "prompt": text if resume is None else ""})
+                        messages.append({"role": "assistant", "content": answer})
+                        yield done("plan_ready")
+                        break
+                continue                      # 计划模式里没有要批的东西：接着调研
 
             ask: list[dict] = []
             for c in calls:

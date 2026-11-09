@@ -1,14 +1,15 @@
-"""智能体碰文件 —— 路径约束、打码、改前备份、改动记录、回滚（照 IFlow 的 lib/server/serverFs.ts）。
+"""智能体碰文件 —— 权限、路径约束、打码、改前备份、改动记录、回滚（照 IFlow 的 lib/server/serverFs.ts）。
 
-能碰哪些地方由「文件夹」名单决定（智能体页右侧可以加、可以删）：
-  · 工作区（workspace/）总在名单里、可写 —— 但里面这几处**只读**：数据库文件、raw/（内容寻址的原始数据复制件，
-    改了就和库里记的 sha256 对不上）、tables/、derived/、cache/（平台自己生成的）、config/（密钥）、
-    modules/（同事的功能模块 —— 往里写 Python 等于让平台下次重载时执行它）、备份目录
-  · 你加的文件夹：每个单独选「只读」或「读写」
-所有路径都解析成真实路径（含软链）再核一次在不在名单里，`../` 和软链都逃不出去。相对路径从工作区算。
+**权限（P-51：智能体的脚本等等放专门的目录，网站的核心不变）**：
+  · 写：只在**智能体专用目录** `workspace/agent/`（它的脚本、报告、中间数据都放这儿；跑命令也在这儿跑），
+    以及你另外加、并且明确给了「读写」的文件夹
+  · 读：整个工作区（数据库文件、密钥照样打码 / 不显示），以及你加的文件夹
+  · **平台核心永远不可写**：平台的安装目录（app/、web/、run.bat……，也就是工作区以外的仓库）不能加成可写文件夹，
+    写文件时再核一次；工作区里平台自己的东西（数据库、raw/、tables/、modules/、config/……）也只读
+所有路径都解析成真实路径（含软链）再核，`../` 和软链都逃不出去。相对路径从工作区算（所以专用目录写作 `agent/…`）。
 
 读出来的内容先打码再给模型（模型那头是外部网关）：配置里的 apiKey、`sk-…` 这类密钥、`Bearer …`、URL 里的口令、私钥块。
-写之前把原文件拷到 workspace/agent_backups/<改动 id>/，agent_file_change 记前后 sha；回滚先核对当前文件就是这次改出来的那份。
+写之前把原文件拷到 workspace/agent_backups/<改动 id>/（在专用目录外面，智能体自己改不到），agent_file_change 记前后 sha。
 """
 from __future__ import annotations
 
@@ -24,8 +25,9 @@ from app import config
 from app.parsers.sniff import decode_bytes
 from app.storage import db
 
+AGENT_DIR = "agent"               # 工作区里的智能体专用目录
 BACKUP_DIR = "agent_backups"
-# 工作区里只读的那几处（第一层名字）
+# 工作区里平台自己的东西（第一层名字）—— 只是给报错写原因用：整个工作区除了专用目录本来就只读
 PROTECTED = {"hte.db", "hte.db-wal", "hte.db-shm", "hte.db-journal", "raw", "tables", "derived", "cache",
              "config", "modules", "backups", BACKUP_DIR}
 # 列目录 / 搜索时默认跳过的（体积大、没信息量）；直接给路径仍可读
@@ -41,31 +43,59 @@ class FileToolError(ValueError):
     pass
 
 
-# ------------------------------------------------------------------ 名单
-def roots() -> list[dict]:
-    """[{path, write, builtin}]，工作区在第一个。你加的那些存在设置 agent.roots 里。"""
-    out = [{"path": str(config.WORKSPACE), "write": True, "builtin": True}]
-    for r in db.get_setting("agent.roots", []) or []:
-        if isinstance(r, dict) and r.get("path"):
-            out.append({"path": str(Path(r["path"])), "write": bool(r.get("write")), "builtin": False})
-    return out
-
-
-def check_new_root(path: str) -> str:
-    """加文件夹之前的检查：要存在、是目录，不许是整个盘 / 家目录本身（太宽了）。"""
-    p = Path(os.path.expanduser((path or "").strip()))
-    if not p.is_absolute():
-        raise FileToolError("要写完整路径（比如 D:\\数据\\2026 或 /home/me/data）")
-    p = Path(os.path.realpath(p))
-    if not p.is_dir():
-        raise FileToolError(f"这个文件夹不存在：{p}")
-    if p == Path(p.anchor) or p == Path(os.path.realpath(Path.home())):
-        raise FileToolError(f"{p} 太宽了（整个盘或你的家目录）—— 选一个具体的文件夹")
-    return str(p)
+def _real(p) -> Path:
+    return Path(os.path.realpath(p))
 
 
 def _within(x: Path, base: Path) -> bool:
     return x == base or base in x.parents
+
+
+# ------------------------------------------------------------------ 权限
+def agent_dir() -> Path:
+    """智能体专用目录：它写的脚本、报告、中间数据都在这儿，跑命令的工作目录也是它。"""
+    d = config.WORKSPACE / AGENT_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def in_core(p: Path) -> bool:
+    """在不在平台核心里：安装目录（仓库）里、工作区以外的一切。"""
+    root, ws = _real(config.ROOT), _real(config.WORKSPACE)
+    p = _real(p)
+    return _within(p, root) and not _within(p, ws)
+
+
+def roots() -> list[dict]:
+    """[{path, write, builtin, kind}]。专用目录排第一（可写），工作区第二（只读），后面是你加的。"""
+    out = [{"path": str(agent_dir()), "write": True, "builtin": True, "kind": "agent"},
+           {"path": str(config.WORKSPACE), "write": False, "builtin": True, "kind": "workspace"}]
+    for r in db.get_setting("agent.roots", []) or []:
+        if isinstance(r, dict) and r.get("path"):
+            write = bool(r.get("write")) and not _touches_core(Path(r["path"]))
+            out.append({"path": str(Path(r["path"])), "write": write, "builtin": False, "kind": "user"})
+    return out
+
+
+def _touches_core(p: Path) -> bool:
+    """这个文件夹（或它里面）是不是平台核心：本身在核心里，或者把整个安装目录都包进去了。"""
+    p = _real(p)
+    return in_core(p) or _within(_real(config.ROOT), p)
+
+
+def check_new_root(path: str, write: bool = False) -> str:
+    """加文件夹之前的检查：要存在、是目录，不许是整个盘 / 家目录本身（太宽了）；要写的不许碰平台核心。"""
+    p = Path(os.path.expanduser((path or "").strip()))
+    if not p.is_absolute():
+        raise FileToolError("要写完整路径（比如 D:\\数据\\2026 或 /home/me/data）")
+    p = _real(p)
+    if not p.is_dir():
+        raise FileToolError(f"这个文件夹不存在：{p}")
+    if p == Path(p.anchor) or p == _real(Path.home()):
+        raise FileToolError(f"{p} 太宽了（整个盘或你的家目录）—— 选一个具体的文件夹")
+    if write and _touches_core(p):
+        raise FileToolError(f"{p} 是（或包含）平台的安装目录 —— 网站的核心不让智能体改，只能加成只读")
+    return str(p)
 
 
 def resolve(path: str, *, write: bool = False) -> Path:
@@ -79,24 +109,22 @@ def resolve(path: str, *, write: bool = False) -> Path:
     probe = p
     while not probe.exists() and probe != probe.parent:
         probe = probe.parent
-    real = Path(os.path.realpath(probe)) / p.relative_to(probe)
-    hit = None
-    for r in roots():
-        base = Path(os.path.realpath(r["path"]))
-        if _within(real, base):
-            hit = (r, base)
-            break
-    if not hit:
+    real = _real(probe) / p.relative_to(probe)
+    # 最具体的那个文件夹说了算（专用目录在工作区里面，要先认专用目录）
+    hits = [(r, _real(r["path"])) for r in roots() if _within(real, _real(r["path"]))]
+    if not hits:
         names = "、".join(r["path"] for r in roots())
-        raise FileToolError(f"{raw} 不在能碰的文件夹里（{names}）。要用别的文件夹，请用户在智能体页右侧加上")
-    r, base = hit
+        raise FileToolError(f"{raw} 不在能碰的文件夹里（{names}）。要用别的文件夹，请用户在智能体页加上")
+    r, base = max(hits, key=lambda h: len(str(h[1])))
     if write:
+        if in_core(real):
+            raise FileToolError(f"{raw} 在平台的安装目录里 —— 网站的核心不让智能体改")
         if not r["write"]:
+            if r["kind"] == "workspace":
+                first = real.relative_to(base).parts[0] if real != base else "."
+                why = f"（{_why(first)}）" if first in PROTECTED else ""
+                raise FileToolError(f"工作区是只读的{why}；智能体只能写在专用目录 {AGENT_DIR}/ 里，比如 {AGENT_DIR}/{real.name}")
             raise FileToolError(f"{r['path']} 是只读的（用户加这个文件夹时没给写权限）")
-        if r["builtin"] and real != base:
-            first = real.relative_to(base).parts[0]
-            if first in PROTECTED:
-                raise FileToolError(f"工作区里的 {first} 是只读的（{_why(first)}）")
     return real
 
 

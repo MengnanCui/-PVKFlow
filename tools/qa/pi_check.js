@@ -36,7 +36,7 @@ const lastBot = (p) => p.evaluate((L) => [...document.querySelectorAll(`${L} .ag
   await p.evaluate(() => localStorage.setItem('hte.ai.model', JSON.stringify({ provider: '假网关', model: 'fake-1' })));
   await post(p, '/api/agent/settings', { permission: 'ask', roots: [] });
   await p.reload({ waitUntil: 'networkidle' }); await sleep(1000);
-  await p.click('#page-agent button:has-text("新任务")'); await sleep(200);
+  await p.click('#page-agent button[title^="新会话"]'); await sleep(200);
 
   // 1. 写文件：先停下来问，审批卡上有差异；没批之前磁盘上没有；批了才写；卡上能撤销
   const target = path.join(ws, 'agent', 'QA报告.md');
@@ -67,13 +67,15 @@ const lastBot = (p) => p.evaluate((L) => [...document.querySelectorAll(`${L} .ag
   fs.writeFileSync(path.join(extra, 'note.txt'), '外面的文件\n第二行\n第三行\n第四行\n');
   await ask(p, `读文件 ${path.join(extra, 'note.txt')}`);
   const deny = await p.evaluate((L) => [...document.querySelectorAll(`${L} details.agent-tool`)].pop()?.textContent || '', L);
-  await p.fill('#page-agent .agent-side input[aria-label="要加的文件夹"]', extra);
-  await p.click('#page-agent .agent-side button:has-text("加上")'); await sleep(800);
+  await p.click('#page-agent button[aria-label="设置"]'); await sleep(200);      // 文件夹在 ⚙ 抽屉里
+  await p.fill('#page-agent .agent-drawer input[aria-label="要加的文件夹"]', extra);
+  await p.click('#page-agent .agent-drawer button:has-text("加上")'); await sleep(800);
   const rows = await p.$$eval('#page-agent .agent-root-row', (xs) => xs.map((x) => x.textContent));
   await ask(p, `读文件 ${path.join(extra, 'note.txt')}`);
   rec('名单外拒绝、加上就能读', deny.includes('不在能碰的文件夹里') && rows.some((t) => t.includes(path.basename(extra)) && t.includes('只读'))
       && (await lastBot(p)).includes('一共 4 行'), `加上后：「${await lastBot(p)}」；名单 ${rows.length} 项`);
   await post(p, '/api/agent/settings', { roots: [] });
+  await p.click('#page-agent button[aria-label="设置"]'); await sleep(200);
 
   // 5. 跑批处理：先问（说清楚几个样品、配方）；批了 → 等任务 → 汇总
   const nZ = (await get(p, '/api/samples')).samples.filter((s) => s.batch === 'ZG0013').length;

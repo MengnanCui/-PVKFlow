@@ -110,6 +110,18 @@ class H(BaseHTTPRequestHandler):
                 else:
                     break
             text = " ".join(results)
+            # ---- 跑命令（P-52）
+            if '"exit_code"' in text:
+                m = re.search(r'"exit_code": (-?\d+)', text)
+                o = re.search(r'"output": "([^"]*)', text)
+                return self.reply(req, [], f"命令跑完了，退出码 {m.group(1) if m else '?'}。输出：{(o.group(1) if o else '')[:60]}", action)
+            # ---- 计划模式（P-53）：先看一眼字段，再交计划
+            if "计划模式" in q and "propose_plan" not in text:
+                return self.reply(req, [("propose_plan", {
+                    "goal": "画各批次的膜厚", "steps": [
+                        {"title": "看有哪些字段", "tool": "list_fields"},
+                        {"title": "写脚本 agent/plot.py 并运行", "tool": "run_command", "change": "agent/ 下新建一个脚本"}],
+                    "risks": ["会在 agent/ 里新建文件"]})], "字段看完了，交计划。", action)
             # ---- 文件、批处理、任务（P-49）
             if '"change_id"' in text:
                 m = re.search(r'"path": "([^"]+)"', text)
@@ -141,6 +153,12 @@ class H(BaseHTTPRequestHandler):
             if m:
                 return self.reply(req, [], f"两者正相关，r = {float(m.group(1)):.3f}。", action)
             return self.reply(req, [], "查到了。", action)
+        if "按已批准的计划执行" in q:
+            return self.reply(req, [], "按计划做完了：看了字段、写了脚本。", action)
+        if "计划模式" in q:
+            return self.reply(req, [("list_fields", {})], "先看一眼有哪些字段。", action)
+        if m := re.search(r"跑命令 (.+)", q):
+            return self.reply(req, [("run_command", {"command": m.group(1).strip()})], "", action)
         if m := re.search(r"写文件 (\S+)", q):
             return self.reply(req, [("write_file", {"path": m.group(1), "content": "# QA 报告\n\n膜厚偏薄。\n",
                                                     "note": "QA"})], "", action)

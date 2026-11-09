@@ -32,12 +32,13 @@ def _settings() -> dict:
     p = db.get_setting("agent.permission", "ask")
     d = db.get_setting("agent.driver", "auto")
     return {"permission": p if p in PERMISSIONS else "ask", "driver": d if d in DRIVERS else "auto",
-            "roots": files.roots()}
+            "roots": files.roots(), "commands": bool(db.get_setting("agent.commands", True)),
+            "agent_dir": str(files.agent_dir())}
 
 
 @router.get("/tools")
 def list_tools() -> dict:
-    return {"tools": [t.public() for t in tools.TOOLS],
+    return {"tools": [{**t.public(), "plan_only": t.plan_only} for t in tools.TOOLS],
             "limits": {"max_turns": loop.MAX_TURNS, "max_seconds": loop.MAX_SECONDS, "task_wait_max": tools.TASK_WAIT_MAX,
                        "tool_max_chars": tools.TOOL_MAX_CHARS, "compact_at_chars": loop.COMPACT_AT_CHARS}}
 
@@ -53,6 +54,8 @@ def save_settings(payload: dict = Body(...)) -> dict:
         if payload["permission"] not in PERMISSIONS:
             raise ApiError(f"permission 只能是 {' / '.join(PERMISSIONS)}", 400)
         db.set_setting("agent.permission", payload["permission"])
+    if "commands" in payload:
+        db.set_setting("agent.commands", bool(payload["commands"]))
     if "driver" in payload:
         if payload["driver"] not in DRIVERS:
             raise ApiError(f"driver 只能是 {' / '.join(DRIVERS)}", 400)
@@ -67,7 +70,7 @@ def save_settings(payload: dict = Body(...)) -> dict:
             if not isinstance(r, dict):
                 raise ApiError("roots 的每一项要是 {path, write}", 400)
             try:
-                path = files.check_new_root(str(r.get("path") or ""))
+                path = files.check_new_root(str(r.get("path") or ""), bool(r.get("write")))
             except files.FileToolError as exc:
                 raise ApiError(str(exc), 400, "bad_root") from exc
             if path in seen:
@@ -90,6 +93,16 @@ def rollback_change(change_id: str, payload: dict = Body(default={})) -> dict:
         return files.rollback(change_id, None, bool(payload.get("force")))
     except files.FileToolError as exc:
         raise ApiError(str(exc), 400, "rollback_failed") from exc
+
+
+@router.post("/sessions/{session_id}/undo-files")
+def undo_files(session_id: str) -> dict:
+    """「/undo」：撤销这个会话里智能体改过的全部文件（从新到旧）。是你点的，不经过模型。"""
+    guard(sessions.get, session_id)
+    try:
+        return files.rollback(None, session_id, False)
+    except files.FileToolError:
+        return {"restored": [], "skipped": []}
 
 
 @router.post("/sessions/{session_id}/stop")
@@ -171,8 +184,19 @@ def run(payload: dict = Body(...)):
     if not sid:
         sid = sessions.create()
     st = _settings()
+    run_mode = payload.get("run_mode") or "exec"
+    if run_mode not in ("exec", "plan"):
+        raise ApiError("run_mode 只能是 exec（直接执行）或 plan（先出计划）", 400)
+    plan = payload.get("plan")
+    if plan is not None:
+        try:
+            plan = tools.t_propose_plan(**{k: plan.get(k) for k in ("goal", "steps", "risks", "questions")
+                                          if plan.get(k) is not None})
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise ApiError(f"计划的格式不对：{exc}", 400) from exc
     return _sse(sid, {"provider": provider, "model": model, "prompt": prompt,
-                      "permission": st["permission"], "mode": st["driver"]})
+                      "permission": st["permission"], "mode": st["driver"],
+                      "run_mode": run_mode, "approved_plan": plan})
 
 
 @router.post("/sessions/{session_id}/resume")

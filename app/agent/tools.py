@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from app.agent import files
+from app.agent import commands, files
 from app.storage import db
 
 READ, WRITE, IRREVERSIBLE = "read", "write", "irreversible"
@@ -55,6 +55,9 @@ class Tool:
     handler: Callable[..., Any]
     preview: Callable[..., str] | None = None   # 审批卡上给人看的那句话（只读，不改任何东西）
     extra: dict = field(default_factory=dict)
+    # 按这一次的参数升风险（跑命令：rm -rf 这类每次都问）。返回 None = 用上面那个
+    risk_fn: Callable[..., str | None] | None = None
+    plan_only: bool = False                      # 只在计划模式里出现（propose_plan）
 
     def public(self) -> dict:
         return {"name": self.name, "label": self.label, "description": self.description,
@@ -492,6 +495,48 @@ def t_batch_summary(run_id: str) -> dict:
             "note": "fields 是这一次算出来的数（不是当前值）；同一个样品别的批处理算的不在这里"}
 
 
+# ------------------------------------------------------------------ 跑命令
+def t_run_command(command: str, cwd: str = "", timeout: int = 60) -> dict:
+    return commands.run(command, cwd, timeout, stop_requested)
+
+
+def p_run_command(command: str, cwd: str = "", timeout: int = 60) -> str:
+    return commands.preview(command, cwd, timeout)
+
+
+def r_run_command(command: str = "", **_) -> str | None:
+    return IRREVERSIBLE if commands.danger_of(command) else None
+
+
+# ------------------------------------------------------------------ 计划模式
+def t_propose_plan(goal: str, steps: list, risks: list | None = None, questions: list | None = None) -> dict:
+    """计划模式的出口：交出计划，这一轮到此为止，等用户批准（照 IFlow 的 propose_plan）。"""
+    clean = []
+    for i, st in enumerate(steps or [], 1):
+        if isinstance(st, dict):
+            clean.append({"title": str(st.get("title") or st.get("step") or f"第 {i} 步")[:200],
+                          "tool": str(st.get("tool") or "")[:60], "change": str(st.get("change") or "")[:300]})
+        else:
+            clean.append({"title": str(st)[:200], "tool": "", "change": ""})
+    if not clean:
+        raise ValueError("计划至少要有一步")
+    return {"goal": str(goal)[:300], "steps": clean[:30],
+            "risks": [str(x)[:200] for x in (risks or [])][:10],
+            "questions": [str(x)[:200] for x in (questions or [])][:5]}
+
+
+def plan_markdown(plan: dict) -> str:
+    lines = [f"**计划：{plan['goal']}**", ""]
+    for i, st in enumerate(plan["steps"], 1):
+        extra = "；".join(x for x in (f"用 {st['tool']}" if st.get("tool") else "", st.get("change") or "") if x)
+        lines.append(f"{i}. {st['title']}" + (f"（{extra}）" if extra else ""))
+    if plan.get("risks"):
+        lines += ["", "风险：" + "；".join(plan["risks"])]
+    if plan.get("questions"):
+        lines += ["", "要你先回答：" + "；".join(plan["questions"])]
+    return "\n".join(lines)
+
+
 # ------------------------------------------------------------------ 注册表
 _S = {"type": "string"}
 TOOLS: list[Tool] = [
@@ -587,11 +632,54 @@ TOOLS: list[Tool] = [
     Tool("cancel_task", "停下任务",
          "停下一个正在跑的后台任务。已经跑完的样品结果保留。会先问用户。",
          _obj({"task_id": _S}, ["task_id"]), WRITE, t_cancel_task, p_cancel_task),
+    Tool("run_command", "跑命令",
+         "在智能体专用目录（workspace/agent/）里跑一条命令（Windows 是 cmd，其它是 sh），返回退出码和输出。"
+         "python 用的是平台自己那套（有 numpy / pandas）。写脚本用 write_file 写到 agent/ 下，再用它跑。"
+         "cwd 只能是可写的文件夹；timeout 默认 60 秒、最多 600。会先问用户；删东西、装依赖这类每次都问。",
+         _obj({"command": {**_S, "description": "要跑的命令，如 python plot.py"},
+               "cwd": {**_S, "description": "工作目录，默认专用目录"},
+               "timeout": {"type": "integer", "description": "秒，默认 60，最多 600"}}, ["command"]),
+         WRITE, t_run_command, p_run_command, risk_fn=r_run_command),
+    Tool("propose_plan", "交出计划",
+         "（计划模式）调研完了交出执行计划：goal 一句话目标；steps 每步 {title, tool, change}（要用哪个工具、会改什么）；"
+         "risks 风险；questions 要用户先回答的。调用后这一轮结束，用户批准后才执行。",
+         _obj({"goal": _S, "steps": {"type": "array", "items": {"type": "object"}},
+               "risks": {"type": "array", "items": _S}, "questions": {"type": "array", "items": _S}}, ["goal", "steps"]),
+         READ, t_propose_plan, plan_only=True),
     Tool("batch_summary", "批处理结果汇总",
          "一次批处理的汇总：几个样品成功 / 失败、失败的原因、每个字段这一次算出来的均值 / 中位数 / 范围。run_id 来自 get_task 或 list_runs。",
          _obj({"run_id": _S}, ["run_id"]), READ, t_batch_summary),
 ]
 BY_NAME = {t.name: t for t in TOOLS}
+
+
+def risk_of(name: str, args) -> str:
+    """这一次调用的风险：工具本身的等级，参数看起来更危险就升（跑命令）。不认识的工具当只读（派发时会报错）。"""
+    t = BY_NAME.get(name)
+    if not t:
+        return READ
+    if t.risk_fn and isinstance(args, dict):
+        try:
+            up = t.risk_fn(**args)
+        except TypeError:
+            up = None
+        if up:
+            return up
+    return t.risk
+
+
+def toolset(mode: str = "exec", commands_enabled: bool = True) -> list[Tool]:
+    """这一轮交给模型的工具。计划模式：只读的 + propose_plan（只调研、不动手）；执行模式：除 propose_plan 外全部。"""
+    out = []
+    for t in TOOLS:
+        if t.name == "run_command" and not commands_enabled:
+            continue
+        if mode == "plan":
+            if t.risk == READ:
+                out.append(t)
+        elif not t.plan_only:
+            out.append(t)
+    return out
 
 
 # ------------------------------------------------------------------ 校验与派发

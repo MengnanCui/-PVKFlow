@@ -1,13 +1,13 @@
-// 智能体：让模型自己调工具查数据、帮你审结果 —— 会改数据的操作先停下来问你。
+// 智能体：一个 pi-agent 式的轻量对话窗口（P-53）。
 //
-// 和右上角「AI 助手」抽屉的分工：抽屉是「带着当前页面的一段事实问答」，模型只看得到平台塞给它的那些；
-// 这里模型自己决定查什么（字段清单 → 相关 → 某个样品的结果……），一轮轮调工具，
-// 每一步都摊在界面上（调了什么、参数、用了多久、拿回了什么）。设计照 IFlow 的智能体：
-//   · 工具分三级：只读的直接跑；会改数据但改得回来的（审核、存样品集）默认问；删除每次都问
-//   · 停在审批上的那一轮存在服务端，点了「批准 / 拒绝」从那儿接着跑；拒绝会告诉模型
-//   · 轮数、时间、单个工具结果的大小都有上限，撞上了如实说停在哪
+// 一栏到底：顶上一条细栏（会话、权限「询问 / 自动」、模式「直接执行 / 先出计划」、模型、⚙），
+// 中间是对话 —— 每次调工具是一行（▸ 工具 · 关键参数 · ✓ 用时，点开看参数和原文），
+// 底下一个输入框，支持斜杠命令（/plan /exec /ask /auto /new /undo /stop /help）。
+// 权限、文件夹、工具清单这些不常动的东西收进 ⚙ 抽屉，不占地方。
 //
-// 页面是常驻的：跑着的时候切去别的页再回来，回答还在接着出，不会被打断。
+// 设计照 IFlow 的智能体：工具分三级（只读直接跑 / 会改东西的按权限问 / 删除和危险命令每次问）；
+// 停在审批上的那一轮存在服务端；计划模式只调研、交计划，批准后再按计划执行。
+// 页面是常驻的：跑着的时候切去别的页再回来，回答还在接着出。
 
 import { api } from '../api.js';
 import { h, mount, toast, fmtTime, richText, confirmDialog } from '../ui.js';
@@ -16,35 +16,48 @@ import { modelSelect, pickedModel, onModelPicked, syncSelect } from '../componen
 export const meta = {
   id: 'agent',
   title: '智能体',
-  desc: '让 AI 自己调工具查数据、读写文件、跑批处理 —— 会改东西的操作先问你',
+  desc: '查数据、读写文件、跑命令和批处理 —— 写的东西都在专用目录里，会改东西的操作按你的设置先问',
 };
 
 const RISK = {
   read: { tag: '只读', cls: 'tag', note: '直接跑' },
-  write: { tag: '会改数据', cls: 'tag.tag-warn', note: '先问你；改得回来' },
-  irreversible: { tag: '删除', cls: 'tag.tag-danger', note: '每次都问；删了找不回' },
+  write: { tag: '会改东西', cls: 'tag.tag-warn', note: '按权限设置问你；改得回来' },
+  irreversible: { tag: '每次都问', cls: 'tag.tag-danger', note: '删除 / 危险命令：每次都问' },
 };
 const DONE_NOTE = {
   awaiting_approval: '等你确认',
+  plan_ready: '计划交出来了，等你批准',
   max_turns: '到了轮数上限，停下来了',
   max_time: '查得太久，停下来了',
   canceled: '已停止',
   failed: '没有完成',
 };
-const SUGGEST = [
-  '现在平台里有什么数据？还有多少结果没审？',
-  '有哪些字段？挑两个看起来相关的算一下相关性，告诉我哪些样品偏离趋势',
-  '对 ZG0013 这一批跑一次批处理，跑完告诉我膜厚的范围',
-  '把这次的结论写成一份 Markdown 报告，存到 agent/报告.md',
+const HELP = [
+  ['/plan', '切到「先出计划」：只调研、交计划，你批准了才动手'],
+  ['/exec', '切到「直接执行」'],
+  ['/ask', '会改东西的操作每次问我'],
+  ['/auto', '会改东西的直接做（删除、危险命令仍然问）'],
+  ['/new', '开一个新会话'],
+  ['/undo', '撤销这个会话里智能体改过的全部文件'],
+  ['/stop', '停下正在跑的这一轮'],
+  ['/help', '看这张表'],
 ];
+// 每种工具在一行里显示哪个参数（pi 那样：一眼看出它在干什么）
+const KEY_ARG = {
+  run_command: 'command', read_file: 'path', write_file: 'path', list_files: 'path', search_files: 'pattern',
+  get_task: 'task_id', cancel_task: 'task_id', batch_summary: 'run_id', sample_results: 'sample_id',
+  find_samples: 'q', correlate: 'x', compare_batches: 'field', propose_plan: 'goal', rollback_file: 'change_id',
+};
 
 const S = {
-  tools: [], byName: {}, limits: null, settings: { permission: 'ask' },
-  sessionId: null, ctrl: null, live: null, cards: new Map(), decisions: {}, remember: new Set(),
+  tools: [], byName: {}, limits: null, settings: { permission: 'ask', commands: true, roots: [] },
+  runMode: 'exec', sessionId: null, ctrl: null, live: null, cards: new Map(), decisions: {}, remember: new Set(),
 };
 const refs = {};
 
 const label = (name) => S.byName[name]?.label || name;
+const RUN_MODE_KEY = 'hte.agent.runMode';
+try { S.runMode = localStorage.getItem(RUN_MODE_KEY) === 'plan' ? 'plan' : 'exec'; } catch { /* 隐私模式 */ }
 
 export async function view(host, ctx) {
   refs.nav = ctx.nav;
@@ -53,46 +66,60 @@ export async function view(host, ctx) {
 }
 
 // ------------------------------------------------------------------ 骨架
+function seg(name, value, options, onPick) {
+  const el = h('span.agent-seg', { role: 'radiogroup', 'aria-label': name },
+    ...options.map(([v, text, title]) => h('button', {
+      type: 'button', role: 'radio', title, dataset: { v },
+      'aria-checked': String(v === value), onclick: () => onPick(v),
+    }, text)));
+  el.set = (v) => { for (const b of el.children) b.setAttribute('aria-checked', String(b.dataset.v === v)); };
+  return el;
+}
+
 function buildShell(host) {
   refs.log = h('div.agent-log', { role: 'log', 'aria-live': 'polite' });
-  refs.status = h('div.agent-status.xsmall.dim');
+  refs.status = h('span.agent-status.xsmall.dim');
   refs.input = h('textarea.input.agent-input', {
-    rows: 3, placeholder: '想让它查什么、做什么？（回车发送，Shift+回车换行）',
+    rows: 2, placeholder: '说要做什么…（回车发送，Shift+回车换行，/ 看命令）',
     'aria-label': '给智能体的话',
     onkeydown: (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
     },
   });
-  refs.send = h('button.btn.btn-primary', { onclick: () => send() }, '发送');
+  refs.send = h('button.btn.btn-primary.btn-sm', { onclick: () => send() }, '发送');
   // 用 display 而不是 hidden 属性：.btn 自己的 display 会盖过 [hidden]
-  refs.stop = h('button.btn', { style: { display: 'none' }, onclick: () => stopRun() }, '停止');
+  refs.stop = h('button.btn.btn-sm', { style: { display: 'none' }, onclick: () => stopRun() }, '停止');
   refs.modelHost = h('span');
-  refs.sessions = h('div.agent-sessions');
-  refs.toolList = h('div.agent-tools');
-  refs.perm = h('div');
-  refs.roots = h('div');
-  refs.limits = h('div.xsmall.dim');
+  refs.sessionSel = h('select.select.select-sm.agent-session-sel', {
+    'aria-label': '会话', onchange: (e) => { if (e.target.value) openSession(e.target.value); else newSession(); },
+  });
+  refs.perm = seg('权限', S.settings.permission, [
+    ['ask', '询问', '会改东西的操作（写文件、跑命令、跑批处理……）每次先问我'],
+    ['auto', '自动', '会改东西的直接做；删除、危险命令仍然每次问'],
+  ], (v) => setPermission(v));
+  refs.mode = seg('模式', S.runMode, [
+    ['exec', '直接执行', '说了就做'],
+    ['plan', '先出计划', '只调研、交计划，你批准了才动手'],
+  ], (v) => setRunMode(v));
+  refs.drawer = h('div.agent-drawer', { hidden: true });
+  refs.foot = h('div.agent-foot.xsmall.dim');
 
-  refs.root = h('div.agent-layout',
-    h('div.agent-main',
-      refs.log,
-      h('div.agent-composer',
-        refs.input,
-        h('div.row.gap-2', { style: { alignItems: 'center' } },
-          refs.status, h('span.grow'), refs.modelHost, refs.stop, refs.send))),
-    h('aside.agent-side',
-      h('div.panel.panel-body',
-        h('div.row-between', h('div.panel-title', '会话'),
-          h('button.btn.btn-sm', { onclick: () => newSession() }, '新任务')),
-        refs.sessions),
-      h('div.panel.panel-body',
-        h('div.panel-title', '会改东西的操作'), refs.perm),
-      h('div.panel.panel-body',
-        h('div.panel-title', '它能碰的文件夹'), refs.roots),
-      h('div.panel.panel-body',
-        h('div.panel-title', '它能用的工具'),
-        h('p.xsmall.dim', '平台的库（样品、结果、样品集）、上面那几个文件夹、批处理和后台任务。不跑任意命令。'),
-        refs.toolList, refs.limits)));
+  refs.root = h('div.agent-shell',
+    h('div.agent-bar',
+      refs.sessionSel,
+      h('button.btn.btn-sm.btn-ghost', { title: '新会话（/new）', onclick: () => newSession() }, '＋'),
+      h('span.agent-bar-gap'),
+      refs.perm, refs.mode, refs.modelHost,
+      h('button.btn.btn-sm.btn-ghost', {
+        title: '权限、文件夹、跑命令、工具清单', 'aria-label': '设置',
+        onclick: () => { refs.drawer.hidden = !refs.drawer.hidden; },
+      }, '⚙')),
+    refs.drawer,
+    refs.log,
+    h('div.agent-composer',
+      refs.input,
+      h('div.row.gap-2', { style: { alignItems: 'center' } }, refs.status, h('span.grow'), refs.stop, refs.send),
+      refs.foot));
   mount(host, refs.root);
   drawEmpty();
   drawModel();
@@ -107,95 +134,122 @@ async function drawModel() {
 
 function drawEmpty() {
   mount(refs.log, h('div.agent-empty',
-    h('p.small', '它会自己决定先查什么、再查什么，每一步都会摊在这里。会改东西的操作（审核结果、存 / 删样品集、写文件、跑批处理、停任务）执行前会停下来问你；写文件前会自动备份，随时能撤销。'),
-    h('div.agent-suggest', ...SUGGEST.map((t) => h('button.btn.btn-sm.btn-ghost', {
-      onclick: () => { refs.input.value = t; refs.input.focus(); },
-    }, t)))));
+    h('p.small', '它会自己查数据、读写文件、跑命令和批处理，每一步都摊在这里。',
+      '它写的脚本、报告都放在专用目录 workspace/agent/ 里；平台本身（网站的核心）它改不了。'),
+    h('div.agent-suggest', ...[
+      '现在平台里有什么数据？还有多少结果没审？',
+      '写一个脚本把各批次的膜厚画成箱线图，存到 agent/ 里并运行',
+      '对 ZG0013 这一批跑一次批处理，跑完告诉我膜厚的范围',
+    ].map((t) => h('button.btn.btn-sm.btn-ghost', { onclick: () => { refs.input.value = t; refs.input.focus(); } }, t))),
+    h('p.xsmall.dim', '输入 / 看命令：/plan 先出计划，/exec 直接执行，/ask 每次问，/auto 自动，/undo 撤销它改的文件。')));
 }
 
-// ------------------------------------------------------------------ 侧栏
+function drawFoot() {
+  const st = S.settings;
+  refs.foot.textContent = [
+    `写：${st.agent_dir ? 'workspace/agent/' : '专用目录'}${(st.roots || []).some((r) => r.kind === 'user' && r.write) ? ' + 你给的文件夹' : ''}`,
+    `跑命令：${st.commands ? '开' : '关'}`,
+    `权限：${st.permission === 'auto' ? '自动' : '询问'}`,
+    `模式：${S.runMode === 'plan' ? '先出计划' : '直接执行'}`,
+  ].join(' · ');
+}
+
+// ------------------------------------------------------------------ 设置
 async function loadSide() {
   try {
-    const [t, st] = await Promise.all([
-      S.tools.length ? null : api.agentTools(),
-      api.agentSettings(),
-    ]);
+    const [t, st] = await Promise.all([S.tools.length ? null : api.agentTools(), api.agentSettings()]);
     if (t) {
       S.tools = t.tools; S.limits = t.limits;
       S.byName = Object.fromEntries(t.tools.map((x) => [x.name, x]));
     }
     S.settings = st;
   } catch (err) { toast(err.message, 'err'); }
-  drawTools();
-  drawPerm();
-  drawRoots();
+  refs.perm.set(S.settings.permission);
+  drawDrawer();
+  drawFoot();
   drawSessions();
 }
 
-function drawTools() {
-  mount(refs.toolList, ...S.tools.map((t) => {
-    const r = RISK[t.risk] || RISK.read;
-    return h('div.agent-tool-row', { title: t.description },
-      h('span.small', t.label), h('span.mono.xsmall.dim', t.name), h('span.grow'),
-      h(`span.${r.cls}`, r.tag));
-  }));
-  if (S.limits) {
-    refs.limits.textContent = `一次最多 ${S.limits.max_turns} 轮、${Math.round(S.limits.max_seconds / 60)} 分钟（等批处理也算在里面，`
-      + `每次最多等 ${S.limits.task_wait_max} 秒）；每个工具结果最多给模型 ${S.limits.tool_max_chars} 字，`
-      + `上下文超过 ${S.limits.compact_at_chars} 字就折叠早期的工具结果。`;
-  }
+async function saveSettings(patch, msg = '已保存') {
+  try {
+    S.settings = await api.saveAgentSettings(patch);
+    toast(msg, 'ok');
+  } catch (err) { toast(err.message, 'err', 6000); }
+  refs.perm.set(S.settings.permission);
+  drawDrawer();
+  drawFoot();
 }
 
-function drawPerm() {
-  const opt = (v, title, desc) => h('label.kind-option',
-    h('input', {
-      type: 'radio', name: 'agent-perm', value: v, checked: S.settings.permission === v,
-      onchange: async () => {
-        try { S.settings = await api.saveAgentSettings({ permission: v }); toast('已保存', 'ok'); }
-        catch (err) { toast(err.message, 'err'); }
-      },
-    }),
-    h('div', h('div.small.strong', title), h('div.xsmall.dim', desc)));
+const setPermission = (v) => saveSettings({ permission: v },
+  v === 'auto' ? '自动：会改东西的直接做（删除、危险命令仍然问）' : '询问：会改东西的每次先问你');
+
+function setRunMode(v) {
+  S.runMode = v;
+  refs.mode.set(v);
+  try { localStorage.setItem(RUN_MODE_KEY, v); } catch { /* 隐私模式 */ }
+  drawFoot();
+  toast(v === 'plan' ? '先出计划：只调研、交计划，你批准了才动手' : '直接执行', 'info');
+}
+
+/** ⚙ 抽屉：权限一览（读 / 写 / 跑命令 / 核心）、文件夹、调用方式、工具清单。 */
+function drawDrawer() {
+  const st = S.settings;
+  const cmd = h('label.small.row.gap-1', h('input', {
+    type: 'checkbox', checked: !!st.commands, onchange: (e) => saveSettings({ commands: e.target.checked },
+      e.target.checked ? '已允许跑命令' : '已关掉跑命令'),
+  }), '允许跑命令');
   const driver = h('select.select.select-sm', {
     'aria-label': '模型怎么调工具',
-    onchange: async (e) => {
-      try { S.settings = await api.saveAgentSettings({ driver: e.target.value }); toast('已保存', 'ok'); }
-      catch (err) { toast(err.message, 'err'); }
-    },
+    onchange: (e) => saveSettings({ driver: e.target.value }),
   }, ...[['auto', '自动判断（推荐）'], ['toolcall', '原生工具调用'], ['action', 'JSON 动作协议']]
-    .map(([v, t]) => h('option', { value: v, selected: S.settings.driver === v }, t)));
-  mount(refs.perm,
-    opt('ask', '每次问我', '审核结果、存样品集、写文件、跑批处理、停任务之前停下来，你点了才做'),
-    opt('auto', '改得回来的直接做', '上面这些不再问（写文件照样先备份）；删除样品集仍然每次问'),
-    h('div.row.gap-2.mt-3', { style: { alignItems: 'center' } }, h('span.small', '模型怎么调工具'), driver),
-    h('p.xsmall.dim', '自动：先按标准的工具调用发；网关不认就改成让模型输出一段 JSON 动作，并记住。'
-      + '网关认工具调用、但模型用得不好时，可以手动选 JSON 动作协议。'));
+    .map(([v, t]) => h('option', { value: v, selected: st.driver === v }, t)));
+  refs.roots = h('div');
+  mount(refs.drawer,
+    h('div.agent-drawer-grid',
+      h('div',
+        h('div.small.strong', '权限'),
+        h('ul.xsmall.agent-perm-list',
+          h('li', h('b', '写：'), '只在专用目录 ', h('span.mono', st.agent_dir || 'workspace/agent'),
+            '（它的脚本、报告、中间数据），以及下面你给了「读写」的文件夹'),
+          h('li', h('b', '读：'), '整个工作区 + 下面的文件夹；读出来的密钥先打码再给模型'),
+          h('li', h('b', '核心：'), '平台的安装目录（网站本身）任何时候都不能写；跑命令后还会检查核心有没有被改'),
+          h('li', h('b', '跑命令：'), '在专用目录里跑，超时 / 停止会杀掉整棵进程树；删除、装依赖这类每次都问'),
+          h('li', h('b', '问不问：'), '顶上「询问 / 自动」；写文件前都会备份，/undo 一键撤销')),
+        h('div.row.gap-3.mt-2', { style: { alignItems: 'center' } }, cmd,
+          h('span.small', '调用方式'), driver)),
+      h('div', h('div.small.strong', '它能碰的文件夹'), refs.roots),
+      h('div',
+        h('div.small.strong', '工具'),
+        h('div.agent-tools', ...S.tools.map((t) => {
+          const r = RISK[t.risk] || RISK.read;
+          return h('div.agent-tool-row', { title: t.description },
+            h('span.small', t.label), h('span.mono.xsmall.dim', t.name), h('span.grow'),
+            t.plan_only ? h('span.tag', '计划模式') : h(`span.${r.cls}`, r.tag));
+        })),
+        S.limits ? h('p.xsmall.dim', `一次最多 ${S.limits.max_turns} 轮、${Math.round(S.limits.max_seconds / 60)} 分钟；`
+          + `每个工具结果最多给模型 ${S.limits.tool_max_chars} 字。`) : null)));
+  drawRoots();
 }
 
-/** 它能碰的文件夹：工作区总在（里面 raw / config / modules / 数据库只读）；你加的每个单独选只读还是读写。 */
+/** 文件夹：专用目录（可写）、工作区（只读）总在；你加的每个单独选只读还是读写（平台核心只能只读）。 */
 function drawRoots() {
   const roots = S.settings.roots || [];
-  const mine = roots.filter((r) => !r.builtin);
-  const save = async (next) => {
-    try {
-      S.settings = await api.saveAgentSettings({ roots: next.map((r) => ({ path: r.path, write: r.write })) });
-      drawRoots();
-      toast('已保存。下一句话起生效', 'ok');
-    } catch (err) { toast(err.message, 'err', 6000); }
-  };
+  const mine = roots.filter((r) => r.kind === 'user');
+  const save = (next) => saveSettings({ roots: next.map((r) => ({ path: r.path, write: r.write })) }, '已保存。下一句话起生效');
   const path = h('input.input.input-sm', { placeholder: '完整路径，如 D:\\数据\\2026', 'aria-label': '要加的文件夹',
                                             style: { width: '100%' } });
   const rw = h('input', { type: 'checkbox', 'aria-label': '允许写' });
+  const name = (r) => (r.kind === 'agent' ? '专用目录 agent/' : r.kind === 'workspace' ? '工作区' : r.path);
   mount(refs.roots,
-    ...roots.map((r) => h('div.agent-root-row' + (r.builtin ? '.is-builtin' : ''),
-      h('span.mono.xsmall.grow', { title: r.path }, r.builtin ? '工作区' : r.path),
-      r.builtin
-        ? h('span.tag', { title: 'raw / config / modules / tables / derived / cache 和数据库文件只读' }, '读写·部分只读')
+    ...roots.map((r) => h(`div.agent-root-row${r.kind !== 'user' ? '.is-builtin' : ''}`,
+      h('span.mono.xsmall.grow', { title: r.path }, name(r)),
+      r.kind !== 'user'
+        ? h('span.tag', r.write ? '读写' : '只读')
         : h('button.btn.btn-sm.btn-ghost', {
             title: '切换只读 / 读写',
             onclick: () => save(mine.map((x) => (x.path === r.path ? { ...x, write: !x.write } : x))),
           }, r.write ? '读写' : '只读'),
-      r.builtin ? null : h('button.icon-btn', {
+      r.kind !== 'user' ? null : h('button.icon-btn', {
         title: '不让它再碰这个文件夹', 'aria-label': `移除 ${r.path}`,
         onclick: () => save(mine.filter((x) => x.path !== r.path)),
       }, '✕'))),
@@ -207,32 +261,17 @@ function drawRoots() {
             if (!path.value.trim()) { toast('先填文件夹路径', 'err'); return; }
             save([...mine, { path: path.value.trim(), write: rw.checked }]);
           },
-        }, '加上'))),
-    h('p.xsmall.dim.mt-1', '相对路径从工作区算。写之前会备份到 workspace/agent_backups/，读出来的密钥会先打码再给模型。'));
+        }, '加上'))));
 }
 
+// ------------------------------------------------------------------ 会话
 async function drawSessions() {
   let list = [];
-  try { list = (await api.agentSessions()).sessions; } catch { /* 侧栏取不到不挡主流程 */ }
-  if (!list.length) { mount(refs.sessions, h('p.xsmall.dim', '还没有会话。说第一句话就会建一个。')); return; }
-  mount(refs.sessions, ...list.map((s) => h('div.agent-session-row' + (s.session_id === S.sessionId ? '.is-current' : ''),
-    h('button.linklike.grow', {
-      title: s.title, onclick: () => openSession(s.session_id),
-    }, s.title),
-    s.waiting ? h('span.tag.tag-warn', '等确认') : null,
-    h('span.xsmall.dim', fmtTime(s.updated_at)),
-    h('button.icon-btn', {
-      title: '删除这个会话', 'aria-label': `删除会话「${s.title}」`,
-      onclick: async () => {
-        if (!await confirmDialog(`删除会话「${s.title}」？只删这段对话记录，它做过的改动不会撤回。`,
-          { confirmLabel: '删除', danger: true })) return;
-        try {
-          await api.deleteAgentSession(s.session_id);
-          if (s.session_id === S.sessionId) newSession();
-          drawSessions();
-        } catch (err) { toast(err.message, 'err'); }
-      },
-    }, '✕'))));
+  try { list = (await api.agentSessions()).sessions; } catch { /* 取不到不挡主流程 */ }
+  mount(refs.sessionSel,
+    h('option', { value: '' }, S.sessionId ? '＋ 新会话' : '新会话'),
+    ...list.map((s) => h('option', { value: s.session_id, selected: s.session_id === S.sessionId },
+      `${s.waiting ? '⏸ ' : ''}${s.title} · ${fmtTime(s.updated_at)}`)));
 }
 
 function newSession() {
@@ -245,7 +284,7 @@ function newSession() {
 }
 
 async function openSession(id) {
-  if (S.ctrl) { toast('这一轮还在跑，先停下来', 'warn'); return; }
+  if (S.ctrl) { toast('这一轮还在跑，先停下来', 'warn'); drawSessions(); return; }
   try {
     const s = await api.agentSession(id);
     S.sessionId = id;
@@ -258,13 +297,58 @@ async function openSession(id) {
   } catch (err) { toast(err.message, 'err'); }
 }
 
+async function deleteSession() {
+  if (!S.sessionId) return;
+  if (!await confirmDialog('删掉这个会话？只删对话记录，它做过的改动不会撤回（要撤回文件先 /undo）。',
+    { confirmLabel: '删除', danger: true })) return;
+  try { await api.deleteAgentSession(S.sessionId); newSession(); } catch (err) { toast(err.message, 'err'); }
+}
+
+// ------------------------------------------------------------------ 斜杠命令
+async function slash(cmd) {
+  const [name] = cmd.trim().split(/\s+/);
+  switch (name) {
+    case '/plan': setRunMode('plan'); return true;
+    case '/exec': setRunMode('exec'); return true;
+    case '/ask': setPermission('ask'); return true;
+    case '/auto': setPermission('auto'); return true;
+    case '/new': newSession(); return true;
+    case '/stop': stopRun(); return true;
+    case '/delete': deleteSession(); return true;
+    case '/undo': {
+      if (!S.sessionId) { toast('还没有会话', 'warn'); return true; }
+      if (!await confirmDialog('撤销这个会话里智能体改过的全部文件？（从备份还原，新建的删掉）', { confirmLabel: '撤销' })) return true;
+      try {
+        const r = await api.agentUndoSession(S.sessionId);
+        append(h('div.agent-done.xsmall', r.restored.length ? `已撤销：${r.restored.join('、')}` : '没有可撤销的文件改动',
+          r.skipped.length ? `；没撤：${r.skipped.join('、')}` : ''));
+      } catch (err) { toast(err.message, 'err', 6000); }
+      return true;
+    }
+    case '/help': case '/':
+      append(h('div.agent-help.xsmall', ...HELP.map(([c, d]) => h('div', h('span.mono', c), '　', d))));
+      return true;
+    default:
+      toast(`不认识的命令：${name}（/help 看全部）`, 'warn');
+      return true;
+  }
+}
+
 // ------------------------------------------------------------------ 发送 / 接着跑
-async function send() {
-  const prompt = refs.input.value.trim();
+async function send(override) {
+  const prompt = (override ?? refs.input.value).trim();
   if (!prompt || S.ctrl) return;
+  if (!override) refs.input.value = '';
+  if (prompt.startsWith('/') && !override) { await slash(prompt); return; }
   if (!S.sessionId) mount(refs.log);
-  refs.input.value = '';
-  await stream((opts) => api.agentRun({ prompt, session_id: S.sessionId, ...pickedModel() }, opts));
+  await stream((opts) => api.agentRun({ prompt, session_id: S.sessionId, run_mode: S.runMode, ...pickedModel() }, opts));
+}
+
+/** 批准计划：按这份计划直接执行（这一轮不管顶上是不是「先出计划」）。 */
+async function runPlan(plan) {
+  if (S.ctrl) return;
+  await stream((opts) => api.agentRun({ prompt: '按计划执行', session_id: S.sessionId, run_mode: 'exec', plan,
+                                        ...pickedModel() }, opts));
 }
 
 async function resume() {
@@ -292,8 +376,9 @@ async function stream(start) {
   }
 }
 
-/** 停止：先告诉服务端（正在等批处理的那一步每秒看一眼这个标记），再断开连接。 */
+/** 停止：先告诉服务端（等批处理、跑命令的那一步每 0.1–1 秒看一眼这个标记），再断开连接。 */
 async function stopRun() {
+  if (!S.ctrl) return;
   if (S.sessionId) { try { await api.agentStop(S.sessionId); } catch { /* 断开连接照样能停 */ } }
   S.ctrl?.abort();
 }
@@ -328,7 +413,11 @@ function onEvent(e, { replay = false, waiting = new Set() } = {}) {
       if (!replay) refs.status.textContent = e.text;
       break;
     case 'user':
-      append(h('div.agent-msg.is-user', e.text));
+      append(h('div.agent-msg.is-user', e.run_mode === 'plan' ? h('span.tag', { style: { marginRight: '6px' } }, '先出计划') : null,
+        e.approved_plan ? h('span.tag.tag-accent', { style: { marginRight: '6px' } }, '按计划执行') : null, e.text));
+      break;
+    case 'plan':
+      append(planCard(e.plan, !replay));
       break;
     case 'delta':
       if (e.first || !S.live) S.live = append(h('div.agent-msg.is-bot.is-live'));
@@ -378,10 +467,12 @@ function toolCard(e) {
   const body = h('div.agent-tool-body',
     h('div.xsmall.dim', '参数'),
     h('pre.agent-pre', JSON.stringify(e.args ?? {}, null, 2)));
+  const key = keyArg(e);
   const card = h('details.agent-tool', { dataset: { id: e.id, name: e.name } },
     h('summary',
-      h('span.agent-tool-icon', '⚙'),
-      h('span.small', label(e.name)), h('span.mono.xsmall.dim', e.name),
+      h('span.agent-tool-icon', '▸'),
+      h('span.small.strong', label(e.name)),
+      key ? h('span.mono.xsmall.agent-key', { title: key }, key) : h('span.mono.xsmall.dim', e.name),
       e.risk !== 'read' ? h(`span.${r.cls}`, r.tag) : null,
       h('span.grow'), status),
     body);
@@ -416,6 +507,34 @@ function fillCard(card, e) {
   }
 }
 
+function keyArg(e) {
+  const a = e.args || {};
+  const v = a[KEY_ARG[e.name]] ?? Object.values(a).find((x) => typeof x === 'string');
+  return v === undefined || v === null || v === '' ? '' : String(v).replace(/\s+/g, ' ').slice(0, 120);
+}
+
+/** 计划卡：目标、步骤、风险、要你先回答的；「按计划执行」就照它做，「改一改」把它填回输入框。 */
+function planCard(plan, active) {
+  const go = h('button.btn.btn-sm.btn-primary', {
+    disabled: !active,
+    onclick: () => { go.disabled = true; edit.disabled = true; go.textContent = '正在按计划执行…'; runPlan(plan); },
+  }, '按计划执行');
+  const edit = h('button.btn.btn-sm', {
+    disabled: !active,
+    onclick: () => {
+      refs.input.value = `计划要改：\n${plan.steps.map((s, i) => `${i + 1}. ${s.title}`).join('\n')}\n（在这里写要改什么）`;
+      refs.input.focus();
+    },
+  }, '改一改');
+  return h('div.agent-plan', { role: 'group', 'aria-label': '执行计划' },
+    h('div.small.strong', `计划：${plan.goal}`),
+    h('ol.small', ...plan.steps.map((s) => h('li', s.title,
+      s.tool || s.change ? h('span.xsmall.dim', `（${[s.tool && `用 ${label(s.tool)}`, s.change].filter(Boolean).join('；')}）`) : null))),
+    plan.risks?.length ? h('div.xsmall', h('b', '风险：'), plan.risks.join('；')) : null,
+    plan.questions?.length ? h('div.xsmall', h('b', '要你先回答：'), plan.questions.join('；')) : null,
+    h('div.row.gap-2.mt-2', go, edit, h('span.xsmall.dim', active ? '批准后按这份计划执行；会改东西的操作照样按顶上的「询问 / 自动」' : '（这份计划已经过去了）')));
+}
+
 const pretty = (text) => {
   try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
 };
@@ -425,7 +544,7 @@ function approvalCard(e, active) {
   const remember = e.risk === 'write'
     ? h('label.xsmall.row.gap-1', h('input', { type: 'checkbox', disabled: !active }),
         `本次会话内不再问「${label(e.name)}」`)
-    : h('span.xsmall.dim', '删除每次都要问，记不住');
+    : h('span.xsmall.dim', '这类每次都要问，记不住');
   const decide = (ok) => {
     S.decisions[e.id] = ok ? 'approve' : 'reject';
     if (ok && remember.querySelector?.('input')?.checked) S.remember.add(e.name);
@@ -435,7 +554,7 @@ function approvalCard(e, active) {
     const open = [...refs.log.querySelectorAll('.agent-approval.is-open')].filter((x) => !(x.dataset.id in S.decisions));
     if (!open.length) resume();
   };
-  const card = h(`div.agent-approval${active ? '.is-open' : ''}`, { dataset: { id: e.id }, role: 'group', 'aria-label': `要不要执行：${label(e.name)}` },
+  const card = h(`div.agent-approval${active ? '.is-open' : ''}`, { dataset: { id: e.id, name: e.name }, role: 'group', 'aria-label': `要不要执行：${label(e.name)}` },
     h('div.row.gap-2', { style: { alignItems: 'center' } },
       h('span.strong.small', `要执行「${label(e.name)}」吗？`), h(`span.${r.cls}`, r.tag), h('span.grow'),
       h('span.agent-approval-state.xsmall.dim', active ? '' : '（这一轮已经过去了）')),

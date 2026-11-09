@@ -261,7 +261,8 @@ def test_api_roots_and_ui_rollback(workspace, tmp_path):
     data.mkdir()
     with TestClient(app) as c:
         st = c.post("/api/agent/settings", json={"roots": [{"path": str(data), "write": True}]}).json()
-        assert [r["path"] for r in st["roots"]][1:] == [os.path.realpath(data)]
+        assert [r["kind"] for r in st["roots"]] == ["agent", "workspace", "user"]
+        assert st["roots"][2]["path"] == os.path.realpath(data)
         assert c.post("/api/agent/settings", json={"roots": [{"path": str(tmp_path / "nope")}]}).status_code == 400
         ok, r = _run("write_file", path=str(data / "n.txt"), content="x")
         assert c.post(f"/api/agent/file-changes/{r['change_id']}/rollback").json()["restored"]

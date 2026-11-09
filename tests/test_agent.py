@@ -128,7 +128,8 @@ def test_a_plain_answer_needs_no_tools(gw, data):
     assert [m["role"] for m in s["messages"]] == ["user", "assistant"]
     assert s["title"] == "你好"
     # 工具清单真的发给了模型
-    assert {t["function"]["name"] for t in g.requests[0]["tools"]} == set(tools.BY_NAME)
+    # 执行模式：除了计划模式专用的 propose_plan，全部工具都发给了模型
+    assert {t["function"]["name"] for t in g.requests[0]["tools"]} == set(tools.BY_NAME) - {"propose_plan"}
 
 
 def test_read_tools_run_and_their_results_go_back_to_the_model(gw, data):
@@ -385,7 +386,8 @@ def test_api_tools_and_settings(client):
     t = client.get("/api/agent/tools").json()
     risks = {x["name"]: x["risk"] for x in t["tools"]}
     assert risks["set_quality"] == "write" and risks["delete_sample_set"] == "irreversible"
-    assert sum(r == "read" for r in risks.values()) == 16 and t["limits"]["max_turns"] == loop.MAX_TURNS
+    assert sum(r == "read" for r in risks.values()) == 17 and t["limits"]["max_turns"] == loop.MAX_TURNS
+    assert risks["run_command"] == "write" and risks["propose_plan"] == "read"
     assert risks["write_file"] == "write" and risks["run_batch"] == "write" and risks["get_task"] == "read"
     st = client.get("/api/agent/settings").json()
     assert (st["permission"], st["driver"]) == ("ask", "auto") and st["roots"][0]["builtin"] is True
