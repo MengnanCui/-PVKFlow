@@ -35,6 +35,9 @@ NODE_PATH=$(npm root -g) node tools/qa/b2_check.js smp_xxx run_xxx /tmp/requests
 NODE_PATH=$(npm root -g) node tools/qa/b3_check.js smp_xxx run_xxx
 # L 组：打开 AI 抽屉不再建空会话、对比历史键盘打开（参数是工作区的 hte.db）
 NODE_PATH=$(npm root -g) node tools/qa/l_check.js /tmp/hte-qa/hte.db
+# E 组（构效关系）：先往测试工作区写两个合成字段 —— 样例数据所有样品的结果一模一样，相关没法验
+HTE_WORKSPACE=/tmp/hte-qa .venv/bin/python tools/qa/seed_relation.py
+NODE_PATH=$(npm root -g) node tools/qa/e_check.js
 ```
 
 需要 Playwright（`npm i -g playwright`，或已经装好的）。

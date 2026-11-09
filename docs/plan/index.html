@@ -162,7 +162,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 
 <nav class="toc" aria-label="目录">
   <div class="brand">HTE Studio 开发计划</div>
-  <div class="sub">v4 · 2026-11-06</div>
+  <div class="sub">v5 · 2026-11-09</div>
   <div class="links">
     <div class="grp">总览</div>
     <a href="#how">0 怎么读这份文档</a>
@@ -185,15 +185,15 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <header class="doc">
   <h1>HTE Studio 开发计划与进度</h1>
   <div class="meta">
-    <span>版本 v4.1</span><span>更新于 2026-11-07（P13 进行中：L 组）</span>
-    <span>基于提交 <code>97c2792</code> + C051</span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
+    <span>版本 v5</span><span>更新于 2026-11-09（P13 结束）</span>
+    <span>基于提交 <code>15a3233</code></span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
   </div>
   <div class="cards">
-    <div class="card"><div class="k">修改报告</div><div class="v">51</div><div class="d">C001 – C051</div></div>
-    <div class="card"><div class="k">阶段</div><div class="v">P1–P12</div><div class="d">P12 = C + B</div></div>
-    <div class="card"><div class="k">测试</div><div class="v">440</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 12 + 15 + 13 + 8 条</div></div>
-    <div class="card"><div class="k">你明确指定的</div><div class="v">44</div><div class="d">P-01 … P-44（P-44 已落实）</div></div>
-    <div class="card"><div class="k">我自行决定的</div><div class="v">105</div><div class="d">D-01 … D-105，<b>11</b> 项还待你确认</div></div>
+    <div class="card"><div class="k">修改报告</div><div class="v">53</div><div class="d">C001 – C053</div></div>
+    <div class="card"><div class="k">阶段</div><div class="v">P1–P13</div><div class="d">P13 = L + E</div></div>
+    <div class="card"><div class="k">测试</div><div class="v">467</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 12 + 15 + 13 + 8 + 13 条</div></div>
+    <div class="card"><div class="k">你明确指定的</div><div class="v">45</div><div class="d">P-01 … P-45（P-45 构效关系第一版已落实）</div></div>
+    <div class="card"><div class="k">我自行决定的</div><div class="v">114</div><div class="d">D-01 … D-114，<b>13</b> 项还待你确认</div></div>
     <div class="card"><div class="k">自查发现</div><div class="v">30 / 30</div><div class="d"><b>全部处理完</b>（P10 12 条 · P11 11 条 · P12 7 条）</div></div>
   </div>
 </header>
@@ -231,7 +231,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
     <tbody>
       <tr><td><strong>① 数据处理</strong></td><td>导入、解析、热力图、叠加谱、膜厚（干涉条纹 FFT）、谱斜率 / 波段积分、批处理与对比</td><td><span class="chip ok">做扎实</span></td></tr>
       <tr><td><strong>② 数据存储</strong></td><td>工作区、去重、样品身份、关键结果长表、运行记录可追溯、对比历史</td><td><span class="chip ok">做扎实</span></td></tr>
-      <tr><td><strong>③ 构效关系</strong></td><td>任意两个字段做 X / Y、相关性、分组比较、异常识别、模型总结</td><td><span class="chip plan">只留入口与数据形态</span></td></tr>
+      <tr><td><strong>③ 构效关系</strong></td><td>任意两个字段做 X / Y、相关性、分组比较、异常识别、模型总结</td><td><span class="chip warn">第一版</span> 散点 + 相关 + 箱线图（C052）；异常识别、模型总结还没做</td></tr>
     </tbody>
   </table></div>
   <h3>明确不做（截至本版）</h3>
@@ -268,7 +268,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
       <tr><td rowspan="3">存储</td><td>工作区、内容寻址、npz 缓存（8 GB 上限）</td><td><span class="chip ok">完成</span></td><td></td></tr>
       <tr><td>关键结果长表（当前值 + 全部历史）、运行可追溯（含模块版本）</td><td><span class="chip ok">完成</span></td><td>C034 / C035</td></tr>
       <tr><td>结果质量审核（validated / review / reject）</td><td><span class="chip warn">部分</span></td><td>后端接口有，界面没有审核入口；所有结果停在 review</td></tr>
-      <tr><td>构效关系</td><td>X / Y 映射、相关性、分组、异常、总结</td><td><span class="chip plan">规划中</span></td><td>页面列出全部可用字段（中文名、单位不一致提醒，C047）</td></tr>
+      <tr><td>构效关系</td><td>X / Y 散点（按批次着色）、皮尔逊 / 斯皮尔曼（带 p 值）、按批次的箱线图</td><td><span class="chip ok">第一版</span></td><td>C052；统计对着 scipy 的参考值验过。异常识别、模型总结还没做</td></tr>
       <tr><td rowspan="4">AI</td><td>侧栏：流式、数据范围、动作卡片、钉住、对话历史</td><td><span class="chip ok">完成</span></td><td>收窄范围生效、换对话先停流（C037）；点停止后已说的字保存（C047）；抽屉和 ⓘ 共用一个客户端（C045）；打开抽屉不再建空会话（C050）；用本地假网关测过</td></tr>
       <tr><td>曲线摘要：每个样品的曲线按时间分段取平均给模型（P-44）</td><td><span class="chip ok">完成</span></td><td>C038；假网关端到端验过</td></tr>
       <tr><td>ⓘ 术语浮层 + 带读数提问（33 个 ⓘ，25 个带数）</td><td><span class="chip ok">完成</span></td><td></td></tr>
@@ -518,9 +518,11 @@ ol.steps li, ul.plain li { margin: 4px 0; }
       原来钉的依赖在最新的 Python 上没有 Windows 安装包，同事照 README 装会卡死 —— 依赖升级、启动脚本只挑 3.11–3.15、只装预编译包，现在 29 秒起服务。
       B：旧 Skill 机制退役、死代码删除、对比页 / 数据处理页拆开、抽屉和 ⓘ 共用聊天客户端、自查剩下 7 条全修、文档按现状重写。<strong>自查 30 条全部处理完。</strong></p>
       <p class="note"><a href="phases/P12_2026-W45_C-B.md">阶段报告 P12</a></p></li>
-    <li class="now"><span class="t">P13 L 组（进行中）</span><span class="d">11-07 · W45 · C050–C051 · → 440 测试</span>
+    <li class="now"><span class="t">P13 L + E（本次）</span><span class="d">11-07 – 11-09 · W45–46 · C050–C053 · → 467 测试</span>
       <p>你说「解决新发现的问题」：打开 AI 抽屉不再建空会话（已攒的由第 3 步迁移清掉）；批处理导出的 data.csv 防公式、plot.py 读回时还原；
-      对比历史能用键盘打开，「只能鼠标点」以后由测试拦住；模块控件生成只留一份。<code>xyChart</code> 留到 E 组。阶段报告等这一阶段结束时写。</p></li>
+      对比历史能用键盘打开，「只能鼠标点」以后由测试拦住；模块控件生成只留一份。
+      E：<strong>构效关系从只有入口变成能用</strong> —— 任选两个字段的散点（按批次着色）+ 皮尔逊 / 斯皮尔曼（带 p 值，对着 scipy 验过），按批次的箱线图，离群样品点得进去。</p>
+      <p class="note"><a href="phases/P13_2026-W46_L-E.md">阶段报告 P13</a></p></li>
   </ul>
 </section>
 
@@ -613,8 +615,8 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id">A2</td><td><strong>前端稳定性</strong>：页面卸载机制 + 导航只渲染一次 → 一次修掉 #4 #5 #6 #18 #23；再修 #7 #19 #20 #21 #22 #27</td><td>界面上快速操作不出错、不串台</td><td>1–2 天</td><td><span class="chip ok">已完成 C037</span></td></tr>
 <tr><td class="id">C</td><td><strong>工程保障</strong>：GitHub Actions 跑 pytest（含 node 的算子一致性测试）；装 ruff；数据库加版本号与迁移；补上 §6.3 的测试缺口；Windows 实机冒烟清单（需要你或同事双击一次 <code>run.bat</code>）</td><td>以后改东西不会悄悄坏</td><td>1 天 + 你 10 分钟</td><td><span class="chip ok">已完成 C040–C046</span> 还剩：Windows 实机清单等你或同事跑一次</td></tr>
 <tr><td class="id">B</td><td><strong>结构清理</strong>：退役旧 Skill 机制（或明确它只管非光谱文件）；删死代码；拆 <code>batch.js</code> / <code>process.js</code>；ⓘ 和抽屉共用一个聊天客户端；修 #15 #16 #26；更新 ARCHITECTURE / DATA_MODEL</td><td>§6.3 技术债</td><td>1–2 天</td><td><span class="chip ok">已完成 C042 C045 C047 C048</span></td></tr>
-<tr><td class="id">D</td><td><strong>补齐界面缺口</strong>：结果质量审核（可信 / 待查 / 作废）；断链巡检按钮；样品集删除 / 改名 / 冻结</td><td>后端早就有、界面够不着的功能</td><td>1 天</td><td>看你用不用得上</td></tr>
-<tr><td class="id">E</td><td><strong>构效关系第一版</strong>：任选两个字段做散点（按批次着色）+ 皮尔逊 / 斯皮尔曼（带显著性）+ 分组箱线图；后端加透视接口（依赖 A1 的「当前值」）</td><td>第三层从「只有入口」到能用</td><td>2–3 天</td><td><span class="chip danger">建议下一个</span></td></tr>
+<tr><td class="id">D</td><td><strong>补齐界面缺口</strong>：结果质量审核（可信 / 待查 / 作废）；断链巡检按钮；样品集删除 / 改名 / 冻结</td><td>后端早就有、界面够不着的功能</td><td>1 天</td><td><span class="chip danger">建议下一个</span></td></tr>
+<tr><td class="id">E</td><td><strong>构效关系第一版</strong>：任选两个字段做散点（按批次着色）+ 皮尔逊 / 斯皮尔曼（带显著性）+ 分组箱线图；后端加透视接口（依赖 A1 的「当前值」）</td><td>第三层从「只有入口」到能用</td><td>2–3 天</td><td><span class="chip ok">已完成 C052</span> 还剩：异常识别、模型总结</td></tr>
 <tr><td class="id">F</td><td><strong>光谱处理迁成模块</strong>，三个模块走同一套契约；按需扩算子集</td><td>同事能改光谱处理；平台只剩一种写法</td><td>1–2 天</td><td>B 已完成，随时可做</td></tr>
 <tr><td class="id">G</td><td><strong>新数据类型</strong>：荧光 &amp; 荧光 / 荧光 &amp; 散射 / QFLS</td><td>功能 tab 不再灰着</td><td>每个 2–4 天</td><td>需要你先给数据样例和算法规范</td></tr>
 <tr><td class="id">I</td><td><strong>AI 的真实效果</strong>：先做你要的 <b>P-44 曲线摘要</b>（每个样品的曲线下采样到几十个点给模型），再在你的网关上跑一组真实问题，按回答质量调</td><td>D-28「只看标量」的取舍够不够</td><td>半天 + 你的反馈</td><td><span class="chip ok">P-44 已完成 C038</span> 还剩：在你的真实网关上试</td></tr>
@@ -622,7 +624,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id">L</td><td><strong>零碎</strong>（P12 里发现、没顺手做的）：每打开一次 AI 抽屉就新建一个空的「新对话」；批处理导出的 <code>data.csv</code> 公式防护（要和 <code>plot.py</code> 一起改）；其余页面的键盘操作；<code>xyChart</code> 一个函数约 440 行；控件构建两份</td><td>小毛病和剩下的技术债</td><td>半天到 1 天</td><td><span class="chip ok">已完成 C050</span> 只剩 <code>xyChart</code> 留到 E 组（D-105）</td></tr>
     </tbody>
   </table></div>
-  <div class="callout warn"><b>等你定（P12 之后）：</b>S、H、A1、A2、P-44、C、B 已完成，自查 30 条全部处理完，每次推送都有 CI 守着。我的建议是 <b>E</b>（构效关系第一版 —— 第三层终于可以从「只有入口」变成能用）；在那之前最好有两件只有你能做的事：<b>① 在 Windows 实机上跑一次 <code>docs/WINDOWS_实机清单.md</code></b>（约 10 分钟），<b>② 在你的真实网关上问 AI 几个问题</b>（I 组）。§4 里 <b>11 项</b>「还待你确认」随时可以答，其中 D-02（Absorption 是不是百分比）最要紧，D-81（pandas 大版本升级）次之。</div>
+  <div class="callout warn"><b>等你定（P13 之后）：</b>构效关系有了第一版。我的建议是 <b>D</b>（补界面缺口）——尤其是<strong>结果质量审核</strong>：构效关系页上看到一个离群点、发现是那次测坏了，现在没有地方把它标成「作废」；标了之后「当前值」会退回上一次，散点和箱线图自动跟着变。之后可以接着做构效关系剩下的两样（异常识别、模型总结）。只有你能做的两件事仍在：<b>① Windows 实机清单</b>，<b>② 在你的真实网关上试 AI</b>。§4 里 <b>13 项</b>「还待你确认」随时可以答，其中 D-02（Absorption 是不是百分比）最要紧，新加的 D-107 / D-108（构效关系页上 p 值和离群点的口径）次之。</div>
 </section>
 
 <!-- ================================================================ 8 -->
@@ -695,6 +697,8 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C049_2026-11-06_本提交.md">C049</a></td><td class="nowrap">11-06</td><td>P12</td><td>P12 收尾：阶段报告 + 计划文档 v4</td><td class="small">记录规则（阶段结束）</td></tr>
 <tr><td class="id"><a href="changes/C050_2026-11-07_本提交.md">C050</a></td><td class="nowrap">11-07</td><td>P13</td><td>L 组：空的「新对话」不再堆积、导出 data.csv 防公式、对比历史能用键盘、控件生成只留一份</td><td class="small">你的指令「解决新发现的问题！」（理解为 §7 L 组，推断）</td></tr>
 <tr><td class="id"><a href="changes/C051_2026-11-07_本提交.md">C051</a></td><td class="nowrap">11-07</td><td>P13</td><td>CI 第 8 次红了：一条计时测试门槛太紧（Windows 慢了一次），改成判先后</td><td class="small">我自查：CI 第 8 次运行</td></tr>
+<tr><td class="id"><a href="changes/C052_2026-11-09_本提交.md">C052</a></td><td class="nowrap">11-09</td><td>P13</td><td>E：构效关系第一版 —— 散点和相关（带 p 值），按批次看箱线图</td><td class="small">你在选项里选了「做 E」（P-45）</td></tr>
+<tr><td class="id"><a href="changes/C053_2026-11-09_本提交.md">C053</a></td><td class="nowrap">11-09</td><td>P13</td><td>P13 收尾：阶段报告 + 计划文档 v5</td><td class="small">记录规则（阶段结束）</td></tr>
     </tbody>
   </table></div>
 </section>
