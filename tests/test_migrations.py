@@ -61,6 +61,8 @@ def test_an_old_workspace_is_backed_up_then_upgraded_without_losing_data(ws):
     cols = {r[1] for r in conn.execute("PRAGMA table_info(analysis_run)")}
     assert "parent_run_id" in cols
     assert {r[1] for r in conn.execute("PRAGMA table_info(artifact)")} >= {"is_matrix"}
+    # 第 4 步：审核留痕的两列
+    assert {r[1] for r in conn.execute("PRAGMA table_info(key_result)")} >= {"quality_note", "quality_at"}
     # 后来加的表、视图都建出来了
     names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
     assert {"task", "sample_set", "conversation", "key_result_current"} <= names
@@ -171,6 +173,6 @@ def test_step_3_clears_the_pile_of_empty_conversations(ws):
     db.close()
 
     report = migrations.run(db.connect(), (config.ROOT / "app/storage/schema.sql").read_text(encoding="utf-8"))
-    assert report["applied"] and report["applied"][-1] == 3 and report["backup"]
+    assert 3 in report["applied"] and report["backup"]          # 之后的步骤也会接着跑
     left = {r["conversation_id"] for r in db.query("SELECT conversation_id FROM conversation")}
     assert left == {"conv_used", "conv_term"}

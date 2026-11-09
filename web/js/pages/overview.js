@@ -32,8 +32,9 @@ export function view(host, { nav }) {
       (c.missing_files || c.failed_runs)
         ? h('div.section',
             c.missing_files ? h('div.notice.notice-warn',
-              h('div.grow', `有 ${c.missing_files} 个引用型文件在原位置找不到了。`,
-                h('span.muted', ' 它们只是被登记了路径，没有复制进工作区。'))) : null,
+              h('div.grow', `有 ${c.missing_files} 个原始文件在记录的位置找不到了。`,
+                h('span.muted', ' 多半是引用型文件（只登记了路径）的原文件被挪走了。')),
+              h('button.btn.btn-sm', { onclick: () => nav('storage') }, '去看是哪些')) : null,
             c.failed_runs ? h('div.notice.notice-warn.mt-2',
               h('div.grow', `有 ${c.failed_runs} 次处理失败。`)) : null)
         : null,

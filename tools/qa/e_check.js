@@ -105,6 +105,8 @@ async function api(p, path, body) {
   await p.locator(`${R} .figure`).nth(1).locator('select').selectOption('qa_x'); await sleep(1000);
   const ob = await p.evaluate(() => {
     const c = document.querySelectorAll('#page-relation .figure')[1].querySelector('svg circle');
+    // 上面「逐个样品」的表是展开的（D 组之后每行多了审核按钮，更高了）—— 先滚到箱线图那儿
+    c.scrollIntoView({ block: 'center' });
     const r = c.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
   });
   await p.mouse.move(ob.x, ob.y); await sleep(300);

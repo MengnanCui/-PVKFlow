@@ -1079,3 +1079,21 @@ tr.is-clickable {
 .relation-stats { margin-top: var(--s3x); }
 .relation-nums { display: grid; gap: 4px; margin-top: var(--s2x);
   font-variant-numeric: tabular-nums; font-size: var(--t-sm); }
+
+/* ---------------------------------------------------------------- 结果审核 */
+.quality-ctl { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+.quality-ctl button {
+  background: none; border: 0; padding: 1px 7px; font: inherit; font-size: var(--t-xs);
+  color: var(--ink-3); cursor: pointer;
+}
+.quality-ctl button + button { border-left: 1px solid var(--line); }
+.quality-ctl button[aria-pressed="true"] { color: var(--ink); background: var(--surface-2); font-weight: 600; }
+.quality-ctl button[data-q="validated"][aria-pressed="true"] { color: var(--ok); }
+.quality-ctl button[data-q="reject"][aria-pressed="true"] { color: var(--danger); }
+tr.is-rejected td { color: var(--ink-4); text-decoration: line-through; }
+tr.is-rejected td .quality-ctl, tr.is-rejected td .xsmall { text-decoration: none; }
+.outlier-list { display: grid; gap: 4px; margin-top: 4px; }
+.results-table tr.history-row td { background: var(--surface-2); }
+.set-manage { display: grid; gap: 0; margin-top: var(--s2x); }
+.set-row { padding: var(--s2x) 0; border-bottom: 1px solid var(--line); }
+.set-row:last-child { border-bottom: 0; }

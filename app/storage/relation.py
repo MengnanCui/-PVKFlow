@@ -43,7 +43,8 @@ def pairs(x: str, y: str, flt: dict | None = None) -> dict:
     fx, fy = _field(x), _field(y)
     c = selection.compile_filter(flt or {})
     rows = db.query(
-        f"""SELECT s.sample_id, s.name, s.batch, kx.value_num AS x, ky.value_num AS y
+        f"""SELECT s.sample_id, s.name, s.batch, kx.value_num AS x, ky.value_num AS y,
+                   kx.id AS x_id, kx.quality AS x_quality, ky.id AS y_id, ky.quality AS y_quality
             FROM sample s
             LEFT JOIN key_result_current kx ON kx.sample_id = s.sample_id AND kx.field_name = ?
             LEFT JOIN key_result_current ky ON ky.sample_id = s.sample_id AND ky.field_name = ?
@@ -55,8 +56,11 @@ def pairs(x: str, y: str, flt: dict | None = None) -> dict:
     for r in rows:
         vx, vy = _num(r["x"]), _num(r["y"])
         if vx is not None and vy is not None:
+            # 带上两个值各自是哪条结果、审核到哪了 —— 页面上能直接把一个坏数作废
             points.append({"sample_id": r["sample_id"], "name": r["name"],
-                           "batch": r["batch"] or "", "x": vx, "y": vy})
+                           "batch": r["batch"] or "", "x": vx, "y": vy,
+                           "x_id": r["x_id"], "x_quality": r["x_quality"],
+                           "y_id": r["y_id"], "y_quality": r["y_quality"]})
         elif vx is not None:
             only_x += 1
         elif vy is not None:
@@ -76,7 +80,8 @@ def groups(y: str, by: str = "batch", flt: dict | None = None) -> dict:
     fy = _field(y)
     c = selection.compile_filter(flt or {})
     rows = db.query(
-        f"""SELECT s.sample_id, s.name, {GROUP_BY[by]} AS g, ky.value_num AS y
+        f"""SELECT s.sample_id, s.name, {GROUP_BY[by]} AS g, ky.value_num AS y,
+                   ky.id AS result_id, ky.quality
             FROM sample s
             JOIN key_result_current ky ON ky.sample_id = s.sample_id AND ky.field_name = ?
             {c.clause}
@@ -93,6 +98,7 @@ def groups(y: str, by: str = "batch", flt: dict | None = None) -> dict:
         members = by_group[name]
         b = stats.box_stats([m["y"] for m in members])
         b["outliers"] = [{"sample_id": members[i]["sample_id"], "name": members[i]["name"],
-                          "y": members[i]["y"]} for i in b["outliers"]]
+                          "y": members[i]["y"], "result_id": members[i]["result_id"],
+                          "quality": members[i]["quality"]} for i in b["outliers"]]
         out.append({"name": name, **b})
     return {"y": fy, "by": by, "groups": out, "n": sum(g["n"] for g in out)}

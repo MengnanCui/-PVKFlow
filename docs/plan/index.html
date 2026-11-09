@@ -338,6 +338,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id">P-43</td><td>模块安全边界</td><td>模块不做沙箱，只装信得过的人的；装之前在界面上再确认一次<span class="why">11-06 你确认（原 D-37）</span></td><td>C032 · C033</td><td class="loc">settings.js</td><td><span class="chip ok">落实</span></td></tr>
 <tr><td class="id">P-44</td><td>AI 要看到曲线形状</td><td>除标量汇总外，给模型每个样品的<strong>曲线摘要</strong>（下采样到几十个点）<span class="why">11-06 你的回答（原 D-28「只看标量」被否）</span></td><td>C032 · C038</td><td class="loc">app/ai/context.py</td><td><span class="chip ok">落实 C038</span></td></tr>
 <tr><td class="id">P-45</td><td>构效关系第一版</td><td>任选两个字段做散点（按批次着色）、皮尔逊 / 斯皮尔曼（带显著性）、按批次的箱线图、后端透视接口；顺带整理 <code>xyChart</code><span class="why">11-09 你在选项里选了「做 E 构效关系」—— 选项的描述文字是我写的（来自 §7 E 组）</span></td><td>C052</td><td class="loc">pages/relation.js · storage/relation.py</td><td><span class="chip ok">落实 C052</span></td></tr>
+<tr><td class="id">P-46</td><td>补齐界面缺口（§7 D 组）</td><td>结果质量审核（可信 / 待查 / 作废）；断链巡检按钮；样品集删除 / 改名 / 冻结<span class="why">11-09 你发「D，一次性完成」—— 这三项的文字是 §7 D 组里我写的</span></td><td>C054</td><td class="loc">pages/sample.js · relation.js · storage.js · process-filter.js</td><td><span class="chip ok">落实 C054</span></td></tr>
     </tbody>
   </table></div>
 </section>
@@ -473,6 +474,14 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr data-c="显示"><td class="id">D-112</td><td class="nowrap">显示</td><td>箱线图每个箱至少 34px，放不下横向滚动；组多或名字长时类别名斜着写，超过 16 个字截断</td><td>不把箱挤成一条线、名字不叠在一起。</td><td>C052</td><td class="loc">components/relation-charts.js</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="显示"><td class="id">D-113</td><td class="nowrap">显示</td><td>新的统计概念（r、ρ、p、IQR）用页面上的说明文字，没有加进 ⓘ 术语表</td><td>术语表还有 27 条等你审，不想再往里加没审过的。</td><td>C052</td><td class="loc">pages/relation.js</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="显示"><td class="id">D-114</td><td class="nowrap">显示</td><td>上次选的 X / Y / 箱线图字段记在这台电脑的浏览器里</td><td>只是方便；读不到就用默认。</td><td>C052</td><td class="loc">pages/relation.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="数据" data-confirm="1"><td class="id">D-115</td><td class="nowrap">数据</td><td>批处理写进去的结果<strong>初始状态仍是「可信」</strong>（原有行为，没改）；界面上分开「程序给的」和「人审过的」（审核时间为空 = 还没人审）</td><td>改成一律从「待查」开始会让现有数据一夜之间全变「待查」，这是你的决定，不该我顺手改。<span class="why">如果你希望「可信」只能由人给，告诉我，改一行 + 一次迁移</span></td><td>C054</td><td class="loc">pages/sample.js · app/batch.py</td><td><span class="chip warn">建议你确认</span></td></tr>
+<tr data-c="数据"><td class="id">D-116</td><td class="nowrap">数据</td><td>作废时问理由（可以不填），理由最多 500 字；每条结果只记<strong>最近一次</strong>审核的状态、理由、时间，不留审核历史</td><td>「这个数为什么作废」一年后要看得到；完整的审核日志第一版用不上。</td><td>C054</td><td class="loc">app/storage/results.py</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="显示"><td class="id">D-117</td><td class="nowrap">显示</td><td>样品页最后加一节「关键结果」：每个字段一行审当前值（全部作废时审最新那条），历史可展开逐条审；「最近一次处理」的结果一键全部可信 / 全部作废</td><td>一次测量坏了，这次算出来的每个字段都不能用 —— 一个个点太慢。「最近一次」= 这个样品编号最大的那条结果所在的处理。</td><td>C054</td><td class="loc">pages/sample.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="显示"><td class="id">D-118</td><td class="nowrap">显示</td><td>构效关系页：逐个样品的表里 X / Y 各一组审核按钮，离群点旁边也有；审完安静刷新（不闪占位、表格保持展开）；<strong>不加</strong>「只用可信的」范围</td><td>看到离群点就地处理；作废的数本来就不进图，「待查」和「可信」第一版一视同仁。</td><td>C054</td><td class="loc">pages/relation.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="平台"><td class="id">D-119</td><td class="nowrap">平台</td><td>断链巡检也查<strong>复制进工作区</strong>的文件（不只引用型）；找不到的列出来最多 200 条、总数照实给；标出「这次新发现的」</td><td>有人手动清过工作区也会断；只给个数的话人还得自己去翻是哪几个。</td><td>C054</td><td class="loc">app/storage/ingest.py · pages/storage.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="平台"><td class="id">D-120</td><td class="nowrap">平台</td><td>样品集管理放在数据处理页左栏「样品集」旁的「管理」；钉死、删除都先确认；删除只删集不动样品；改名撞名拦住；钉死时一个都不命中就不钉</td><td>原来改名撞名是 500、删一个不存在的也说成功、能钉出一个永远空的固定集。</td><td>C054</td><td class="loc">pages/process-filter.js · app/storage/sets.py</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="平台"><td class="id">D-121</td><td class="nowrap">平台</td><td><strong>自查修复</strong>：确认框点「确定」原来永远返回「取消」—— 装模块前的确认、删 AI 对话、卸载模块从界面上点都没反应；顺带让叠在一起的弹窗只有最上面那层响应 Esc / Tab</td><td>从第一版就有的 bug，D 组的「钉死 / 删除」要用确认框时才发现。现在由 <code>d_check.js</code> 守着。</td><td>C054</td><td class="loc">web/js/ui.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="数据"><td class="id">D-122</td><td class="nowrap">数据</td><td>数据库迁移第 4 步：<code>key_result</code> 加 <code>quality_note</code>、<code>quality_at</code> 两列（照例先备份）</td><td>审核留痕要存的地方。</td><td>C054</td><td class="loc">app/storage/migrations.py</td><td><span class="chip info">可随时改</span></td></tr>
     </tbody>
   </table></div>
 </section>
@@ -699,6 +708,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C051_2026-11-07_本提交.md">C051</a></td><td class="nowrap">11-07</td><td>P13</td><td>CI 第 8 次红了：一条计时测试门槛太紧（Windows 慢了一次），改成判先后</td><td class="small">我自查：CI 第 8 次运行</td></tr>
 <tr><td class="id"><a href="changes/C052_2026-11-09_本提交.md">C052</a></td><td class="nowrap">11-09</td><td>P13</td><td>E：构效关系第一版 —— 散点和相关（带 p 值），按批次看箱线图</td><td class="small">你在选项里选了「做 E」（P-45）</td></tr>
 <tr><td class="id"><a href="changes/C053_2026-11-09_本提交.md">C053</a></td><td class="nowrap">11-09</td><td>P13</td><td>P13 收尾：阶段报告 + 计划文档 v5</td><td class="small">记录规则（阶段结束）</td></tr>
+<tr><td class="id"><a href="changes/C054_2026-11-09_本提交.md">C054</a></td><td class="nowrap">11-09</td><td>P14</td><td>D：结果审核、断链巡检、样品集管理；顺带修好「确认框点确定没反应」</td><td class="small">你发「D，一次性完成」（P-46）</td></tr>
     </tbody>
   </table></div>
 </section>

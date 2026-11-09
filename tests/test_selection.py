@@ -225,6 +225,53 @@ def test_duplicate_set_name_is_rejected(populated):
         sets.create("同名", "dynamic", {"batch": ["B21"]})
 
 
+def test_rename_checks_the_name_and_the_set(populated):
+    """D 组：改名不能撞名（库里有唯一索引，原来撞了是 500）、不能改一个不存在的。"""
+    a = sets.create("甲", "dynamic", {"batch": ["B20"]})
+    sets.create("乙", "dynamic", {"batch": ["B21"]})
+    assert sets.rename(a["set_id"], "  丙  ")["name"] == "丙"
+    assert sets.rename(a["set_id"], "丙")["name"] == "丙"          # 改成自己现在的名字不算撞
+    with pytest.raises(sets.SetError, match="已经有"):
+        sets.rename(a["set_id"], "乙")
+    with pytest.raises(sets.SetError):
+        sets.rename(a["set_id"], "  ")
+    with pytest.raises(KeyError):
+        sets.rename("set_nope", "丁")
+
+
+def test_delete_only_removes_the_set_not_the_samples(populated):
+    n = db.scalar("SELECT COUNT(*) FROM sample")
+    pin = sets.create("要删的", "pinned", sample_ids=selection.sample_ids({"batch": ["B20"]}))
+    assert sets.delete(pin["set_id"])["name"] == "要删的"
+    assert db.scalar("SELECT COUNT(*) FROM sample") == n
+    with pytest.raises(KeyError):
+        sets.get(pin["set_id"])
+    with pytest.raises(KeyError):
+        sets.delete(pin["set_id"])                  # 删两次：第二次要说「没有」
+
+
+def test_freeze_refuses_an_empty_snapshot(populated):
+    dyn = sets.create("没人的批", "dynamic", {"batch": ["B99"]})
+    with pytest.raises(sets.SetError, match="空集"):
+        sets.freeze(dyn["set_id"])
+    assert sets.get(dyn["set_id"])["kind"] == "dynamic"
+
+
+def test_set_management_api(populated):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    c = TestClient(app)
+    a = c.post("/api/selection/sets", json={"name": "A", "kind": "dynamic", "filter": {"batch": ["B20"]}}).json()
+    c.post("/api/selection/sets", json={"name": "B", "kind": "dynamic", "filter": {"batch": ["B21"]}})
+    assert c.post(f"/api/selection/sets/{a['set_id']}/rename", json={"name": "B"}).status_code == 400
+    assert c.post("/api/selection/sets/set_nope/rename", json={"name": "C"}).status_code == 404
+    assert c.post(f"/api/selection/sets/{a['set_id']}/freeze").json()["kind"] == "pinned"
+    assert c.delete(f"/api/selection/sets/{a['set_id']}").json()["name"] == "A"
+    assert c.delete(f"/api/selection/sets/{a['set_id']}").status_code == 404
+
+
 def test_resolve_gives_an_executable_filter(populated):
     pin = sets.create("固定", "pinned", sample_ids=selection.sample_ids({"batch": ["B21"]}))
     assert selection.count(sets.resolve(pin["set_id"])) == 8

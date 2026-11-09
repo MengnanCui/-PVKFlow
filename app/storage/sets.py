@@ -85,15 +85,21 @@ def resolve(set_id: str) -> dict:
     return s["filter"]
 
 
-def delete(set_id: str) -> None:
+def delete(set_id: str) -> dict:
+    """删掉一个样品集。只删「这个名字和它记的筛选式 / 快照」，样品和处理结果一个都不动。"""
+    s = get(set_id)                       # 不存在就报，别默默「删成功」
     with db.tx() as c:
         c.execute("DELETE FROM sample_set WHERE set_id = ?", (set_id,))
+    return {"set_id": set_id, "name": s["name"]}
 
 
 def rename(set_id: str, name: str) -> dict:
     name = (name or "").strip()
     if not name:
         raise SetError("样品集要有名字")
+    get(set_id)
+    if db.query_one("SELECT 1 FROM sample_set WHERE name = ? AND set_id != ?", (name, set_id)):
+        raise SetError(f"已经有叫「{name}」的样品集了")
     with db.tx() as c:
         c.execute("UPDATE sample_set SET name=?, updated_at=? WHERE set_id=?",
                   (name, db.now(), set_id))
@@ -101,11 +107,16 @@ def rename(set_id: str, name: str) -> dict:
 
 
 def freeze(set_id: str) -> dict:
-    """把动态集在此刻钉死成固定集。要发论文了就用这个。"""
+    """把动态集在此刻钉死成固定集。要发论文了就用这个。
+
+    此刻一个样品都不命中的话不钉 —— 钉出来的是一个永远空的固定集，没有用，还看不出来。
+    """
     s = get(set_id)
     if s["kind"] == "pinned":
         return s
     ids = selection.sample_ids(s["filter"])
+    if not ids:
+        raise SetError(f"「{s['name']}」现在一个样品都不命中，钉死了就是个空集")
     with db.tx() as c:
         c.execute("UPDATE sample_set SET kind='pinned', pinned_ids_json=?, updated_at=?"
                   " WHERE set_id=?", (json.dumps(ids), db.now(), set_id))

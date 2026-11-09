@@ -116,3 +116,79 @@ def test_a_field_with_two_units_is_listed_once_and_flagged(workspace):
 
     plain = next(x for x in results.list_fields() if x["field_name"] == "plain")
     assert plain["label"] == "" and plain["units"] == [] and plain["mixed_units"] is False
+
+
+# ---------------------------------------------------------------- 审核（D 组）
+@pytest.fixture()
+def api(two_runs):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    with TestClient(app) as c:
+        yield c
+
+
+def _id(run, field="ot_last_ok"):
+    from app.storage import db
+    return db.scalar("SELECT id FROM key_result WHERE analysis_run_id=? AND field_name=?", (run, field))
+
+
+def test_rejecting_through_the_api_keeps_a_reason_and_says_what_is_current_now(api, two_runs):
+    rid = _id(two_runs["new"])
+    r = api.post(f"/api/results/{rid}/quality", json={"quality": "reject", "note": "那片样品裂了"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["result"]["quality"] == "reject" and d["result"]["quality_note"] == "那片样品裂了"
+    assert d["result"]["quality_at"]                                   # 什么时候标的也记下了
+    assert d["current"]["value_num"] == 9000.0                          # 当前值退回上一次
+    assert d["current"]["analysis_run_id"] == two_runs["old"]
+    # 再标回「可信」：当前值回到新的那次
+    d = api.post(f"/api/results/{rid}/quality", json={"quality": "validated"}).json()
+    assert d["current"]["value_num"] == 1000.0 and d["current"]["quality"] == "validated"
+
+
+def test_bad_quality_or_missing_result_is_refused(api, two_runs):
+    assert api.post(f"/api/results/{_id(two_runs['new'])}/quality",
+                    json={"quality": "maybe"}).status_code == 400
+    assert api.post("/api/results/999999/quality", json={"quality": "reject"}).status_code == 404
+
+
+def test_several_at_once_is_all_or_nothing(api, two_runs):
+    from app.storage import db
+
+    ids = [_id(two_runs["new"]), _id(two_runs["old"])]
+    r = api.post("/api/results/quality", json={"ids": ids + [999999], "quality": "reject"})
+    assert r.status_code == 404
+    assert db.scalar("SELECT COUNT(*) FROM key_result WHERE quality='reject'") == 0   # 一条都没改
+    r = api.post("/api/results/quality", json={"ids": ids, "quality": "reject", "note": "整次测量都坏了"})
+    assert r.json() == {"updated": 2}
+    # 两次都作废了：这个样品这个字段就没有当前值了（不是退回一个坏数）
+    fields = api.get("/api/results/by-sample/smp_a").json()["fields"]
+    f = next(x for x in fields if x["field_name"] == "ot_last_ok")
+    assert f["current"] is None and len(f["history"]) == 2
+
+
+def test_a_sample_lists_current_and_history_per_field(api, two_runs):
+    fields = {f["field_name"]: f for f in api.get("/api/results/by-sample/smp_a").json()["fields"]}
+    ot = fields["ot_last_ok"]
+    assert ot["current"]["value_num"] == 1000.0 and ot["current"]["is_current"]
+    assert [h["value_num"] for h in ot["history"]] == [1000.0, 9000.0]   # 新的在前
+    assert [h["is_current"] for h in ot["history"]] == [True, False]
+    assert fields["only_old"]["current"]["value_num"] == 1.0
+
+
+def test_the_relation_page_follows_a_rejection(api, two_runs):
+    """构效关系页上作废一个坏数，散点里那个样品就用退回之后的值。"""
+    from app.storage import results
+
+    rid = results.start_run("x", "1.0.0", sample_id="smp_a")
+    results.write_results(rid, [{"field_name": "jsc", "value": 20.0}], sample_id="smp_a")
+    rid = results.start_run("x", "1.0.0", sample_id="smp_b")
+    results.write_results(rid, [{"field_name": "jsc", "value": 21.0}], sample_id="smp_b")
+    pts = {p["sample_id"]: p for p in api.post("/api/relation/pairs",
+                                               json={"x": "ot_last_ok", "y": "jsc"}).json()["points"]}
+    assert pts["smp_a"]["x"] == 1000.0 and pts["smp_a"]["x_quality"] == "review"
+    api.post(f"/api/results/{pts['smp_a']['x_id']}/quality", json={"quality": "reject"})
+    pts = {p["sample_id"]: p for p in api.post("/api/relation/pairs",
+                                               json={"x": "ot_last_ok", "y": "jsc"}).json()["points"]}
+    assert pts["smp_a"]["x"] == 9000.0

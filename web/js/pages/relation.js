@@ -17,6 +17,7 @@ import { scatterChart, boxPlot } from '../components/relation-charts.js';
 import { downloadMenu } from '../download.js';
 import { rowsToCsv } from '../csv.js';
 import { getScope } from '../scope.js';
+import { qualityControl } from '../components/quality.js';
 
 export const meta = {
   id: 'relation',
@@ -29,7 +30,7 @@ const KEY = 'hte.relation.choice';
 const remember = () => { try { localStorage.setItem(KEY, JSON.stringify({ x: S.x, y: S.y, g: S.g })); } catch { /* 隐私模式 */ } };
 const recall = () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { return {}; } };
 
-const S = { fields: [], x: null, y: null, g: null, scope: 'all', pairs: null, groups: null };
+const S = { fields: [], x: null, y: null, g: null, scope: 'all', pairs: null, groups: null, tableOpen: false };
 const refs = {};
 const pairsTicket = latest();
 const groupsTicket = latest();
@@ -88,10 +89,11 @@ const fieldOptions = () => S.fields.map((f) => [f.field_name,
 const axisLabel = (f) => `${f.label || f.field_name}${f.unit ? ` (${f.unit})` : ''}`;
 
 // ------------------------------------------------------------------ 散点 + 相关
-async function loadPairs() {
+async function loadPairs({ quiet = false } = {}) {
   const host = refs.pairsHost;
   const fresh = pairsTicket();
-  mount(host, skeletonRows(6));
+  // 审核完刷新时不闪骨架屏：表格是展开的、人正看着那一行，整块换成占位再换回来会跳
+  if (!quiet) mount(host, skeletonRows(6));
   try {
     const d = await api.relationPairs({ x: S.x, y: S.y, filter: scopeFilter() });
     if (!refs.alive() || !fresh()) return;
@@ -168,27 +170,34 @@ function statsPanel(d) {
       h('strong', '相关不等于因果'), ' —— 批次之间的差别（比如前驱体换了一瓶）也会让两个量一起变。'));
 }
 
-/** 图上每个点对应哪个样品。也是键盘用户打开样品的路。 */
+/** 审核改了当前值 —— 散点、统计、箱线图都可能变，安静地重取一遍。 */
+const refreshAfterReview = () => { loadPairs({ quiet: true }); loadGroups({ quiet: true }); };
+
+/** 图上每个点对应哪个样品。也是键盘用户打开样品的路；一个坏数在这里就能作废。 */
 function pointTable(d) {
   if (!d.points.length) return null;
-  return h('details.mt-3',
+  const review = (id, quality, label) => qualityControl({ id, quality }, { label, onChanged: refreshAfterReview });
+  return h('details.mt-3', { open: S.tableOpen, ontoggle: (e) => { S.tableOpen = e.target.open; } },
     h('summary.small', `逐个样品（${fmtInt(d.points.length)}）`),
     h('div.panel.panel-body.flush.mt-2',
+      h('p.xsmall.dim', { style: { padding: '6px 12px 0' } },
+        '作废一个数，这个样品的这个字段就退回上一次没作废的结果；一次都没有了，这个点就从图上拿掉。'),
       h('table.data',
         h('thead', h('tr', h('th', '样品'), h('th', '批次'),
-          h('th.num', axisLabel(d.x)), h('th.num', axisLabel(d.y)))),
+          h('th.num', axisLabel(d.x)), h('th', 'X 审核'), h('th.num', axisLabel(d.y)), h('th', 'Y 审核'))),
         h('tbody', ...d.points.map((p) => h('tr',
           h('td', h('button.linklike', { onclick: () => refs.nav('sample', { arg: p.sample_id }) }, p.name)),
           h('td.small.muted', p.batch || '—'),
-          h('td.num', fmt(p.x)), h('td.num', fmt(p.y))))))));
+          h('td.num', fmt(p.x)), h('td', review(p.x_id, p.x_quality, `${p.name} 的 ${d.x.label || d.x.field_name}`)),
+          h('td.num', fmt(p.y)), h('td', review(p.y_id, p.y_quality, `${p.name} 的 ${d.y.label || d.y.field_name}`))))))));
 }
 const fmt = (v) => (Math.abs(v) >= 1e5 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(3) : Number(v.toPrecision(5)).toString());
 
 // ------------------------------------------------------------------ 按批次的箱线图
-async function loadGroups() {
+async function loadGroups({ quiet = false } = {}) {
   const host = refs.groupsHost;
   const fresh = groupsTicket();
-  mount(host, skeletonRows(5));
+  if (!quiet) mount(host, skeletonRows(5));
   try {
     const d = await api.relationGroups({ y: S.g, by: 'batch', filter: scopeFilter() });
     if (!refs.alive() || !fresh()) return;
@@ -223,10 +232,13 @@ function drawGroups() {
         d.y.mixed_units ? h('div.notice.notice-warn.mt-2', h('div.small',
           `这个字段在不同样品上单位不一致（${d.y.units.join(' / ')}），箱的位置不可信`)) : null,
         outliers.length
-          ? h('div.small.mt-2', '离群的样品：', ...outliers.map((o, i) => h('span',
-              i ? '、' : '',
-              h('button.linklike', { onclick: () => refs.nav('sample', { arg: o.sample_id }) },
-                `${o.name}（${o.group}）`))))
+          ? h('div.small.mt-2', h('div', '离群的样品（离群不等于错 —— 看过之后可以在这里直接审核）：'),
+              h('div.outlier-list', ...outliers.map((o) => h('div.row.gap-2', { style: { alignItems: 'center' } },
+                h('button.linklike', { onclick: () => refs.nav('sample', { arg: o.sample_id }) },
+                  `${o.name}（${o.group}）`),
+                h('span.dim.mono', fmt(o.y)),
+                o.result_id ? qualityControl({ id: o.result_id, quality: o.quality },
+                  { label: `${o.name} 的 ${d.y.label || d.y.field_name}`, onChanged: refreshAfterReview }) : null))))
           : null),
     }));
 }
@@ -254,6 +266,7 @@ function laterSection() {
     ['已做', 'X / Y 任选两个字段做散点，按批次着色'],
     ['已做', '相关性：皮尔逊 / 斯皮尔曼，带 p 值和置信区间'],
     ['已做', '按批次分组的箱线图，离群样品点得进去'],
+    ['已做', '审核：逐个样品的表和离群点上直接标「可信 / 待查 / 作废」，作废的数不再进图'],
     ['还没做', '异常识别：把偏离趋势的样品挑出来，回溯到原始文件'],
     ['还没做', '总结：把上面这些结论交给模型写成一段可读的说明'],
   ];

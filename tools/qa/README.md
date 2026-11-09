@@ -38,7 +38,11 @@ NODE_PATH=$(npm root -g) node tools/qa/l_check.js /tmp/hte-qa/hte.db
 # E 组（构效关系）：先往测试工作区写两个合成字段 —— 样例数据所有样品的结果一模一样，相关没法验
 HTE_WORKSPACE=/tmp/hte-qa .venv/bin/python tools/qa/seed_relation.py
 NODE_PATH=$(npm root -g) node tools/qa/e_check.js
+# D 组（结果审核 / 断链巡检 / 样品集管理 / 确认框）：样品要跑过两次批处理；第二个参数是工作区目录（会挪走一个文件再放回）
+NODE_PATH=$(npm root -g) node tools/qa/d_check.js smp_xxx /tmp/hte-qa
 ```
+
+B2 的对比页那一条要用**样品数 ≤ 24** 的那次批处理 —— 超过 24 个，切片柱状图本来就不画（挤不下）。
 
 需要 Playwright（`npm i -g playwright`，或已经装好的）。
 

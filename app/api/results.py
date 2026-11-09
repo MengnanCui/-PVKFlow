@@ -44,8 +44,22 @@ def fields() -> dict:
 
 @router.post("/results/{result_id}/quality")
 def set_quality(result_id: int, payload: dict = Body(...)) -> dict:
-    guard(results.set_quality, result_id, payload.get("quality", ""))
-    return {"ok": True}
+    """审核一条：{quality: validated|review|reject, note?}。返回这条和审核之后的当前值。"""
+    out = guard(results.set_quality, result_id, payload.get("quality", ""), payload.get("note", ""))
+    return {"ok": True, **out}
+
+
+@router.post("/results/quality")
+def set_quality_many(payload: dict = Body(...)) -> dict:
+    """一次审核几条：{ids: [...], quality, note?}。一条不存在就一条都不改。"""
+    return guard(results.set_quality_many, payload.get("ids") or [],
+                 payload.get("quality", ""), payload.get("note", ""))
+
+
+@router.get("/results/by-sample/{sample_id}")
+def by_sample(sample_id: str) -> dict:
+    """一个样品的全部关键结果：每个字段的当前值 + 历史。"""
+    return {"sample_id": sample_id, "fields": results.sample_results(sample_id)}
 
 
 @router.get("/runs/{run_id}")

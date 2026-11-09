@@ -88,12 +88,27 @@ def _m3_drop_empty_conversations(conn: sqlite3.Connection) -> None:
         "   AND json_extract(scope_json, '$.topic') IS NULL")
 
 
+def _m4_quality_note(conn: sqlite3.Connection) -> None:
+    """关键结果的审核留痕：为什么标、什么时候标。
+
+    界面上能把一个结果标成「作废」之后，一年后再看到「这个数被作废了」却不知道为什么，
+    和没有审核一样（DATA_MODEL.md「没有这三个字段，一年后你会分不清某个数是怎么来的」）。
+    """
+    have = {r[1] for r in conn.execute("PRAGMA table_info(key_result)")}
+    if not have:
+        return                                  # 表还没有：schema.sql 建表时自带
+    for name in ("quality_note", "quality_at"):
+        if name not in have:
+            conn.execute(f"ALTER TABLE key_result ADD COLUMN {name} TEXT")
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "补列：analysis_run.parent_run_id、artifact.is_matrix", "pre", _m1_add_columns),
     Migration(2, "measured_at 统一成本地时间（原来退回文件修改时间的那些存的是 UTC）",
               "post", _m2_measured_at_local),
     Migration(3, "清掉攒下的空会话（原来每打开一次 AI 抽屉就建一个）", "post",
               _m3_drop_empty_conversations),
+    Migration(4, "补列：key_result.quality_note、quality_at（审核留痕）", "pre", _m4_quality_note),
 ]
 
 LATEST = max(m.version for m in MIGRATIONS)

@@ -7,7 +7,7 @@
 //                     模块只交声明，界面由平台按声明画 —— 同事加功能走的就是这条路。
 
 import { api } from '../api.js';
-import { h, mount, empty, skeletonRows, errorBox, fmtBytes, fmtInt, fmtNum } from '../ui.js';
+import { h, mount, empty, skeletonRows, errorBox, fmtBytes, fmtInt, fmtNum, fmtTime, toast } from '../ui.js';
 import { xyChart } from '../chart.js';
 import { heatmap } from '../components/heatmap.js';
 import { figure, selectControl, bandControl } from '../components/figure.js';
@@ -15,6 +15,7 @@ import { infoDot, withInfo } from '../components/info.js';
 import { moduleView } from '../components/module-panel.js';
 import { downloadMenu } from '../download.js';
 import { spectraAtTimes, saturatedHead } from '../spectra.js';
+import { qualityControl, askReason, QUALITY } from '../components/quality.js';
 
 export const meta = {
   id: 'sample',
@@ -40,10 +41,14 @@ const CORE_MODULES = [
 // 一处忘了就是一个 null。换成安全字符，省掉整类坑。
 const domId = (moduleId) => 'mod-' + String(moduleId).replace(/[^a-zA-Z0-9_-]/g, '-');
 
+// 最后一节不是处理模块，是这个样品已经算出来的关键结果 —— 在这里审核（可信 / 待查 / 作废）
+const RESULTS = { id: 'results', name: '关键结果' };
+
 /** 当前页面上的模块列表。装了几个功能模块就多几项。 */
 function moduleList() {
   return [...CORE_MODULES,
-          ...(S.modules || []).map((m) => ({ id: domId(m.id), name: m.name, spec: m }))];
+          ...(S.modules || []).map((m) => ({ id: domId(m.id), name: m.name, spec: m })),
+          RESULTS];
 }
 
 const S = {
@@ -119,10 +124,13 @@ export async function view(host, ctx) {
     dataset: { module: m.id },
   }, m.name)));
 
-  mount(body, section('spectra', '光谱处理'));
+  mount(body, section('spectra', '光谱处理'),
+    section(RESULTS.id, RESULTS.name,
+      '批处理写进库里的数。作废一个，这个字段的当前值就退回上一次没作废的那条 —— 构效关系、按字段筛选、AI 看到的都跟着变'));
 
   drawSpectra();
-  await loadModules();      // 已装模块各占一节，接在上面两个后面
+  drawResults();
+  await loadModules();      // 已装模块各占一节，接在光谱处理后面、关键结果前面
   if (!alive()) return;
   loadFrames();
   observeScroll();
@@ -464,10 +472,11 @@ async function loadModules() {
   for (const old of refs.body.querySelectorAll('section.module[data-module-section]')) {
     old.remove();
   }
+  const tail = refs.body.querySelector(`#module-${RESULTS.id}`);
   for (const m of S.modules) {
     const sec = section(domId(m.id), m.name, m.description || '');
     sec.dataset.moduleSection = m.id;
-    refs.body.appendChild(sec);
+    refs.body.insertBefore(sec, tail);
   }
   // 重建导航（现在多了几项）
   mount(refs.nav, ...moduleList().map((m) => h('a.module-link', {
@@ -495,6 +504,115 @@ function drawModules() {
         api.moduleCompute(m.id, S.artifactId, params, changed).then((r) => r.panels),
     });
   }
+}
+
+// ------------------------------------------------------------------ 关键结果（审核）
+/**
+ * 每个字段一行：当前值、来自哪次处理、审核。点「历史」展开这个字段每一次算出来的数，
+ * 每一次都能单独审核 —— 作废了最新的，当前值退回哪个数，表上马上看得到。
+ */
+async function drawResults() {
+  const host = bodyOf(RESULTS.id);
+  const sid = S.meta?.sample?.sample_id;
+  if (!host) return;
+  if (!sid) { mount(host, empty('这份数据还没有对应的样品记录')); return; }
+  const alive = refs.alive || (() => true);
+  if (!host.firstChild) mount(host, skeletonRows(3));
+  let fields;
+  try {
+    fields = (await api.sampleResults(sid)).fields || [];
+  } catch (err) {
+    if (alive()) mount(host, errorBox(err, drawResults));
+    return;
+  }
+  if (!alive()) return;
+  if (!fields.length) {
+    mount(host, empty('这个样品还没跑过批处理，没有关键结果（在样品列表里勾上它，点「批处理」）',
+      h('button.btn.btn-sm', { onclick: () => refs.ctx?.nav('process') }, '回到样品列表')));
+    return;
+  }
+
+  const open = new Set([...host.querySelectorAll('tr[data-open="1"]')].map((x) => x.dataset.field));
+  const valueOf = (r) => {
+    const v = r.value_num ?? r.value_text;
+    return v === null || v === undefined ? '—' : typeof v === 'number' ? fmtNum(v) : String(v);
+  };
+  const runOf = (r) => `${r.run_title || '一次处理'} · ${fmtTime(r.run_started_at || r.created_at)}`;
+  // 「可信」是程序给的还是人看过的：人点过就有审核时间
+  const noteOf = (r) => h('div.xsmall.dim', r.quality_at
+    ? `${fmtTime(r.quality_at)} 审核${r.quality_note ? ` · 理由：${r.quality_note}` : ''}`
+    : '还没人审过');
+  const rows = [];
+  for (const f of fields) {
+    // 没有当前值 = 每一次都作废了。这时候审核的是最新那条，好让人改回来
+    const head = f.current || f.history[0];
+    const label = f.label || f.field_name;
+    const isOpen = open.has(f.field_name);
+    rows.push(h(`tr${f.current ? '' : '.is-rejected'}`, { dataset: { field: f.field_name, open: isOpen ? '1' : '0' } },
+      h('td', label, h('div.xsmall.dim.mono', f.field_name)),
+      h('td.num', f.current ? `${valueOf(f.current)}${f.unit ? ` ${f.unit}` : ''}` : '（全部作废）'),
+      h('td.small', runOf(head), noteOf(head)),
+      h('td', qualityControl(head, { label, onChanged: drawResults })),
+      h('td', f.history.length > 1
+        ? h('button.linklike', {
+            'aria-expanded': String(isOpen),
+            onclick: (e) => {
+              const tr = e.target.closest('tr');
+              const on = tr.dataset.open !== '1';
+              tr.dataset.open = on ? '1' : '0';
+              e.target.setAttribute('aria-expanded', String(on));
+              e.target.textContent = on ? '收起' : `历史 ${f.history.length} 次`;
+              for (const x of host.querySelectorAll(`tr[data-history-of="${CSS.escape(f.field_name)}"]`)) x.hidden = !on;
+            },
+          }, isOpen ? '收起' : `历史 ${f.history.length} 次`)
+        : h('span.xsmall.dim', '只算过一次'))));
+    if (f.history.length > 1) {
+      for (const r of f.history) {
+        rows.push(h(`tr.history-row${r.quality === 'reject' ? '.is-rejected' : ''}`,
+          { dataset: { historyOf: f.field_name }, hidden: !isOpen },
+          h('td.xsmall.dim', r.is_current ? '↳ 当前值' : '↳'),
+          h('td.num.small', `${valueOf(r)}${r.unit ? ` ${r.unit}` : ''}`),
+          h('td.small', runOf(r), noteOf(r)),
+          h('td', qualityControl(r, { label: `${label}（${fmtTime(r.run_started_at || r.created_at)}）`, onChanged: drawResults })),
+          h('td')));
+      }
+    }
+  }
+
+  // 最近一次处理一次性审完：一次测量坏了，这次算出来的每个字段都不能用
+  const latestRun = fields.flatMap((f) => f.history).reduce((a, b) => (b.id > a.id ? b : a)).analysis_run_id;
+  const fromLatest = fields.flatMap((f) => f.history).filter((r) => r.analysis_run_id === latestRun);
+  const counts = Object.fromEntries(Object.keys(QUALITY).map((q) => [q, 0]));
+  let reviewed = 0;
+  for (const f of fields) {
+    const r = f.current || f.history[0];
+    counts[r.quality] = (counts[r.quality] || 0) + 1;
+    if (r.quality_at) reviewed += 1;
+  }
+  const bulk = async (q) => {
+    let note = '';
+    if (q === 'reject') {
+      note = await askReason(`作废最近一次处理的 ${fromLatest.length} 个结果`, '比如：这片样品测的时候没放平');
+      if (note === null) return;
+    }
+    try {
+      await api.setQualityMany(fromLatest.map((r) => r.id), q, note);
+      toast(`最近一次处理的 ${fromLatest.length} 个结果已标为「${QUALITY[q]}」`, q === 'reject' ? 'warn' : 'ok');
+      drawResults();
+    } catch (err) { toast(err.message, 'err'); }
+  };
+
+  mount(host,
+    h('div.row.gap-3.wrap.small', { style: { alignItems: 'center', marginBottom: '8px' } },
+      h('span.dim', `${fields.length} 个字段 · 可信 ${counts.validated} / 待查 ${counts.review} / 作废 ${counts.reject}`
+        + ` · 人审过 ${reviewed} 个（其余是处理程序给的初始状态）`),
+      h('span.grow'),
+      h('span.dim', `最近一次处理（${fromLatest[0] ? runOf(fromLatest[0]) : ''}）的 ${fromLatest.length} 个结果：`),
+      h('button.btn.btn-sm', { onclick: () => bulk('validated') }, '全部可信'),
+      h('button.btn.btn-sm', { onclick: () => bulk('reject') }, '全部作废')),
+    h('table.data.results-table',
+      h('thead', h('tr', h('th', '字段'), h('th.num', '当前值'), h('th', '来自'), h('th', '审核'), h('th', ''))),
+      h('tbody', ...rows)));
 }
 
 // ------------------------------------------------------------------ 数据加载

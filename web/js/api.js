@@ -117,7 +117,10 @@ export const api = {
   // 构效关系：两个字段的散点 + 相关；按批次的箱线图。filter 和数据处理页同一个筛选式
   relationPairs: (body) => post('/api/relation/pairs', body),
   relationGroups: (body) => post('/api/relation/groups', body),
-  setQuality: (id, quality) => post(`/api/results/${id}/quality`, { quality }),
+  // 审核：可信 / 待查 / 作废，带理由。返回这条和审核之后的当前值
+  setQuality: (id, quality, note = '') => post(`/api/results/${id}/quality`, { quality, note }),
+  setQualityMany: (ids, quality, note = '') => post('/api/results/quality', { ids, quality, note }),
+  sampleResults: (sampleId) => get(`/api/results/by-sample/${encodeURIComponent(sampleId)}`),
   table: (id, limit) => get(`/api/tables/${id}`, { limit }),
   samples: () => get('/api/samples'),
   storageStats: () => get('/api/storage/stats'),
@@ -133,6 +136,7 @@ export const api = {
   createSet: (body) => post('/api/selection/sets', body),
   getSet: (id) => get(`/api/selection/sets/${id}`),
   freezeSet: (id) => post(`/api/selection/sets/${id}/freeze`),
+  renameSet: (id, name) => post(`/api/selection/sets/${id}/rename`, { name }),
   deleteSet: (id) => request(`/api/selection/sets/${id}`, { method: 'DELETE' }),
 
   // 批处理

@@ -28,7 +28,7 @@
 ```sql
 key_result(id, sample_id, measurement_id, analysis_run_id,
            field_name, label, value_num, value_text, unit,
-           source, quality, version, artifact_uri, created_at)
+           source, quality, quality_note, quality_at, version, artifact_uri, created_at)
 ```
 
 一行一个字段值，而不是「一行一个样品、每个测量量占一列」。
@@ -48,7 +48,10 @@ SQLite 完全扛得住；真到扛不住的那天，`field_name` 上有索引，
 
 - `source` —— `raw` / `manual` / `skill` / `ai`。模型产出的结果永远标 `ai`；
   `skill` 是历史名字，现在的意思是「平台或功能模块算出来的」（列名不改：改名要做迁移，换不来任何东西）
-- `quality` —— `validated` / `review` / `reject`。批处理写的默认是 `review`
+- `quality` —— `validated`（可信）/ `review`（待查）/ `reject`（作废）。列的默认值是 `review`；
+  平台的批处理写入时给 `validated`（它自己的检查过了）。作废的不进 `key_result_current`，当前值退回上一次没作废的。
+  在样品页「关键结果」和构效关系页上审核
+- `quality_note` / `quality_at` —— 最近一次**人**审核的理由和时间（迁移第 4 步加的）。`quality_at` 为空 = 状态是写结果的程序给的，还没人审过
 - `version` —— 等于 `analysis_run.skill_version`，也就是算出它的那个模块的版本。改了算法重跑，两批结果能区分开
 
 没有这三个字段，一年后你会分不清某个数是怎么来的。

@@ -17,6 +17,7 @@ import json
 import mimetypes
 import os
 import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -560,24 +561,52 @@ def ingest_uploads(uploads: Iterable[tuple[str, bytes]], source_hint: str = "") 
     return report
 
 
-def verify_references() -> dict:
-    """巡检引用型文件是否还在原位。断链要显式暴露，不能等用户跑分析时才炸。"""
+def verify_references(limit: int = 200) -> dict:
+    """巡检原始文件还在不在。断链要显式暴露，不能等用户跑分析时才炸。
+
+    两种都查：引用型（只登记了路径，原文件在你的盘上 —— 最容易被挪走）和复制型
+    （在工作区 raw/ 里，一般不会丢，但有人手动清过工作区的话也会断）。状态变了的写回库
+    （missing ↔ ok），并把**找不到的是哪些**列出来：文件名、记录的路径、属于哪个样品 ——
+    光给一个「3 个找不到」，人还得自己去翻是哪三个。列表最多 `limit` 条，总数照实给。
+    """
+    t0 = time.perf_counter()
     rows = db.query(
-        "SELECT artifact_id, original_path, status FROM artifact"
-        " WHERE storage_mode='referenced' AND kind='raw'"
-    )
-    missing, restored = [], []
+        """SELECT a.artifact_id, a.storage_mode, a.original_path, a.stored_path, a.display_path,
+                  a.filename, a.status, a.sample_id, s.name AS sample_name, s.batch
+             FROM artifact a LEFT JOIN sample s ON s.sample_id = a.sample_id
+            WHERE a.kind = 'raw' ORDER BY a.created_at, a.artifact_id""")
+    missing, restored, details, changes = [], [], [], []
+    n_ref = 0
     for r in rows:
-        p = r["original_path"]
-        alive = bool(p) and Path(p).is_file()
+        if r["storage_mode"] == "copied" and r["stored_path"]:
+            path = config.WORKSPACE / r["stored_path"]
+        else:
+            n_ref += 1
+            path = Path(r["original_path"]) if r["original_path"] else None
+        alive = bool(path) and path.is_file()
         want = "ok" if alive else "missing"
         if want != r["status"]:
-            with db.tx() as c:
-                c.execute("UPDATE artifact SET status=? WHERE artifact_id=?", (want, r["artifact_id"]))
-            (restored if alive else missing).append(r["artifact_id"])
-        elif not alive:
+            changes.append((want, r["artifact_id"]))
+            if alive:
+                restored.append(r["artifact_id"])
+        if not alive:
             missing.append(r["artifact_id"])
-    return {"checked": len(rows), "missing": missing, "restored": restored}
+            if len(details) < limit:
+                details.append({
+                    "artifact_id": r["artifact_id"], "filename": r["filename"],
+                    "display_path": r["display_path"], "path": str(path) if path else "",
+                    "storage_mode": r["storage_mode"], "sample_id": r["sample_id"],
+                    "sample_name": r["sample_name"], "batch": r["batch"],
+                    "newly_missing": r["status"] != "missing",
+                })
+    if changes:
+        with db.tx() as c:
+            c.executemany("UPDATE artifact SET status = ? WHERE artifact_id = ?", changes)
+    return {
+        "checked": len(rows), "checked_referenced": n_ref, "checked_copied": len(rows) - n_ref,
+        "missing": missing, "restored": restored, "missing_files": details,
+        "truncated": len(missing) > len(details), "ms": round((time.perf_counter() - t0) * 1000),
+    }
 
 
 def mark_matrix(artifact_id: str, path: Path, *, if_unknown: bool | None = None):

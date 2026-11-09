@@ -113,6 +113,9 @@ export function toast(message, kind = 'info', ms = 3600) {
 
 // ------------------------------------------------------------------ Modal
 let modalSeq = 0;
+// 开着的弹窗，后开的在最后。弹窗里再弹一个确认框时，Esc / Tab 只归最上面那个管 ——
+// 两个都在 document 上听键盘，不分先后的话一下 Esc 会把两层一起关掉
+const modalStack = [];
 
 /**
  * 弹窗。无障碍（自查 §6 #30）：是一个 dialog、标题就是它的名字；
@@ -121,12 +124,15 @@ let modalSeq = 0;
 export function modal({ title, body, foot, width, onClose, flush = false }) {
   const opener = document.activeElement;
   const close = () => {
+    const at = modalStack.indexOf(panel);
+    if (at >= 0) modalStack.splice(at, 1);
     backdrop.remove();
     document.removeEventListener('keydown', onKey);
     onClose?.();
     if (opener?.isConnected && typeof opener.focus === 'function') opener.focus();
   };
   const onKey = (e) => {
+    if (modalStack[modalStack.length - 1] !== panel) return;
     if (e.key === 'Escape') { e.stopPropagation(); close(); return; }
     if (e.key === 'Tab') trapTab(e, panel);
   };
@@ -151,6 +157,7 @@ export function modal({ title, body, foot, width, onClose, flush = false }) {
   }, panel);
 
   document.addEventListener('keydown', onKey);
+  modalStack.push(panel);
   document.body.appendChild(backdrop);
   panel.querySelector('input,select,textarea,button')?.focus();
   return { close, panel, backdrop };
@@ -171,17 +178,25 @@ function trapTab(e, panel) {
   else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
 }
 
+/**
+ * 问一句「确定吗」，确定 → true，取消 / Esc / 点外面 → false。
+ *
+ * 答案只在 onClose 里交出去一次。原来是「确定」按钮先 m.close() 再 resolve(true)，
+ * 而 close() 会先跑 onClose → resolve(false)，Promise 只认第一次 —— 于是**点确定也返回 false**：
+ * 装模块前的「我信得过，继续」、删 AI 对话、卸载模块，从界面上点都没有任何反应（D 组自查发现）。
+ */
 export function confirmDialog(message, { confirmLabel = '确定', danger = false } = {}) {
   return new Promise((resolve) => {
+    let answer = false;
     const m = modal({
       title: '请确认',
       body: h('p', message),
       foot: [
-        h('button.btn', { onclick: () => { m.close(); resolve(false); } }, '取消'),
+        h('button.btn', { onclick: () => m.close() }, '取消'),
         h(`button.btn.${danger ? 'btn-danger' : 'btn-primary'}`,
-          { onclick: () => { m.close(); resolve(true); } }, confirmLabel),
+          { onclick: () => { answer = true; m.close(); } }, confirmLabel),
       ],
-      onClose: () => resolve(false),
+      onClose: () => resolve(answer),
     });
   });
 }

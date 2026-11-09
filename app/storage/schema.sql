@@ -112,6 +112,8 @@ CREATE TABLE IF NOT EXISTS key_result (
     unit            TEXT NOT NULL DEFAULT '',
     source          TEXT NOT NULL,        -- raw | manual | skill | ai
     quality         TEXT NOT NULL DEFAULT 'review',  -- validated | review | reject
+    quality_note    TEXT,                 -- 为什么这么标（「那片样品裂了」）。第 4 步迁移加的
+    quality_at      TEXT,                 -- 什么时候标的
     version         TEXT,                 -- 算法版本，等于 analysis_run.skill_version
     artifact_uri    TEXT,                 -- 关联到具体文件
     created_at      TEXT NOT NULL

@@ -86,6 +86,58 @@ def test_missing_reference_is_flagged_not_silent(workspace, sample_dir):
                      (png["artifact_id"],)) == "missing"
 
 
+def test_verify_lists_which_files_are_missing_and_finds_them_again(workspace, sample_dir):
+    """断链巡检（D 组）：不只给个数，要说出是哪个文件、记录在哪、属于哪个样品；放回去之后标回 ok。"""
+    import shutil
+
+    from app import config
+
+    ingest.ingest_paths(ingest.scan_preview(sample_dir)["files"])
+    png = db.query_one("SELECT * FROM artifact WHERE filename='B12_S1_sem.png'")
+    csv = db.query_one("SELECT * FROM artifact WHERE storage_mode='copied' LIMIT 1")
+    stash = sample_dir.parent / "stash.png"
+    shutil.move(png["original_path"], stash)
+    copied = config.WORKSPACE / csv["stored_path"]
+    copied_bytes = copied.read_bytes()
+    copied.unlink()                      # 有人手动清过工作区
+
+    r = ingest.verify_references()
+    n_raw = db.scalar("SELECT COUNT(*) FROM artifact WHERE kind='raw'")
+    assert r["checked"] == n_raw and r["checked_referenced"] + r["checked_copied"] == n_raw
+    assert set(r["missing"]) == {png["artifact_id"], csv["artifact_id"]}
+    by_id = {m["artifact_id"]: m for m in r["missing_files"]}
+    assert by_id[png["artifact_id"]]["path"] == png["original_path"]
+    assert by_id[png["artifact_id"]]["sample_name"] == "S1"
+    assert by_id[png["artifact_id"]]["newly_missing"] is True
+    assert by_id[csv["artifact_id"]]["storage_mode"] == "copied"
+    assert r["restored"] == [] and r["truncated"] is False
+
+    # 第二次查：还是找不到，但不再算「新发现的」
+    again = ingest.verify_references()
+    assert {m["artifact_id"]: m["newly_missing"] for m in again["missing_files"]} == {
+        png["artifact_id"]: False, csv["artifact_id"]: False}
+
+    # 放回去：标回 ok，算「找回来的」
+    shutil.move(stash, png["original_path"])
+    copied.write_bytes(copied_bytes)
+    back = ingest.verify_references()
+    assert back["missing"] == [] and set(back["restored"]) == {png["artifact_id"], csv["artifact_id"]}
+    assert db.scalar("SELECT COUNT(*) FROM artifact WHERE status='missing'") == 0
+
+
+def test_verify_caps_the_list_but_reports_the_true_count(workspace, sample_dir):
+    from app import config
+
+    ingest.ingest_paths(ingest.scan_preview(sample_dir)["files"])
+    for r in db.query("SELECT storage_mode, original_path, stored_path FROM artifact WHERE kind='raw'"):
+        (config.WORKSPACE / r["stored_path"] if r["storage_mode"] == "copied"
+         else Path(r["original_path"])).unlink()
+    n = db.scalar("SELECT COUNT(*) FROM artifact WHERE kind='raw'")
+    assert n >= 2
+    r = ingest.verify_references(limit=1)
+    assert len(r["missing"]) == n and len(r["missing_files"]) == 1 and r["truncated"] is True
+
+
 def test_local_path_raises_with_a_readable_message(workspace, sample_dir):
     from app.storage import artifacts
 

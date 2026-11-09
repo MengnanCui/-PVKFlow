@@ -99,11 +99,79 @@ def results_for_run(analysis_run_id: str) -> list[dict]:
     )
 
 
-def set_quality(result_id: int, quality: str) -> None:
-    if quality not in ("validated", "review", "reject"):
-        raise ValueError(f"未知的质量状态：{quality}")
+QUALITY = ("validated", "review", "reject")
+
+
+def set_quality(result_id: int, quality: str, note: str = "") -> dict:
+    """审核一条关键结果：可信 / 待查 / 作废，留下理由和时间。
+
+    返回这条结果，以及审核之后这个 (样品, 字段) 的**当前值** —— 作废了最新的那条，
+    当前值退回上一次没作废的（key_result_current 的定义），界面要能告诉你退回到了哪个数。
+    """
+    if quality not in QUALITY:
+        raise ValueError(f"未知的质量状态：{quality}（只能是 {' / '.join(QUALITY)}）")
+    row = db.query_one("SELECT id, sample_id, field_name FROM key_result WHERE id = ?", (result_id,))
+    if not row:
+        raise KeyError(f"没有这条结果：{result_id}")
     with db.tx() as c:
-        c.execute("UPDATE key_result SET quality=? WHERE id=?", (quality, result_id))
+        c.execute("UPDATE key_result SET quality = ?, quality_note = ?, quality_at = ? WHERE id = ?",
+                  (quality, (note or "").strip()[:500] or None, db.now(), result_id))
+    return {"result": _result_row(result_id),
+            "current": _current(row["sample_id"], row["field_name"])}
+
+
+def set_quality_many(ids: list[int], quality: str, note: str = "") -> dict:
+    """一次审核几条（比如「这一次测量的结果全部作废」）。全部存在才动手，一条不存在就一条都不改。"""
+    if quality not in QUALITY:
+        raise ValueError(f"未知的质量状态：{quality}（只能是 {' / '.join(QUALITY)}）")
+    ids = [int(i) for i in ids]
+    if not ids:
+        raise ValueError("没有指定要审核的结果")
+    found = {r["id"] for r in db.query(
+        f"SELECT id FROM key_result WHERE id IN ({','.join('?' * len(ids))})", tuple(ids))}
+    if missing := [i for i in ids if i not in found]:
+        raise KeyError(f"没有这些结果：{missing[:10]}")
+    with db.tx() as c:
+        c.executemany("UPDATE key_result SET quality = ?, quality_note = ?, quality_at = ? WHERE id = ?",
+                      [(quality, (note or "").strip()[:500] or None, db.now(), i) for i in ids])
+    return {"updated": len(ids)}
+
+
+_RESULT_SQL = """SELECT k.id, k.sample_id, k.field_name, k.label, k.value_num, k.value_text, k.unit,
+       k.source, k.quality, k.quality_note, k.quality_at, k.version, k.created_at,
+       k.analysis_run_id, r.started_at AS run_started_at, r.parent_run_id,
+       json_extract(p.params_json, '$.title') AS run_title
+  FROM key_result k
+  LEFT JOIN analysis_run r ON r.analysis_run_id = k.analysis_run_id
+  LEFT JOIN analysis_run p ON p.analysis_run_id = r.parent_run_id"""
+
+
+def _result_row(result_id: int) -> dict | None:
+    return db.query_one(_RESULT_SQL + " WHERE k.id = ?", (result_id,))
+
+
+def _current(sample_id: str, field_name: str) -> dict | None:
+    row = db.query_one("SELECT id FROM key_result_current WHERE sample_id IS ? AND field_name = ?",
+                       (sample_id, field_name))
+    return _result_row(row["id"]) if row else None
+
+
+def sample_results(sample_id: str) -> list[dict]:
+    """一个样品的全部关键结果，按字段分组：当前值 + 历史（新的在前，含作废的）。样品页的审核表用它。"""
+    rows = db.query(_RESULT_SQL + " WHERE k.sample_id = ? ORDER BY k.field_name, k.id DESC",
+                    (sample_id,))
+    current = {r["id"] for r in db.query(
+        "SELECT id FROM key_result_current WHERE sample_id = ?", (sample_id,))}
+    fields: dict[str, dict] = {}
+    for r in rows:
+        f = fields.setdefault(r["field_name"], {
+            "field_name": r["field_name"], "label": r["label"], "unit": r["unit"],
+            "current": None, "history": []})
+        r["is_current"] = r["id"] in current
+        if r["is_current"]:
+            f["current"] = r
+        f["history"].append(r)
+    return list(fields.values())
 
 
 def list_fields() -> list[dict]:

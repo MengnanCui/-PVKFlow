@@ -101,13 +101,11 @@ def freeze_set(set_id: str) -> dict:
 
 @router.post("/sets/{set_id}/rename")
 def rename_set(set_id: str, payload: dict = Body(...)) -> dict:
-    try:
-        return sets.rename(set_id, payload.get("name", ""))
-    except sets.SetError as exc:
-        raise ApiError(str(exc), 400, "bad_set") from exc
+    # SetError 是 ValueError → 400；不存在 → 404（guard 统一翻译）
+    return guard(sets.rename, set_id, payload.get("name", ""))
 
 
 @router.delete("/sets/{set_id}")
 def delete_set(set_id: str) -> dict:
-    sets.delete(set_id)
-    return {"ok": True}
+    """只删样品集本身（名字 + 筛选式 / 快照），样品和结果不动。"""
+    return {"ok": True, **guard(sets.delete, set_id)}

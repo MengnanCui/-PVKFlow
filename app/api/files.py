@@ -157,7 +157,7 @@ def detail(artifact_id: str) -> dict:
 
 @router.post("/verify")
 def verify() -> dict:
-    """巡检引用型文件是否还在原位。"""
+    """巡检原始文件（引用型 + 复制型）还在不在；找不到的列出来（最多 200 条，总数照实给）。"""
     return ingest.verify_references()
 
 

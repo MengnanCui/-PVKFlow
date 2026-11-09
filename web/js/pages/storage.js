@@ -3,7 +3,7 @@
 import { api } from '../api.js';
 import { infoDot, withInfo } from '../components/info.js';
 import { fieldNameCell, unitCell } from '../components/field-cells.js';
-import { h, mount, clear, render, fmtBytes, fmtInt, fmtTime, empty, latest } from '../ui.js';
+import { h, mount, clear, render, fmtBytes, fmtInt, fmtTime, empty, latest, busy, toast } from '../ui.js';
 
 export const meta = {
   id: 'storage',
@@ -51,6 +51,8 @@ export function view(host, ctx = {}) {
           metric('关键结果', d.counts.results, `${d.fields.length} 个不同字段`),
           metric('数值表', d.tables.length, 'Parquet 列式存储'))),
 
+      verifySection(d, ctx),
+
       h('div.section',
         h('div.section-head',
           h('div.section-title', '为什么分三层'),
@@ -94,6 +96,63 @@ export function view(host, ctx = {}) {
                 'analysis_run_id — 一次处理', 'artifact_id — 文件 / 图像 / 曲线']
               .map((t) => h('span.tag', t))))));
   });
+}
+
+// ------------------------------------------------------------------ 断链巡检
+/**
+ * 原始文件还在不在。引用型只登记了路径，原文件挪走 / 改名 / 移动硬盘没插，平台都不知道 ——
+ * 要到有人打开那个样品才炸。这里一键查一遍，找不到的列出来：哪个文件、记录在哪、属于哪个样品。
+ */
+function verifySection(d, ctx) {
+  const out = h('div');
+  const known = d.counts?.missing_files || 0;
+  const btn = h('button.btn.btn-sm.btn-primary', {
+    onclick: async () => {
+      busy(btn, true);
+      try {
+        const r = await api.verifyFiles();
+        mount(out, verifyReport(r, ctx));
+      } catch (err) {
+        toast(err.message, 'err');
+      } finally { busy(btn, false); }
+    },
+  }, '检查一遍');
+  mount(out, h('div.small.dim', known
+    ? `上次知道的：${fmtInt(known)} 个文件找不到。点「检查一遍」看是哪些（也会发现已经放回去的）`
+    : '没有已知找不到的文件。原文件挪过位置、换过电脑或移动硬盘没插的话，点「检查一遍」'));
+  return h('div.section',
+    h('div.section-head',
+      h('div.section-title', '原始文件还在不在'),
+      h('div.section-note', '引用型只记了路径，原文件挪走了平台不会自己知道')),
+    h('div.panel.panel-body',
+      h('div.row.gap-3', { style: { alignItems: 'center' } }, btn, h('div.grow', out))));
+}
+
+function verifyReport(r, ctx) {
+  const head = `查了 ${fmtInt(r.checked)} 个（引用 ${fmtInt(r.checked_referenced)} / 复制 ${fmtInt(r.checked_copied)}），${fmtInt(r.ms)} ms。`;
+  if (!r.missing.length) {
+    return h('div.small', h('span.status.status-ok', '都在'), ' ', head,
+      r.restored.length ? ` 其中 ${fmtInt(r.restored.length)} 个之前找不到、现在放回去了，已标回正常。` : '');
+  }
+  const fresh = r.missing_files.filter((m) => m.newly_missing).length;
+  return h('div',
+    h('div.small', h('span.status.status-warn', `${fmtInt(r.missing.length)} 个找不到`), ' ', head,
+      fresh ? ` 其中 ${fmtInt(fresh)} 个是这次新发现的。` : '',
+      r.restored.length ? ` 另有 ${fmtInt(r.restored.length)} 个放回去了。` : ''),
+    h('p.xsmall.dim.mt-2',
+      '把文件放回「记录的位置」那一栏的路径，再点一次检查就会标回正常；放不回去的话，从数据处理页重新导入它。',
+      '这些样品的处理结果还在库里，只是打不开原始数据。'),
+    h('div.panel.panel-body.flush.mt-2',
+      h('table.data.missing-files',
+        h('thead', h('tr', h('th', '文件'), h('th', '样品'), h('th', '类型'), h('th', '记录的位置'))),
+        h('tbody', ...r.missing_files.map((m) => h('tr',
+          h('td', m.filename, m.newly_missing ? h('span.tag.tag-warn', { style: { marginLeft: '6px' } }, '新') : null),
+          h('td', m.sample_id
+            ? h('button.linklike', { onclick: () => ctx.nav?.('sample', { arg: m.sample_id }) }, m.sample_name || m.sample_id)
+            : h('span.dim', '—')),
+          h('td.small', m.storage_mode === 'copied' ? '复制（工作区里）' : '引用'),
+          h('td.mono.xsmall.dim', { style: { wordBreak: 'break-all' } }, m.path)))))),
+    r.truncated ? h('div.xsmall.dim.mt-2', `只列了前 ${fmtInt(r.missing_files.length)} 个`) : null);
 }
 
 function metric(label, value, note) {

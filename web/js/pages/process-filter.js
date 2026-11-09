@@ -2,7 +2,7 @@
 // 筛选一变就重新查询（经 hooks.reload，见 process-state.js）。
 
 import { api } from '../api.js';
-import { h, mount, toast, skeletonRows, busy, fmtInt, modal } from '../ui.js';
+import { h, mount, toast, skeletonRows, busy, fmtInt, fmtTime, modal, confirmDialog } from '../ui.js';
 import { facetPanel } from '../components/facets.js';
 import { setScope } from '../scope.js';
 import { S, hooks, refs } from './process-state.js';
@@ -78,7 +78,8 @@ export function drawFacets() {
 
 function savedSets() {
   return h('div.mt-4',
-    h('div.facet-head', h('span.facet-title', '样品集')),
+    h('div.facet-head', h('span.facet-title', '样品集'),
+      h('button.linklike.xsmall', { style: { marginLeft: 'auto' }, onclick: () => manageSetsDialog() }, '管理')),
     h('div.facet-chips', ...S.sets.map((s) =>
       h('button.chip-toggle', {
         title: s.kind === 'dynamic' ? '动态集：新导入的样品会自动进来'
@@ -97,7 +98,89 @@ function savedSets() {
         s.kind === 'pinned' ? h('span.xsmall.dim', '钉') : null))));
 }
 
-// ------------------------------------------------------------------ 样品集
+// ------------------------------------------------------------------ 样品集：管理
+/**
+ * 改名、钉死（动态 → 固定）、删除。三件事都只动「样品集」这个名字和它记的东西，
+ * 样品和处理结果一个都不动 —— 弹窗里写明了，删之前还要再确认一次。
+ */
+function manageSetsDialog() {
+  const list = h('div.set-manage');
+  const draw = () => {
+    if (!S.sets.length) { mount(list, h('p.small.dim', '没有样品集了。在样品列表上方点「存为样品集」新建。')); return; }
+    mount(list, ...S.sets.map((s) => setRow(s, async () => { await loadSets(); draw(); })));
+  };
+  draw();
+  const m = modal({
+    title: '管理样品集',
+    width: '680px',
+    body: h('div',
+      h('p.xsmall.dim', '这里只改样品集本身（名字、记下的筛选式或快照）。样品、文件、处理结果都不会动。'),
+      list),
+    foot: [h('button.btn', { onclick: () => m.close() }, '关闭')],
+  });
+}
+
+function setRow(s, refresh) {
+  const name = h('input.input.input-sm', { value: s.name, 'aria-label': `「${s.name}」的名字`, style: { width: '180px' } });
+  const act = async (btn, fn, ok) => {
+    busy(btn, true);
+    try { await fn(); toast(ok, 'ok'); await refresh(); }
+    catch (err) { busy(btn, false); toast(err.message, 'err', 6000); }
+  };
+  const renameBtn = h('button.btn.btn-sm', {
+    onclick: (e) => {
+      const v = name.value.trim();
+      if (v === s.name) return;
+      act(e.currentTarget, () => api.renameSet(s.set_id, v), `已改名为「${v}」`);
+    },
+  }, '改名');
+  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') renameBtn.click(); });
+  return h('div.set-row', { dataset: { setId: s.set_id } },
+    h('div.row.gap-2', { style: { alignItems: 'center' } },
+      name, renameBtn,
+      h(`span.tag${s.kind === 'pinned' ? '' : '.tag-accent'}`, s.kind === 'pinned' ? '固定集' : '动态集'),
+      h('span.small', `${fmtInt(s.count)} 个样品`),
+      h('span.grow'),
+      s.kind === 'dynamic'
+        ? h('button.btn.btn-sm', {
+            title: '把此刻命中的样品钉死成固定集，以后不再随新数据变',
+            onclick: async (e) => {
+              const btn = e.currentTarget;
+              const yes = await confirmDialog(
+                `把「${s.name}」钉死成固定集？此刻命中的 ${fmtInt(s.count)} 个样品会被记下来，`
+                + '以后新导入的样品不会再进来。这一步不能撤回（要动态的话可以用原来的筛选式再建一个）。',
+                { confirmLabel: '钉死' });
+              if (yes) act(btn, () => api.freezeSet(s.set_id), `「${s.name}」已钉死，${fmtInt(s.count)} 个样品`);
+            },
+          }, '钉死')
+        : null,
+      h('button.btn.btn-sm.btn-danger', {
+        onclick: async (e) => {
+          const btn = e.currentTarget;
+          const yes = await confirmDialog(
+            `删除样品集「${s.name}」？只删这个名字和它记的${s.kind === 'pinned' ? '快照' : '筛选式'}，`
+            + `里面的 ${fmtInt(s.count)} 个样品和它们的结果都还在。`,
+            { confirmLabel: '删除', danger: true });
+          if (yes) act(btn, () => api.deleteSet(s.set_id), `已删除「${s.name}」`);
+        },
+      }, '删除')),
+    h('div.xsmall.dim.mt-1', s.kind === 'pinned'
+      ? `快照 · 建于 ${fmtTime(s.created_at)}${s.updated_at !== s.created_at ? ` · 改于 ${fmtTime(s.updated_at)}` : ''}`
+      : `筛选式 ${describeFilter(s.filter)} · 新导入的符合条件的样品会自动进来`));
+}
+
+/** 筛选式说成人话（只说常见的几样，其余原样给）。 */
+function describeFilter(f) {
+  const parts = [];
+  if (f.batch?.length) parts.push(`批次 ${f.batch.join('、')}`);
+  if (f.q) parts.push(`名字含「${f.q}」`);
+  if (f.ids?.length) parts.push(`指定的 ${fmtInt(f.ids.length)} 个`);
+  const rest = Object.keys(f).filter((k) => !['batch', 'q', 'ids'].includes(k));
+  if (rest.length) parts.push(rest.join(' / '));
+  return parts.join(' · ') || '（全部）';
+}
+
+// ------------------------------------------------------------------ 样品集：新建
 export function saveSetDialog() {
   const useChecked = S.checked.size > 0;
   const nameInput = h('input.input', { placeholder: '比如 B20 全批' });
