@@ -4,11 +4,12 @@
 
 ```
 数据处理  →  数据存储  →  构效关系
-（本期重点）  （本期重点）   （留架子）
+ （做扎实）    （做扎实）    （第一版）
 ```
 
 先有数据处理，然后是存储，最后才谈得上构效关系分析。
-这一期把前两层做扎实，第三层只留入口和数据形态。
+前两层做扎实了；第三层有了第一版（2026-11）：任选两个字段的散点 + 皮尔逊 / 斯皮尔曼（带 p 值），
+按批次的箱线图。数据不另建模型 —— 关键结果长表按字段透视（`storage/relation.py`）。
 
 ## 进程结构
 
@@ -45,6 +46,7 @@ app/
 │   ├─ artifacts.py  artifact 查询、local_path() 吃掉复制/引用差异
 │   ├─ selection.py  筛选式 → SQL（一次选择是一个筛选式，不是一串 ID）
 │   ├─ results.py    analysis_run + key_result 读写、字段列表
+│   ├─ relation.py   构效关系：把关键结果「当前值」透视成每个样品一行（范围用数据处理页的筛选式）
 │   ├─ sets.py       保存的样品集
 │   ├─ conversations.py  AI 对话与钉住的分析
 │   └─ tabular.py    长表读写（CSV；装了 pyarrow 则 Parquet）
@@ -55,7 +57,9 @@ app/
 │   ├─ validate.py   装之前的验证 + 试跑
 │   ├─ check.py      命令行验证：python -m app.modules.check <目录>
 │   └─ builtin/      thickness（膜厚）· special_processing（谱斜率 / 波段积分）
-├─ analysis/fringe_ot.py  膜厚算法（DEFAULTS 是冻结规范的原文，不改；平台用 override）
+├─ analysis/
+│   ├─ fringe_ot.py  膜厚算法（DEFAULTS 是冻结规范的原文，不改；平台用 override）
+│   └─ stats.py      构效关系的统计：相关系数 + p 值（不装 scipy，自写 t 分布；测试里对着 scipy 的参考值）、箱线图分位数
 ├─ parsers/
 │   ├─ sniff.py      编码 / 分隔符 / 抬头 / 列类型嗅探
 │   ├─ insitu_csv.py 原位 Data.csv（认结构，不认名字）
@@ -121,6 +125,7 @@ web/
     ├─ app.js      导航、主题、健康检查
     ├─ components/ ai-drawer · info（ⓘ 浮层）· chat-client（两者共用：模型选择 + 流式发问）
     │              figure · heatmap · module-panel · facets · filepicker · virtual-list · field-cells
+    │              relation-charts（散点图、箱线图 —— 坐标轴和 chart.js 共用 drawGrid / drawAxes）
     └─ pages/      overview · process(+4) · sample · batch(+4) · history · storage · relation · settings
 ```
 

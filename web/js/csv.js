@@ -49,3 +49,9 @@ export function seriesToCsv(spec) {
   // BOM：不加的话 Excel 打开中文列名是乱码
   return '﻿' + lines.join('\n') + '\n';
 }
+
+/** 表头 + 行 → CSV（带 BOM，Excel 打开中文不乱码）。每一格都过 csvCell。 */
+export function rowsToCsv(header, rows) {
+  const lines = [header, ...rows].map((r) => r.map(csvCell).join(','));
+  return '\ufeff' + lines.join('\n') + '\n';
+}

@@ -1067,3 +1067,15 @@ tr.is-clickable {
 
 /* 表头和工具条里的短标签不该被挤成竖排 */
 .vrow-head > *, .check .small, .panel-head .btn { white-space: nowrap; }
+
+/* ---------------------------------------------------------------- 构效关系 */
+/* 长得像链接的按钮：表格里的样品名点了打开样品。用 button 而不是 a —— 它不是跳到一个地址，
+   是调页面导航；button 天生能用键盘按 */
+.linklike {
+  background: none; border: 0; padding: 0; font: inherit; color: var(--accent);
+  cursor: pointer; text-align: left;
+}
+.linklike:hover { text-decoration: underline; }
+.relation-stats { margin-top: var(--s3x); }
+.relation-nums { display: grid; gap: 4px; margin-top: var(--s2x);
+  font-variant-numeric: tabular-nums; font-size: var(--t-sm); }

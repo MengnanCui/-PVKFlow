@@ -19,7 +19,7 @@ pytestmark = pytest.mark.skipif(NODE is None, reason="没装 node")
 
 def _js(expr: str):
     url = (config.ROOT / "web" / "js" / "csv.js").as_uri()
-    code = f"import {{ csvCell, seriesToCsv }} from {json.dumps(url)};\n" \
+    code = f"import {{ csvCell, seriesToCsv, rowsToCsv }} from {json.dumps(url)};\n" \
            f"process.stdout.write(JSON.stringify({expr}));"
     # node 吐的是 UTF-8。text=True 会按系统编码解（Windows 上是 cp1252），中文和 BOM 就全乱了
     r = subprocess.run([NODE, "--input-type=module", "-e", code],
@@ -65,3 +65,10 @@ def test_python_export_guards_exactly_what_the_frontend_guards(raw):
     js = _js(f"csvCell({json.dumps(raw)})")
     py = guard_formula(raw)
     assert js.lstrip('"').startswith("'") == py.startswith("'"), (raw, js, py)
+
+
+def test_a_table_export_guards_every_cell():
+    """构效关系页的数据下载是一整张表（样品名、批次、X、Y），每一格都要过同一道防护。"""
+    csv = _js("rowsToCsv(['样品', '批次', 'x', 'y'], [['=1+1', '@b', -0.5, 3], ['S2', 'B1', 1e-3, NaN]])")
+    assert csv.startswith("\ufeff")
+    assert csv.lstrip("\ufeff").splitlines() == ["样品,批次,x,y", "'=1+1,'@b,-0.5,3", "S2,B1,0.001,"]

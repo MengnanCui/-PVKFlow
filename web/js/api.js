@@ -114,6 +114,9 @@ export const api = {
   // 结果
   results: (params) => get('/api/results', params),
   fields: () => get('/api/results/fields'),
+  // 构效关系：两个字段的散点 + 相关；按批次的箱线图。filter 和数据处理页同一个筛选式
+  relationPairs: (body) => post('/api/relation/pairs', body),
+  relationGroups: (body) => post('/api/relation/groups', body),
   setQuality: (id, quality) => post(`/api/results/${id}/quality`, { quality }),
   table: (id, limit) => get(`/api/tables/${id}`, { limit }),
   samples: () => get('/api/samples'),

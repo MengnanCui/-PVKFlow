@@ -136,10 +136,13 @@ const active = (p) => p.evaluate(() => {
   // #28 构效关系页：字段全列出来，和标题的数一致
   { const { ctx, p } = await fresh(b, 'relation');
     await sleep(1200);
-    const r = await p.evaluate(() => ({
-      note: document.querySelector('.section-note')?.textContent || '',
-      rows: document.querySelectorAll('table.data tbody tr').length,
-    }));
+    // E 组之后这一页还有「逐个样品」的表 —— 只数「全部可分析的字段」那一节自己的表
+    const r = await p.evaluate(() => {
+      const sec = [...document.querySelectorAll('#page-relation .section')]
+        .find((x) => x.querySelector('.section-title')?.textContent === '全部可分析的字段');
+      return { note: sec?.querySelector('.section-note')?.textContent || '',
+               rows: sec?.querySelectorAll('table.data tbody tr').length ?? -1 };
+    });
     const n = Number((r.note.match(/(\d+) 个数值字段/) || [])[1]);
     rec('构效关系字段不截断', n > 0 && r.rows === n, `标题说 ${n} 个，表里 ${r.rows} 行`);
     rec('构效关系页零报错', p.errors.length === 0, p.errors.slice(0, 2).join(' | ') || '无');

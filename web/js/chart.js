@@ -109,6 +109,82 @@ export function tickLabel(v, step) {
   return v.toFixed(dec);
 }
 
+/** 悬停读数里的数：大小差很多的数都给到差不多的有效位。 */
+export function fmtValue(v) {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '—';
+  const a = Math.abs(v);
+  if (a === 0) return '0';
+  if (a >= 1e5 || a < 1e-3) return v.toExponential(3);
+  return v.toFixed(a < 1 ? 4 : a < 100 ? 3 : 2);
+}
+
+// ------------------------------------------------------------------ 坐标轴（几种图共用）
+//
+// 原来网格、坐标轴、刻度、刻度标签、轴标题全写在 xyChart 那一个函数里（它因此有四百多行）。
+// 构效关系页加了散点图和箱线图，三种图的轴必须长得一样 —— 抽出来共用（D-105）。
+
+/** 横向网格线。画在数据**下面**。 */
+export function drawGrid(root, { M, iw, gy, sy }) {
+  const grid = el('g', { stroke: 'var(--line)', 'stroke-width': 1 });
+  for (const t of gy.ticks) {
+    grid.appendChild(el('line', { x1: M.l, x2: M.l + iw, y1: sy(t), y2: sy(t) }));
+  }
+  root.appendChild(grid);
+}
+
+/**
+ * 坐标轴、刻度、刻度标签、轴标题。画在数据**上面**。2px、刻度朝内 —— 对齐 matplotlib 规范。
+ * `xCats` 给了就是类别轴（箱线图）：[[像素位置, 文字], …]，此时 gx / sx 不用。
+ */
+export function drawAxes(root, { M, iw, ih, H, gx, gy, sx, sy, xLabel, yLabel, xCats = null,
+                                  slant = false }) {
+  const axis = el('g', { stroke: 'var(--ink-3)', 'stroke-width': 2 });
+  axis.appendChild(el('line', { x1: M.l, y1: M.t, x2: M.l, y2: M.t + ih }));
+  axis.appendChild(el('line', { x1: M.l, y1: M.t + ih, x2: M.l + iw, y2: M.t + ih }));
+  const xt = xCats
+    ? xCats.map(([px, text]) => [px, text])
+    : gx.ticks.map((t) => [sx(t), tickLabel(t, gx.step)]);
+  for (const [x] of xt) {
+    if (x < M.l - 0.5 || x > M.l + iw + 0.5) continue;
+    axis.appendChild(el('line', { x1: x, x2: x, y1: M.t + ih, y2: M.t + ih - 6 }));
+  }
+  for (const t of gy.ticks) {
+    const y = sy(t);
+    axis.appendChild(el('line', { x1: M.l, x2: M.l + 6, y1: y, y2: y }));
+  }
+  root.appendChild(axis);
+
+  const labels = el('g', { fill: 'var(--ink-3)', 'font-size': 11,
+                           'font-family': 'var(--font)', 'font-variant-numeric': 'tabular-nums' });
+  for (const [x, text] of xt) {
+    if (x < M.l - 0.5 || x > M.l + iw + 0.5) continue;
+    // 类别多、名字长时斜着写（slant）—— 横着写会叠在一起，一个都读不出来
+    const y = M.t + ih + (slant ? 12 : 16);
+    labels.appendChild(Object.assign(
+      el('text', slant
+        ? { x, y, 'text-anchor': 'end', transform: `rotate(-40 ${x} ${y})` }
+        : { x, y, 'text-anchor': 'middle' }), { textContent: text }));
+  }
+  for (const t of gy.ticks) {
+    labels.appendChild(Object.assign(
+      el('text', { x: M.l - 8, y: sy(t) + 3.5, 'text-anchor': 'end' }),
+      { textContent: tickLabel(t, gy.step) }));
+  }
+  root.appendChild(labels);
+
+  const axisText = el('g', { fill: 'var(--ink-2)', 'font-size': 12, 'font-family': 'var(--font)' });
+  if (xLabel) {
+    axisText.appendChild(Object.assign(
+      el('text', { x: M.l + iw / 2, y: H - 6, 'text-anchor': 'middle' }), { textContent: xLabel }));
+  }
+  if (yLabel) {
+    axisText.appendChild(Object.assign(
+      el('text', { x: 13, y: M.t + ih / 2, 'text-anchor': 'middle',
+                   transform: `rotate(-90 13 ${M.t + ih / 2})` }), { textContent: yLabel }));
+  }
+  root.appendChild(axisText);
+}
+
 /**
  * 画一张 X-Y 图。
  * spec: { series: [{label, x[], y[], style}], x_label, y_label }
@@ -217,12 +293,7 @@ export function xyChart(spec, { height = 300, onSelect = null, width = 0 } = {})
     const sx = (v) => M.l + ((v - gx.lo) / (gx.hi - gx.lo || 1)) * iw;
     const sy = (v) => M.t + ih - ((v - gy.lo) / (gy.hi - gy.lo || 1)) * ih;
 
-    // 网格
-    const grid = el('g', { stroke: 'var(--line)', 'stroke-width': 1 });
-    for (const t of gy.ticks) {
-      grid.appendChild(el('line', { x1: M.l, x2: M.l + iw, y1: sy(t), y2: sy(t) }));
-    }
-    structRoot.appendChild(grid);
+    drawGrid(structRoot, { M, iw, gy, sy });
 
     // 分位数带画在最底下，作为背景
     if (band) {
@@ -304,50 +375,8 @@ export function xyChart(spec, { height = 300, onSelect = null, width = 0 } = {})
       s._dash = dash;
     }
 
-    // 坐标轴：2px、刻度朝内 —— 对齐 matplotlib 规范
-    const axis = el('g', { stroke: 'var(--ink-3)', 'stroke-width': 2 });
-    axis.appendChild(el('line', { x1: M.l, y1: M.t, x2: M.l, y2: M.t + ih }));
-    axis.appendChild(el('line', { x1: M.l, y1: M.t + ih, x2: M.l + iw, y2: M.t + ih }));
-    for (const t of gx.ticks) {
-      const x = sx(t);
-      if (x < M.l - 0.5 || x > M.l + iw + 0.5) continue;
-      axis.appendChild(el('line', { x1: x, x2: x, y1: M.t + ih, y2: M.t + ih - 6 }));
-    }
-    for (const t of gy.ticks) {
-      const y = sy(t);
-      axis.appendChild(el('line', { x1: M.l, x2: M.l + 6, y1: y, y2: y }));
-    }
-    structRoot.appendChild(axis);
-
-    const labels = el('g', { fill: 'var(--ink-3)', 'font-size': 11,
-                             'font-family': 'var(--font)', 'font-variant-numeric': 'tabular-nums' });
-    for (const t of gx.ticks) {
-      const x = sx(t);
-      if (x < M.l - 0.5 || x > M.l + iw + 0.5) continue;
-      labels.appendChild(Object.assign(
-        el('text', { x, y: M.t + ih + 16, 'text-anchor': 'middle' }),
-        { textContent: tickLabel(t, gx.step) }));
-    }
-    for (const t of gy.ticks) {
-      labels.appendChild(Object.assign(
-        el('text', { x: M.l - 8, y: sy(t) + 3.5, 'text-anchor': 'end' }),
-        { textContent: tickLabel(t, gy.step) }));
-    }
-    structRoot.appendChild(labels);
-
-    const axisText = el('g', { fill: 'var(--ink-2)', 'font-size': 12, 'font-family': 'var(--font)' });
-    if (spec.x_label) {
-      axisText.appendChild(Object.assign(
-        el('text', { x: M.l + iw / 2, y: H - 6, 'text-anchor': 'middle' }),
-        { textContent: spec.x_label }));
-    }
-    if (spec.y_label) {
-      axisText.appendChild(Object.assign(
-        el('text', { x: 13, y: M.t + ih / 2, 'text-anchor': 'middle',
-                     transform: `rotate(-90 13 ${M.t + ih / 2})` }),
-        { textContent: spec.y_label }));
-    }
-    structRoot.appendChild(axisText);
+    drawAxes(structRoot, { M, iw, ih, H, gx, gy, sx, sy,
+                           xLabel: spec.x_label, yLabel: spec.y_label });
 
     host._scale = { sx, sy, gx, gy, M, iw, ih };
   }
@@ -423,13 +452,7 @@ export function xyChart(spec, { height = 300, onSelect = null, width = 0 } = {})
   /** 全量重画。数据、缩放视窗、复位时用；**悬停时不要调它**。 */
   function draw() { drawStructure(); drawOverlay(); }
 
-  const fmtT = (v) => {
-    if (v === null || v === undefined || !Number.isFinite(v)) return '—';
-    const a = Math.abs(v);
-    if (a === 0) return '0';
-    if (a >= 1e5 || a < 1e-3) return v.toExponential(3);
-    return v.toFixed(a < 1 ? 4 : a < 100 ? 3 : 2);
-  };
+  const fmtT = fmtValue;
 
   const toLocal = (evt) => {
     const r = svg.getBoundingClientRect();

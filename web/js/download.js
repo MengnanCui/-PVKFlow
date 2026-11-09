@@ -103,9 +103,10 @@ function rasterize(svgBlob, w, hgt, scale = 2) {
  * @param {() => SVGElement|null} o.svg     取当前的图节点（图会重画，所以传函数不传节点）
  * @param {() => object|null}     o.spec    取当前的图表 spec，用来出 CSV
  * @param {() => string|null}     [o.imageUrl] 服务端已经渲染好的图（热力图走这条）
+ * @param {() => string}          [o.csv]   直接给整张 CSV（不从 spec 拼）
  * @param {string}                o.name    文件名主干
  */
-export function downloadMenu({ svg, spec, imageUrl = null, name }) {
+export function downloadMenu({ svg, spec, imageUrl = null, csv: makeCsv = null, name }) {
   const btn = h('button.btn.btn-sm.btn-ghost', { title: '下载这张图或它的数据' }, '下载 ▾');
 
   btn.addEventListener('click', () => {
@@ -127,8 +128,10 @@ export function downloadMenu({ svg, spec, imageUrl = null, name }) {
         await savePng(node, name);
       }],
       ['下载数据（CSV）', () => {
-        const s = spec?.();
-        const csv = s ? seriesToCsv(s) : '';
+        // 调用方能直接给整张表（构效关系页：每个样品一行，带样品名和批次）；
+        // 不给就从图的 spec 拼（曲线图：一列 x + 每条曲线一列）
+        const s = makeCsv ? null : spec?.();
+        const csv = makeCsv ? makeCsv() : s ? seriesToCsv(s) : '';
         if (!csv) return toast('这张图没有可导出的数据', 'warn');
         saveBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `${name}.csv`);
       }],

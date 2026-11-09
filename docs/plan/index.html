@@ -337,6 +337,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id">P-42</td><td>样品身份</td><td>一次测量 = 一个样品；同一样品号的多次测量是不同样品，不当重复样平均<span class="why">11-06 你确认（原 D-10）</span></td><td>C032</td><td class="loc">schema.sql · naming.py</td><td><span class="chip ok">落实</span></td></tr>
 <tr><td class="id">P-43</td><td>模块安全边界</td><td>模块不做沙箱，只装信得过的人的；装之前在界面上再确认一次<span class="why">11-06 你确认（原 D-37）</span></td><td>C032 · C033</td><td class="loc">settings.js</td><td><span class="chip ok">落实</span></td></tr>
 <tr><td class="id">P-44</td><td>AI 要看到曲线形状</td><td>除标量汇总外，给模型每个样品的<strong>曲线摘要</strong>（下采样到几十个点）<span class="why">11-06 你的回答（原 D-28「只看标量」被否）</span></td><td>C032 · C038</td><td class="loc">app/ai/context.py</td><td><span class="chip ok">落实 C038</span></td></tr>
+<tr><td class="id">P-45</td><td>构效关系第一版</td><td>任选两个字段做散点（按批次着色）、皮尔逊 / 斯皮尔曼（带显著性）、按批次的箱线图、后端透视接口；顺带整理 <code>xyChart</code><span class="why">11-09 你在选项里选了「做 E 构效关系」—— 选项的描述文字是我写的（来自 §7 E 组）</span></td><td>C052</td><td class="loc">pages/relation.js · storage/relation.py</td><td><span class="chip ok">落实 C052</span></td></tr>
     </tbody>
   </table></div>
 </section>
@@ -463,6 +464,15 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr data-c="显示"><td class="id">D-103</td><td class="nowrap">显示</td><td>「只能鼠标点」由测试守着；图表的框选缩放 / 双击复原不做键盘版</td><td>那是拖拽手势；同样的数据可以从「下载数据」拿到。</td><td>C050</td><td class="loc">tests/test_frontend_a11y.py</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="平台"><td class="id">D-104</td><td class="nowrap">平台</td><td>模块控件从声明生成只留一份（<code>figure.specControl</code>）；没有坐标轴数据时，波段范围兜底统一成「当前值，没有就用默认值」</td><td>两份几乎逐行相同，迟早漂移。兜底的差别只在样品页还没拿到光谱、又重画了控件时看得出。</td><td>C050</td><td class="loc">web/js/components/figure.js</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="平台"><td class="id">D-105</td><td class="nowrap">平台</td><td><code>xyChart</code>（约 440 行的一个函数）这次不拆，等做 E 组时一起整理</td><td>纯结构问题、没有用户看得见的毛病；又是用得最多的画图代码，E 组要加散点图时本来就要动它。</td><td>C050</td><td class="loc">web/js/chart.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="算法"><td class="id">D-106</td><td class="nowrap">算法</td><td>构效关系的统计不引 scipy，自己实现 t 分布（正则化不完全 β 函数）</td><td>为两个 p 值多装几十 MB 不值；正确性由「对着 scipy 1.18.1 的参考值」的测试守着，最大相对误差 7×10⁻¹³。</td><td>C052</td><td class="loc">app/analysis/stats.py</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="算法" data-confirm="1"><td class="id">D-107</td><td class="nowrap">算法</td><td>相关的口径：皮尔逊 p 用 t 检验（自由度 n−2，双侧），95% 置信区间用 Fisher z；斯皮尔曼并列取平均名次、p 用同一个 t 近似，<strong>n &lt; 10 时标「近似」</strong>；说明里写了「常用门槛 0.05」（只是说明，不据此判定）</td><td>和 scipy 一致，也是教科书写法。<span class="why">页面上的 p 值和区间会影响你的判断。</span></td><td>C052</td><td class="loc">app/analysis/stats.py</td><td><span class="chip warn">建议你确认</span></td></tr>
+<tr data-c="算法" data-confirm="1"><td class="id">D-108</td><td class="nowrap">算法</td><td>箱线图口径：四分位数线性插值（numpy / matplotlib 默认）；须 = <strong>1.5 倍 IQR</strong> 以内最远的样品，须外的标「离群」</td><td>Tukey 的写法，最常见。<span class="why">决定了哪些样品被标成离群。</span></td><td>C052</td><td class="loc">app/analysis/stats.py</td><td><span class="chip warn">建议你确认</span></td></tr>
+<tr data-c="数据"><td class="id">D-109</td><td class="nowrap">数据</td><td>分组第一版只按批次（数据处理页的「样品号」分面）</td><td>工艺条件现在不在数据模型里。</td><td>C052</td><td class="loc">app/storage/relation.py</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="数据"><td class="id">D-110</td><td class="nowrap">数据</td><td>构效关系的样品范围 = 数据处理页的筛选式（全部 / 筛出的 / 勾选的）；只有一边有值的样品不进图，但报数</td><td>「那一页筛出什么，这里就分析什么」；「40 个里只有 12 个两个都有」本身就该知道。</td><td>C052</td><td class="loc">pages/relation.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="显示"><td class="id">D-111</td><td class="nowrap">显示</td><td>散点图不做框选缩放；批次多于 12 个时不画图例，换成一句「颜色会重复，指到点上看是哪个」</td><td>要看一部分用范围筛；12 色循环的图例会误导。</td><td>C052</td><td class="loc">components/relation-charts.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="显示"><td class="id">D-112</td><td class="nowrap">显示</td><td>箱线图每个箱至少 34px，放不下横向滚动；组多或名字长时类别名斜着写，超过 16 个字截断</td><td>不把箱挤成一条线、名字不叠在一起。</td><td>C052</td><td class="loc">components/relation-charts.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="显示"><td class="id">D-113</td><td class="nowrap">显示</td><td>新的统计概念（r、ρ、p、IQR）用页面上的说明文字，没有加进 ⓘ 术语表</td><td>术语表还有 27 条等你审，不想再往里加没审过的。</td><td>C052</td><td class="loc">pages/relation.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="显示"><td class="id">D-114</td><td class="nowrap">显示</td><td>上次选的 X / Y / 箱线图字段记在这台电脑的浏览器里</td><td>只是方便；读不到就用默认。</td><td>C052</td><td class="loc">pages/relation.js</td><td><span class="chip info">可随时改</span></td></tr>
     </tbody>
   </table></div>
 </section>
