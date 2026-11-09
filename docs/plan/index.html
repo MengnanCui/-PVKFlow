@@ -189,7 +189,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
     <span>基于提交 <code>f0df0bc</code></span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
   </div>
   <div class="cards">
-    <div class="card"><div class="k">修改报告</div><div class="v">63</div><div class="d">C001 – C063</div></div>
+    <div class="card"><div class="k">修改报告</div><div class="v">64</div><div class="d">C001 – C064</div></div>
     <div class="card"><div class="k">阶段</div><div class="v">P1–P16</div><div class="d">P16 = 权限 + 命令 + 轻量窗口</div></div>
     <div class="card"><div class="k">测试</div><div class="v">563</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 10 组（12 + 15 + 13 + 8 + 13 + 22 + 15 + 5 + 8 + 10 条）</div></div>
     <div class="card"><div class="k">你明确指定的</div><div class="v">53</div><div class="d">P-01 … P-53（P-50 内设网关、P-51 权限、P-52 跑命令、P-53 模式与轻量窗口已落实）</div></div>
@@ -589,7 +589,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
       <p>你说「参考 iflow 改网关，然后做 pi-agent：读写文件、跑批处理、任务」：网关照 IFlow 重写一层（Anthropic 协议、退避重试、思考参数缺省关、拒收降级、拉取并测速）；
       智能体能在你给的文件夹里读写文件（写前备份、卡片上一键撤销、密钥打码）、提交批处理并等它跑完看汇总、查看 / 停止后台任务。自查修了改文件凭空加 BOM。</p>
       <p class="note"><a href="phases/P15_2026-W46_网关-pi-agent.md">阶段报告 P15</a></p></li>
-    <li class="now"><span class="t">P16 权限 + 命令 + 轻量窗口（本次）</span><span class="d">11-09 · W46 · C061–C063 · → 563 测试</span>
+    <li class="now"><span class="t">P16 权限 + 命令 + 轻量窗口（本次）</span><span class="d">11-09 · W46 · C061–C064 · → 563 测试</span>
       <p>内网 NewAPI 网关成了内设预设；智能体只写专用目录 <code>workspace/agent/</code>、平台核心永远改不了；能跑命令（危险命令每次问、改了核心一定报）；
       顶栏「询问 / 自动」「直接执行 / 先出计划」；智能体页变成一栏的轻量 pi-agent 式窗口，带斜杠命令和 /undo。</p>
       <p class="note"><a href="phases/P16_2026-W46_权限-命令-轻量窗口.md">阶段报告 P16</a></p></li>
@@ -781,6 +781,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C061_2026-11-09_本提交.md">C061</a></td><td class="nowrap">11-09</td><td>P16</td><td>内设网关：IFlow 的内网 NewAPI 网关进预设，没配过时默认填上</td><td class="small">你的要求「请加入内设的网关」（P-50）</td></tr>
 <tr><td class="id"><a href="changes/C062_2026-11-09_本提交.md">C062</a></td><td class="nowrap">11-09</td><td>P16</td><td>智能体：权限整理（只写专用目录、核心不可改）、跑命令、询问 / 自动 + 计划 / 直接执行、轻量对话窗口</td><td class="small">你的要求（P-51 P-52 P-53）</td></tr>
 <tr><td class="id"><a href="changes/C063_2026-11-09_本提交.md">C063</a></td><td class="nowrap">11-09</td><td>P16</td><td>P16 收尾：阶段报告 + 计划文档 v8</td><td class="small">记录规则（阶段结束）</td></tr>
+<tr><td class="id"><a href="changes/C064_2026-11-09_本提交.md">C064</a></td><td class="nowrap">11-09</td><td>P16</td><td>修 Windows CI：测试里写中文没指定编码</td><td class="small">我自查（CI 红）</td></tr>
     </tbody>
   </table></div>
 </section>

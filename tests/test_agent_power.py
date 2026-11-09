@@ -42,7 +42,7 @@ def test_writes_land_only_in_the_agent_folder(workspace):
 def test_the_platform_core_can_never_be_written(workspace, tmp_path, monkeypatch):
     install = tmp_path / "install"
     (install / "app").mkdir(parents=True)
-    (install / "app" / "main.py").write_text("核心")
+    (install / "app" / "main.py").write_text("核心", encoding="utf-8")
     monkeypatch.setattr(config, "ROOT", install)
     # 加成可写不行；加成只读可以（读代码没问题）
     with pytest.raises(files.FileToolError, match="平台的安装目录"):
@@ -55,7 +55,7 @@ def test_the_platform_core_can_never_be_written(workspace, tmp_path, monkeypatch
     assert [r for r in files.roots() if r["kind"] == "user"][0]["write"] is False
     ok, msg = _run("write_file", path=str(install / "app" / "main.py"), content="改了")
     assert not ok and "核心" in msg
-    assert (install / "app" / "main.py").read_text() == "核心"
+    assert (install / "app" / "main.py").read_text(encoding="utf-8") == "核心"
     ok, r = _run("read_file", path=str(install / "app" / "main.py"))
     assert ok and "核心" in r["content"]
 
