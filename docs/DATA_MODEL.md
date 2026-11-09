@@ -54,7 +54,7 @@ SQLite 完全扛得住；真到扛不住的那天，`field_name` 上有索引，
 - `quality_note` / `quality_at` —— 最近一次**人**审核的理由和时间（迁移第 4 步加的）。`quality_at` 为空 = 状态是写结果的程序给的，还没人审过
 - `version` —— 等于 `analysis_run.skill_version`，也就是算出它的那个模块的版本。改了算法重跑，两批结果能区分开
 
-没有这三个字段，一年后你会分不清某个数是怎么来的。
+没有这几个字段，一年后你会分不清某个数是怎么来的。
 
 ### 当前值与历史：`key_result_current`
 

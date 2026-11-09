@@ -156,7 +156,7 @@ PanelData(series=[
 
 | | 能填什么 |
 |---|---|
-| `style` | `"line"` · `"scatter"` · `"area"` |
+| `style` | `"line"` · `"scatter"` · `"line+scatter"`（写别的会被验证器拒掉） |
 | `color` | `"auto"` · `"ok"` · `"warn"` · `"danger"` · `"muted"` · `"accent"` |
 
 **颜色只收这几个语义名，不收 `#ff00ff`。** 平台把它们映射到自己的
@@ -213,8 +213,8 @@ PanelData(
 )
 ```
 
-`tone` 和 `Notice` 的第一个参数收的是同一套语义名（`ok` / `warn` /
-`danger` / `info`），理由和上面的颜色一样。
+`tone` 和 `Notice` 的第一个参数都收语义名（理由和上面的颜色一样），但取值不完全一样：
+`Stat.tone` 收 `""` / `ok` / `warn` / `danger`（没有 info）；`Notice` 的 kind 收 `info` / `warn` / `danger`（没有 ok）。
 
 `info` 是静态解释（术语表里那条），`info_extra` 是动态的
 （「**这张图里** 83 帧可信」）。两个一起点开，先看解释再看本图的实际情况。

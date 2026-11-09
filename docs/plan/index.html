@@ -189,11 +189,11 @@ ol.steps li, ul.plain li { margin: 4px 0; }
     <span>基于提交 <code>f0df0bc</code></span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
   </div>
   <div class="cards">
-    <div class="card"><div class="k">修改报告</div><div class="v">70</div><div class="d">C001 – C070</div></div>
+    <div class="card"><div class="k">修改报告</div><div class="v">71</div><div class="d">C001 – C071</div></div>
     <div class="card"><div class="k">阶段</div><div class="v">P1–P16</div><div class="d">P16 = 权限 + 命令 + 轻量窗口</div></div>
     <div class="card"><div class="k">测试</div><div class="v">563</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 10 组（12 + 15 + 13 + 8 + 13 + 22 + 15 + 5 + 8 + 10 条）</div></div>
     <div class="card"><div class="k">你明确指定的</div><div class="v">58</div><div class="d">P-01 … P-58（P-54 … P-58 是 QFLS 成像的规格）</div></div>
-    <div class="card"><div class="k">我自行决定的</div><div class="v">186</div><div class="d">D-01 … D-186，<b>27</b> 项还待你确认</div></div>
+    <div class="card"><div class="k">我自行决定的</div><div class="v">187</div><div class="d">D-01 … D-187，<b>27</b> 项还待你确认</div></div>
     <div class="card"><div class="k">自查发现</div><div class="v">30 / 30</div><div class="d"><b>全部处理完</b>（P10 12 条 · P11 11 条 · P12 7 条）</div></div>
   </div>
 </header>
@@ -561,6 +561,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr data-c="平台"><td class="id">D-184</td><td class="nowrap">平台</td><td>matplotlib 进必装清单（安装多约 30 MB）；没装时 QFLS 只算指标、不出图，并在 run.json 里写明</td><td>出图是你要的（P-56）；原来只在开发依赖里，同事机器上出图会全部失败（我在 P17 漏掉的）。</td><td>C069</td><td class="loc">requirements.txt · app/qfls/pipeline.py</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="数据"><td class="id">D-185</td><td class="nowrap">数据</td><td>QFLS 覆盖参数：键要认识、类型和形状要对、嵌套的（score、grades）深合并，不合法回 400；处理编号 <code>qr_日期_时间_6 位随机 hex</code>，撞号报错</td><td>原来坏参数能跑完、报 ok、0 帧有效。</td><td>C069</td><td class="loc">app/qfls/pipeline.py</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="显示"><td class="id">D-186</td><td class="nowrap">显示</td><td>全平台状态叫法定为一份：排队中 / 进行中 / 完成 / 失败 / 已停止（<code>ui.js</code> 的 <code>STATUS</code>）；对比历史里再补「只有一部分」「没跑完」</td><td>原来五个页面各写一份，三种说法混用。</td><td>C070</td><td class="loc">web/js/ui.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="平台"><td class="id">D-187</td><td class="nowrap">平台</td><td>交接文档的结构：硬规则在最前、十条设计思想、术语表、逐菜单逻辑、九种常见改动、踩过的坑、已知技术债、开工清单；另加 <code>AGENTS.md</code> 给非 Claude 的模型 / 工具</td><td>你要换别的模型也能接着做；很多编码工具默认读 AGENTS.md。</td><td>C071</td><td class="loc">docs/HANDOFF.md · AGENTS.md</td><td><span class="chip info">可随时改</span></td></tr>
     </tbody>
   </table></div>
 </section>
@@ -824,6 +825,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C068_2026-11-09_本提交.md">C068</a></td><td class="nowrap">11-09</td><td>P18</td><td>参考手册改成从代码生成（docs/REFERENCE.md + 守护测试）</td><td class="small">你的要求（体检 + 完备文档）</td></tr>
 <tr><td class="id"><a href="changes/C069_2026-11-09_本提交.md">C069</a></td><td class="nowrap">11-09</td><td>P18</td><td>体检修复（后端）：智能体串会话、405 错误结构、QFLS 参数校验 / 重启收尾 / 缺 matplotlib、缓存口径等</td><td class="small">你的要求（体检）</td></tr>
 <tr><td class="id"><a href="changes/C070_2026-11-09_本提交.md">C070</a></td><td class="nowrap">11-09</td><td>P18</td><td>体检修复（前端）：QFLS 筛选丢失 / 轮询、勾选丢失、表格没样式、状态叫法统一、死代码等</td><td class="small">你的要求（体检）</td></tr>
+<tr><td class="id"><a href="changes/C071_2026-11-09_本提交.md">C071</a></td><td class="nowrap">11-09</td><td>P18</td><td>交接文档 HANDOFF.md + AGENTS.md；文档与代码对齐（README / ARCHITECTURE / 模块写法 / 数据模型）</td><td class="small">你的要求（完备文档）</td></tr>
     </tbody>
   </table></div>
 </section>

@@ -34,7 +34,7 @@ app/
 ├─ main.py           应用装配、静态挂载、端口被占时往后找
 ├─ config.py         工作区路径（可用 HTE_WORKSPACE 搬走）
 ├─ security.py       只认本机 Host、只认自己页面的 Origin（见「安全边界」）
-├─ tasks.py          后台任务：一次跑一个（批处理），进度 / 取消 / 重启后收尾
+├─ tasks.py          后台任务：一次跑一个（批处理、QFLS 处理共用一个队列，互相排队），进度 / 取消 / 重启后收尾
 ├─ batch.py          ★ 批处理：配方 → 每个样品跑一遍各模块 → 长表 + 关键结果
 ├─ api/              路由。错误统一翻译成 {error:{message,kind,detail}}；**全部是普通函数**（放线程池，见下）
 ├─ storage/
@@ -120,13 +120,14 @@ B 档（自己写 `compute()` 的）松手后由后端算。
 
 版本号存在 SQLite 的 `PRAGMA user_version`，每一步另记一行 `schema_migration`。
 已有数据的工作区**升级前先备份** `hte.db` 到 `workspace/backups/`（只留最近 5 份）；全新工作区直接建到最新。
-加一步迁移 = 在 `migrations.MIGRATIONS` 末尾追加，**已发出的迁移不改、每一步都能重跑**。目前到第 3 步：
+加一步迁移 = 在 `migrations.MIGRATIONS` 末尾追加，**已发出的迁移不改、每一步都能重跑**。目前到第 4 步：
 
 | 版本 | 内容 |
 |---|---|
 | 1 | 补列：`analysis_run.parent_run_id`、`artifact.is_matrix` |
 | 2 | `measurement.measured_at` 统一成本地时间（原来退回文件修改时间的那些存的是 UTC） |
 | 3 | 清掉攒下的空会话（原来每打开一次 AI 抽屉就建一个；术语 ⓘ 的线不动） |
+| 4 | 补列：`key_result.quality_note`、`quality_at`（审核时的理由和时间） |
 
 ## 前端
 
@@ -135,18 +136,21 @@ web/
 ├─ index.html
 ├─ css/   tokens（唯一定义颜色的地方）· base · layout · components
 └─ js/
-    ├─ ui.js       h() DOM 助手、toast（aria-live）、modal（dialog、焦点困住 / 归还）、空/加载/错误三态、latest()
+    ├─ ui.js       h() DOM 助手、toast（aria-live）、modal（dialog、焦点困住 / 归还）、空/加载/错误三态、latest()、
+    │              busy()、全平台一份的状态叫法 STATUS / statusText
     ├─ api.js      fetch 封装，错误结构统一
     ├─ chart.js    自写 SVG 图表（框选缩放、悬停读数、明暗自适应）
     ├─ ops.js      A 档实时算子（与 app/modules/ops.py 逐点一致）
     ├─ spectra.js  选时刻叠谱、认出饱和的短波端
     ├─ csv.js      图表数据 → CSV（不碰 DOM；文字格子防公式注入）
     ├─ download.js 「下载 ▾」：图片 / 数据
-    ├─ app.js      导航、主题、健康检查
+    ├─ app.js      导航（PAGES + 三组侧栏）、主题、健康检查
+    ├─ glossary.js ⓘ 术语表（27 条）       scope.js  数据处理页的筛选范围，给构效关系页和 AI 抽屉用
     ├─ components/ ai-drawer · info（ⓘ 浮层）· chat-client（两者共用：模型选择 + 流式发问）
     │              figure · heatmap · module-panel · facets · filepicker · virtual-list · field-cells
-    │              relation-charts（散点图、箱线图 —— 坐标轴和 chart.js 共用 drawGrid / drawAxes）
-    └─ pages/      overview · process(+4) · sample · batch(+4) · history · storage · relation · settings
+    │              relation-charts（散点图、箱线图 —— 坐标轴和 chart.js 共用 drawGrid / drawAxes）· quality（审核控件）
+    └─ pages/      overview · process(+4) · sample · batch(+4) · history · storage · relation
+                   · qfls(+state / views / method) · qfls-point · agent · settings
 ```
 
 `batch.js`、`process.js` 原来各一千行上下，2026-11 按页面上的块拆开（`batch-state / -recipe / -slices / -curves`、
@@ -169,6 +173,10 @@ web/
 - 会被连续触发的请求（筛选、搜索、拖控件、目录浏览）用 `ui.js` 的 `latest()`：
   发请求前取号，回来后 `if (!fresh()) return;` —— 只认最后一次
 - 往同一个常驻节点上挂监听要防重复（见 `filepicker.bindDropUpload`）
+- **有意的例外：智能体页**离开时**不**停正在跑的那一轮（流式回答照常收完、存进会话）——
+  让它在后台把活干完是这个页面的用途；回来时从会话里回放。要停用「停止」按钮或 `/stop`
+
+加一个页面的完整清单（登记、`meta.parent`、`actions`、标题、验收脚本）见 `docs/HANDOFF.md` §7.8。
 
 浏览器验收脚本在 `tools/qa/`，改完前端跑一遍。
 
@@ -228,7 +236,8 @@ float32 只要 0.90 MB，本地 37 ms 到手。
 2. **降采样必须用面积平均，不能抽点。** 条纹是高频信号，直接抽点会产生摩尔纹
    假象 —— 那是数据里根本不存在的图案。
 3. **色标的亮度必须单调。** 否则数值不同的区域看起来一样亮，人眼直接读错。
-   `tests/test_spectra.py` 里有一条测试守着这件事。
+   `tests/test_spectra.py` 里有一条测试守着这件事。**唯一刻意的例外是 rainbow**（样品页热力图的默认，
+   用户习惯的看法），测试里明确列为例外；新加色标一律要单调。
 
 ### 缓存
 
