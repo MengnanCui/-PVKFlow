@@ -29,7 +29,9 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.endswith("/models"):
-            body = json.dumps({"data": [{"id": "fake-1"}]}).encode()
+            # 带一个同家族的旧版本（fake-1 → fake-2 是同一家族）—— 测速只测最新的那个
+            body = json.dumps({"data": [{"id": "fake-1"}, {"id": "fake-2"}, {"id": "fake-notools"},
+                                        {"id": "claude-fake"}]}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -44,6 +46,10 @@ class H(BaseHTTPRequestHandler):
         req = json.loads(self.rfile.read(n) or b"{}")
         with LOG.open("a", encoding="utf-8") as f:
             f.write(json.dumps(req, ensure_ascii=False) + "\n")
+        if self.path.endswith("/v1/messages"):
+            return self.anthropic(req)
+        if req.get("max_tokens") == 8:                      # 设置页的测速探针
+            return self.json(200, {"choices": [{"message": {"content": "ok"}}]})
         if req.get("tools") or "输出格式" in (req.get("messages") or [{}])[0].get("content", ""):
             return self.agent(req)
         q = next((m["content"] for m in reversed(req.get("messages", []))
@@ -151,6 +157,30 @@ class H(BaseHTTPRequestHandler):
             self.wfile.flush()
             time.sleep(0.05)
         self.wfile.write(b"data: [DONE]\n\n")
+
+    # ---------------------------------------------------------------- Anthropic 协议
+    def anthropic(self, req):
+        """/v1/messages：认 x-api-key、system 单独一个字段；流式按 content_block 事件发。"""
+        if not self.headers.get("x-api-key") or self.headers.get("anthropic-version") != "2023-06-01":
+            return self.json(401, {"type": "error", "error": {"message": "missing x-api-key / anthropic-version"}})
+        if req.get("max_tokens") == 8:
+            return self.json(200, {"content": [{"type": "text", "text": "ok"}]})
+        sys_ok = "system" not in [m.get("role") for m in req.get("messages", [])]
+        text = f"Anthropic 协议收到了（system 单列={sys_ok}）。"
+        if not req.get("stream"):
+            return self.json(200, {"content": [{"type": "text", "text": text}]})
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        evs = [{"type": "message_start", "message": {}},
+               {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}]
+        evs += [{"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": ch}}
+                for ch in (text[:8], text[8:])]
+        evs += [{"type": "content_block_stop", "index": 0}, {"type": "message_stop"}]
+        for e in evs:
+            self.wfile.write(f"event: {e['type']}\ndata: {json.dumps(e, ensure_ascii=False)}\n\n".encode())
+            self.wfile.flush()
+            time.sleep(0.03)
 
     def json(self, status, obj):
         body = json.dumps(obj).encode()

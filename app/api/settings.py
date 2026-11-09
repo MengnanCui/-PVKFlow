@@ -6,7 +6,7 @@ import json
 from fastapi import APIRouter, Body, Query
 
 from app import config
-from app.ai import openai_compat
+from app.ai import gateway, openai_compat
 from app.ai.provider import ProviderUnavailable
 from app.api.common import ApiError
 from app.storage import db
@@ -80,7 +80,8 @@ def add_preset(payload: dict = Body(...)) -> dict:
     """
     try:
         openai_compat.save_preset(payload.get("name") or "",
-                                  payload.get("base_url") or "")
+                                  payload.get("base_url") or "",
+                                  api=payload.get("api") or "openai-completions")
     except ValueError as exc:
         raise ApiError(str(exc), 400) from exc
     return {"presets": openai_compat.all_presets()}
@@ -93,6 +94,17 @@ def remove_preset(base_url: str = Query(..., description="要去掉的地址")) 
     return {"presets": openai_compat.all_presets()}
 
 
+def _saved_key(base_url: str) -> str:
+    """密钥留空 = 沿用已经存着的那个（按地址找）。"""
+    try:
+        providers = (openai_compat.load_config().get("providers") or {})
+    except ProviderUnavailable:
+        providers = {}
+    old = next((p for p in providers.values()
+                if (p.get("baseUrl") or "").rstrip("/") == base_url), None)
+    return (old or {}).get("apiKey") or ""
+
+
 @router.post("/models/discover")
 def discover_models(payload: dict = Body(...)) -> dict:
     """按地址拉一份可用模型列表，省得手打模型名。
@@ -102,30 +114,50 @@ def discover_models(payload: dict = Body(...)) -> dict:
     被迫重新贴一遍。
 
     拉不到不是故障 —— 有的网关根本没实现 /models。界面上要保留手填那条路。
+    另给一份「同一家族只留最新版本」的测速候选（照 IFlow：K2.5 / K2.6 → 测 K2.6；flash / pro 各自留）。
     """
     base_url = (payload.get("base_url") or "").strip().rstrip("/")
     api_key = (payload.get("api_key") or "").strip()
+    api = payload.get("api") or "openai-completions"
     if not base_url:
         raise ApiError("请先填接口地址", 400)
-
     if not api_key:
-        try:
-            providers = (openai_compat.load_config().get("providers") or {})
-        except ProviderUnavailable:
-            providers = {}
-        old = next((p for p in providers.values()
-                    if (p.get("baseUrl") or "").rstrip("/") == base_url), None)
-        api_key = (old or {}).get("apiKey") or ""
+        api_key = _saved_key(base_url)
 
     try:
-        found = openai_compat.list_remote_models(base_url, api_key)
+        found = openai_compat.list_remote_models(base_url, api_key, api=api)
     except ProviderUnavailable as exc:
         raise ApiError(str(exc), 502, "discover_failed") from exc
 
+    kept, folded = gateway.dedupe_models([m["id"] for m in found])
     # 返回里**没有** api_key，一个字段都不带。这条由 test_api_key_is_never_returned
     # 那一族测试盯着。
     return {"base_url": base_url, "models": found, "count": len(found),
+            "probe": kept[:PROBE_MAX], "folded": folded,
+            "probe_truncated": max(0, len(kept) - PROBE_MAX),
             "used_saved_key": not (payload.get("api_key") or "").strip() and bool(api_key)}
+
+
+# 一次最多测这么多个（去重之后）；再多就是在拿网关刷分了（IFlow 同一个数）
+PROBE_MAX = 40
+
+
+@router.post("/models/test-one")
+def test_one_model(payload: dict = Body(...)) -> dict:
+    """给一个模型打一句「回复 ok」，回延迟（照 IFlow 的 test-one）。界面上并发 3 个逐个测、边测边显示。
+    测不通也是 200 + ok:false —— 列表要把它沉底，而不是整体失败。"""
+    base_url = (payload.get("base_url") or "").strip().rstrip("/")
+    model = (payload.get("model") or "").strip()
+    if not base_url or not model:
+        raise ApiError("要给 base_url 和 model", 400)
+    if not gateway.MODEL_RE.match(model):
+        raise ApiError("模型名里有不认识的字符", 400)
+    api_key = (payload.get("api_key") or "").strip() or _saved_key(base_url)
+    try:
+        gateway.check_url(base_url)
+    except ProviderUnavailable as exc:
+        raise ApiError(str(exc), 400) from exc
+    return gateway.ping(base_url, api_key, gateway.protocol_of({"api": payload.get("api")}), model)
 
 
 @router.post("/models")
@@ -167,6 +199,12 @@ def save_simple_model(payload: dict = Body(...)) -> dict:
     name = (payload.get("name") or "我的模型").strip()[:60]
     base_url = (payload.get("base_url") or "").strip().rstrip("/")
     api_key = (payload.get("api_key") or "").strip()
+    api = payload.get("api") or "openai-completions"
+    if api not in gateway.PROTOCOLS:
+        raise ApiError(f"协议只能是 {' / '.join(gateway.PROTOCOLS)}", 400)
+    thinking = payload.get("thinking")
+    if thinking is not None and thinking not in openai_compat.THINKING:
+        raise ApiError(f"思考只能是 {' / '.join(openai_compat.THINKING)}", 400)
 
     # 一次可以存多个模型：从 /models/discover 那个列表里勾几个，
     # 之后在设置页和对话界面都能切。单个的老写法（model_id）继续认。
@@ -209,9 +247,12 @@ def save_simple_model(payload: dict = Body(...)) -> dict:
         model_ids = [m.get("id") for m in ((old or {}).get("models") or [])
                      if m.get("id")]
 
+    prev = providers.get(name) or {}
     providers[name] = {
         "baseUrl": base_url,
-        "api": "openai-completions",
+        "api": api,
+        # 思考：没给就沿用；第一次存是 off（照 IFlow：内网网关上开着思考会把输出吞掉）
+        "thinking": thinking or prev.get("thinking") or "off",
         "apiKey": api_key,
         # 大多数自建网关不认 developer 角色，默认按不支持处理，降级成 system
         "compat": {"supportsDeveloperRole": False, "supportsReasoningEffort": False},

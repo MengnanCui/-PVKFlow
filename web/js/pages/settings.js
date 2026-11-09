@@ -312,7 +312,7 @@ function modelSection(models) {
   const providers = models.providers || [];
   const status = h('div.mt-3');
 
-  return section('模型', 'OpenAI 兼容协议。没配也没关系 —— 识别、推荐、数据检查全部走规则引擎',
+  return section('模型', 'OpenAI 兼容或 Anthropic 协议。没配也没关系 —— 导入、处理、批处理、对比都不需要模型',
     h('div.panel.panel-body',
       h('div.notice',
         h('div.grow',
@@ -346,8 +346,18 @@ function simpleForm(providers, presets) {
   const first = providers[0] || {};
   const saved = (first.models || []).map((m) => m.id);
 
-  // 本地状态：拉回来的候选、勾中的、以及手填的那些
-  const F = { found: [], chosen: new Set(saved), manual: saved.join(', ') };
+  // 本地状态：拉回来的候选、勾中的、手填的那些，以及逐个测速的结果（照 IFlow：同家族只测最新的那个）
+  const F = { found: [], chosen: new Set(saved), manual: saved.join(', '),
+              probe: new Map(), folded: [], ctl: null };
+
+  // 协议：OpenAI 兼容（/chat/completions）或 Anthropic（/v1/messages）—— 照 IFlow 的 provider 选择
+  const apiSel = h('select.select', { 'aria-label': '协议', style: { maxWidth: '220px' } },
+    h('option', { value: 'openai-completions', selected: (first.api || 'openai-completions') === 'openai-completions' }, 'OpenAI 兼容'),
+    h('option', { value: 'anthropic-messages', selected: first.api === 'anthropic-messages' }, 'Anthropic'));
+  // 思考：各家写法不一样，平台按模型名认出来再发。缺省「关」：IFlow 在内网网关上实测开着会把输出吞掉或挂住
+  const thinkSel = h('select.select', { 'aria-label': '思考', style: { maxWidth: '300px' } },
+    ...[['off', '关（推荐，回答更快更稳）'], ['on', '开（慢，但可能更深）'], ['default', '不发参数（按网关自己的默认）']]
+      .map(([v, t]) => h('option', { value: v, selected: (first.thinking || 'off') === v }, t)));
 
   const url = h('input.input', {
     type: 'text', placeholder: 'https://你的网关/v1',
@@ -383,6 +393,10 @@ function simpleForm(providers, presets) {
   presetPick.onchange = (e) => {
     if (!e.target.value) return;
     url.value = e.target.value;
+    // 预设带着协议（Anthropic 那条是 anthropic-messages），一起填上
+    const hit = presetList.find((x) => x.base_url === e.target.value);
+    if (hit?.api) apiSel.value = hit.api;
+    if (hit?.model_hint && !manual.value.trim()) manual.value = F.manual = hit.model_hint;
     e.target.value = '';
     drawModels();
     drawPresetBtn();
@@ -409,7 +423,7 @@ function simpleForm(providers, presets) {
     try {
       const r = isSaved()
         ? await api.deletePreset(u)
-        : await api.savePreset({ name: name.value.trim() || u, base_url: u });
+        : await api.savePreset({ name: name.value.trim() || u, base_url: u, api: apiSel.value });
       presetList = r.presets || [];
       drawPresetOptions();
       drawPresetBtn();
@@ -436,12 +450,22 @@ function simpleForm(providers, presets) {
     if (!F.found.length) {
       mount(modelBox,
         h('div.xsmall.dim',
-          '还没拉过列表。填好上面两项后点「获取可用模型」，'
+          '还没拉过列表。填好上面两项后点「拉取并测速」，'
           + '或者直接在下面手填模型名。'));
       return;
     }
+    const tested = [...F.probe.values()];
+    const done = tested.filter((x) => !x.pending);
+    const badge = (id) => {
+      const r = F.probe.get(id);
+      if (!r) return null;
+      if (r.pending) return h('span.xsmall.dim', F.ctl ? '待测' : '未测');
+      return r.ok ? h('span.xsmall.ok', `${r.ms} ms`) : h('span.xsmall.danger', { title: r.error }, '不通');
+    };
     mount(modelBox,
-      h('div.xsmall.dim.mb-2', `拉到 ${F.found.length} 个，勾选要用的：`),
+      h('div.xsmall.dim.mb-2', `拉到 ${F.found.length} 个`
+        + (tested.length ? `，测了 ${done.length} / ${tested.length} 个（同一家族只测最新的那个）` : '')
+        + (F.folded.length ? `，${F.folded.length} 个旧版本没测` : '') + '。勾选要用的：'),
       h('div.model-grid', ...F.found.map((m) => {
         const cb = h('input', {
           type: 'checkbox', checked: F.chosen.has(m.id),
@@ -450,9 +474,41 @@ function simpleForm(providers, presets) {
             manual.value = F.manual = [...F.chosen].join(', ');
           },
         });
-        return h('label.model-opt', cb, h('span.mono.xsmall', m.id),
+        const r = F.probe.get(m.id);
+        return h(`label.model-opt${r && !r.pending && !r.ok ? '.is-bad' : ''}`, { title: r?.reply ? `↳ ${r.reply}` : (r?.error || '') },
+          cb, h('span.mono.xsmall', m.id), badge(m.id),
           m.owned_by ? h('span.xsmall.dim', m.owned_by) : null);
       })));
+  }
+
+  /** 逐个测速：并发 3，边测边显示，随时可以停（照 IFlow 的 LLMSettings）。测完通的按延迟排前面，不通的沉底。 */
+  async function probeAll(ids) {
+    F.ctl = new AbortController();
+    const signal = F.ctl.signal;
+    for (const id of ids) F.probe.set(id, { id, pending: true });
+    drawModels();
+    drawProbeBtns();
+    let next = 0;
+    const worker = async () => {
+      while (next < ids.length && !signal.aborted) {
+        const id = ids[next++];
+        try {
+          F.probe.set(id, await api.testOneModel({ base_url: url.value.trim(), api_key: key.value.trim(),
+                                                   api: apiSel.value, model: id }, signal));
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+          F.probe.set(id, { id, ok: false, error: err.message });
+        }
+        drawModels();
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    F.ctl = null;
+    const rank = (m) => { const r = F.probe.get(m.id); return !r ? 3 : r.pending ? 2 : r.ok ? 0 : 1; };
+    F.found.sort((a, b) => rank(a) - rank(b)
+      || (F.probe.get(a.id)?.ms ?? 0) - (F.probe.get(b.id)?.ms ?? 0) || a.id.localeCompare(b.id));
+    drawModels();
+    drawProbeBtns();
   }
 
   const status = h('div.mt-3');
@@ -463,18 +519,24 @@ function simpleForm(providers, presets) {
   };
 
   const discoverBtn = h('button.btn', {
+    title: '拉网关的真实模型列表，再逐个打一句测延迟（边测边出，同一家族只测最新版本）',
     onclick: async (e) => {
       const u = url.value.trim();
       if (!u) { toast('先填接口地址', 'err'); return; }
       busy(e.target, true);
       clear(status);
       try {
-        const r = await api.discoverModels({ base_url: u, api_key: key.value.trim() });
+        const r = await api.discoverModels({ base_url: u, api_key: key.value.trim(), api: apiSel.value });
         F.found = r.models || [];
-        drawModels();
+        F.folded = r.folded || [];
+        F.probe = new Map();
         mount(status, h('div.notice.notice-ok',
           h('div.grow', h('div.small',
-            `拉到 ${r.count} 个模型` + (r.used_saved_key ? '（用的是已经存着的密钥）' : '')))));
+            `拉到 ${r.count} 个模型` + (r.used_saved_key ? '（用的是已经存着的密钥）' : '')
+            + (r.probe_truncated ? `；太多了，只测前 ${r.probe.length} 个` : '')))));
+        busy(e.target, false);
+        await probeAll(r.probe || []);
+        return;
       } catch (err) {
         F.found = [];
         drawModels();
@@ -487,7 +549,13 @@ function simpleForm(providers, presets) {
       }
       busy(e.target, false);
     },
-  }, '获取可用模型');
+  }, '拉取并测速');
+  const stopBtn = h('button.btn', { style: { display: 'none' }, title: '不再测剩下的，已测出来的保留',
+                                    onclick: () => F.ctl?.abort() }, '停止测速');
+  function drawProbeBtns() {
+    stopBtn.style.display = F.ctl ? '' : 'none';
+    discoverBtn.disabled = !!F.ctl;
+  }
 
   const testBtn = h('button.btn', {
     onclick: async (e) => {
@@ -519,19 +587,24 @@ function simpleForm(providers, presets) {
          '你自己的地址填过一次就会一直留在这儿，还可以「存成候选」放进上面那个下拉 —— ',
          '这些都存在本机的 ',
          h('span.mono', 'workspace/config/providers.json'), '，不会进仓库。']),
+      field('协议', apiSel,
+        ['绝大多数网关（vLLM、NewAPI、DeepSeek、通义……）是 OpenAI 兼容；直连 Anthropic 官方或它的转发选 Anthropic。',
+         '上面的常见地址会顺手把协议填好。']),
       field('密钥（apiKey）', key,
         providers.length && first.has_key
           ? '留空 = 不改，继续用已经存着的那个密钥（拉模型列表也会用它）'
           : '直接粘贴，不用加引号'),
       h('div.field',
         h('label.field-label', '模型'),
-        h('div.row.gap-2.mb-2', discoverBtn, testBtn),
+        h('div.row.gap-2.mb-2', discoverBtn, stopBtn, testBtn),
         modelBox,
         status,
         h('div.mt-3', manual),
         h('div.field-help',
           '上面勾的会同步到这一栏。也可以直接手打，多个用逗号分开 —— ',
           '存下来的模型在右侧 AI 助手里可以随时切换。')),
+      field('思考', thinkSel,
+        '会思考的模型（Qwen3、DeepSeek-V4、Kimi-K2、GLM-5、Claude……）按模型名认出写法再发；认不出的模型什么都不发。'),
       field('给它起个名字（可选）', name, '只是界面上显示用，随便叫')),
     h('div.row.gap-2.mt-3',
       h('button.btn.btn-primary', {
@@ -547,7 +620,7 @@ function simpleForm(providers, presets) {
           try {
             await api.saveSimpleModel({
               name: name.value.trim() || first.name || '我的模型',
-              base_url: u, api_key: k, model_ids: ids,
+              base_url: u, api_key: k, model_ids: ids, api: apiSel.value, thinking: thinkSel.value,
             });
             // 一个模型都没选也让存 —— 自建网关很多不实现 /models，
             // 拉不到列表就卡住、连地址都存不下来，那是最没道理的一种拦法。
@@ -609,6 +682,8 @@ function providerTable(providers, status) {
         h('td', i === 0 ? h('span.strong', p.name) : null),
         h('td.mono.xsmall.truncate', { title: p.base_url }, i === 0 ? p.base_url : ''),
         h('td.mono.xsmall.dim', i === 0 ? (p.api_key_masked || '未设置') : ''),
+        h('td.xsmall', i === 0 ? `${p.api === 'anthropic-messages' ? 'Anthropic' : 'OpenAI 兼容'}`
+          + ` · 思考${({ off: '关', on: '开', default: '不发' })[p.thinking || 'off']}` : ''),
         h('td',
           m.id ? h('span.mono.small', m.id) : h('span.small.dim', m.name),
           m.vision ? h('span.tag', { style: { marginLeft: '6px' } }, '视觉') : null),
@@ -616,7 +691,7 @@ function providerTable(providers, status) {
     });
   }
   return h('table.data',
-    h('thead', h('tr', h('th', 'Provider'), h('th', '地址'), h('th', '密钥'),
+    h('thead', h('tr', h('th', 'Provider'), h('th', '地址'), h('th', '密钥'), h('th', '协议'),
                  h('th', '模型'), h('th', ''))),
     h('tbody', ...rows));
 }

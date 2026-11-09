@@ -249,6 +249,8 @@ export const api = {
   testModel: (provider, model) => post('/api/settings/models/test', { provider, model }),
   // 按地址拉一份可用模型。密钥留空 = 沿用已经存着的那个（返回里绝不带密钥）
   discoverModels: (body) => post('/api/settings/models/discover', body),
+  // 给一个模型打一句「回复 ok」测延迟（设置页并发 3 个逐个测，可中途停）
+  testOneModel: (body, signal) => request('/api/settings/models/test-one', { method: 'POST', body, signal }),
   // 地址候选：内置的公共网关 + 自己存的那几个（存在本机配置里，不进仓库）
   savePreset: (body) => post('/api/settings/models/presets', body),
   deletePreset: (baseUrl) => request(

@@ -1138,3 +1138,6 @@ tr.is-rejected td .quality-ctl, tr.is-rejected td .xsmall { text-decoration: non
 .agent-session-row .linklike { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .agent-tools { display: grid; gap: 2px; margin: var(--s2x) 0; }
 .agent-tool-row { display: flex; align-items: baseline; gap: 6px; }
+.model-opt .ok { color: var(--ok); }
+.model-opt .danger { color: var(--danger); }
+.model-opt.is-bad span.mono { color: var(--ink-4); text-decoration: line-through; }

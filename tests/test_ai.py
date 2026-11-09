@@ -111,22 +111,12 @@ def test_a_non_json_reply_says_what_probably_happened(monkeypatch, tmp_path):
     这句话没有告诉他任何可以行动的东西。
     """
     import httpx
-    from app.ai import openai_compat
+    from app.ai import gateway, openai_compat
     from app.ai.provider import ChatMessage, ProviderUnavailable
 
-    class FakeResp:
-        status_code = 200
-        text = "<html><body>请先登录公司网络</body></html>"
-        def json(self):
-            raise ValueError("Expecting value: line 1 column 1 (char 0)")
-
-    class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def post(self, *a, **k): return FakeResp()
-
-    monkeypatch.setattr(httpx, "Client", FakeClient)
+    page = "<html><body>请先登录公司网络</body></html>"
+    monkeypatch.setattr(gateway, "client_factory", lambda timeout=None: httpx.Client(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, text=page))))
     prov = openai_compat.OpenAICompatProvider(
         "网关", {"baseUrl": "https://x/v1", "apiKey": "k", "models": [{"id": "m"}]})
 
@@ -156,27 +146,21 @@ def test_connection_test_never_raises(monkeypatch, workspace):
 
 # ---------------------------------------------------------------- 模型发现
 def _fake_models_response(monkeypatch, *, status=200, body=None, text=None, capture=None):
-    """假装网关的 GET /models。不打网络。"""
-    class _Resp:
-        status_code = status
-        def __init__(self):
-            self.text = text if text is not None else json.dumps(body or {})
-        def json(self):
-            if text is not None:
-                raise ValueError("not json")
-            return body or {}
+    """网关的 /models 回什么。走的是真 httpx（MockTransport），只把网络换掉。"""
+    import httpx
 
-    class _Client:
-        def __init__(self, **kw): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def get(self, url, headers=None):
-            if capture is not None:
-                capture["url"] = url
-                capture["headers"] = headers or {}
-            return _Resp()
+    from app.ai import gateway
 
-    monkeypatch.setattr(openai_compat.httpx, "Client", _Client)
+    def handler(req: httpx.Request) -> httpx.Response:
+        if capture is not None:
+            capture["url"] = str(req.url)
+            capture["headers"] = dict(req.headers)
+        if text is not None:
+            return httpx.Response(status, text=text)
+        return httpx.Response(status, json=body or {})
+
+    monkeypatch.setattr(gateway, "client_factory",
+                        lambda timeout=None: httpx.Client(transport=httpx.MockTransport(handler)))
 
 
 def test_discover_lists_models_so_you_do_not_have_to_type_the_name(monkeypatch):
@@ -187,7 +171,7 @@ def test_discover_lists_models_so_you_do_not_have_to_type_the_name(monkeypatch):
     got = openai_compat.list_remote_models("http://gw.example/v1/", "sk-xyz")
     assert [m["id"] for m in got] == ["qwen-a", "qwen-b"]      # 排过序
     assert cap["url"] == "http://gw.example/v1/models"
-    assert cap["headers"]["Authorization"] == "Bearer sk-xyz"
+    assert cap["headers"]["authorization"] == "Bearer sk-xyz"
 
 
 def test_a_gateway_without_a_models_endpoint_says_you_can_still_type_it(monkeypatch):
@@ -246,7 +230,7 @@ def test_discover_uses_the_saved_key_and_never_returns_it(workspace, monkeypatch
                    json={"base_url": "http://gw.example/v1"})
     assert r.status_code == 200
     # 用上了存着的密钥……
-    assert cap["headers"]["Authorization"] == "Bearer sk-secret-value-1234"
+    assert cap["headers"]["authorization"] == "Bearer sk-secret-value-1234"
     assert r.json()["used_saved_key"] is True
     # ……但一个字都没回传
     assert "sk-secret-value-1234" not in r.text
@@ -378,7 +362,7 @@ def test_user_presets_live_in_the_workspace_and_survive_saving_a_provider(worksp
         got = r.json()["presets"]
         assert got[0] == {"name": "内网网关",
                           "base_url": "http://gw.internal.example/v1",
-                          "origin": "user"}          # 自己的排最前面
+                          "origin": "user", "api": "openai-completions"}   # 自己的排最前面
         assert any(p["origin"] == "builtin" for p in got)
 
         # 存一个 provider 不能把候选清单一起抹掉（同一个文件的两个顶层键）

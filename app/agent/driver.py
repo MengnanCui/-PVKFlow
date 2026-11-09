@@ -9,17 +9,17 @@
 默认 auto：先按 toolcall 发；网关明确拒绝 tools 参数（4xx 且报错里提到 tool / function）
 就退到 action 重发一次，并记住这个网关 × 模型的脾气，后面不再白试。
 
-只接 OpenAI 兼容协议 —— 和平台「设置 → 模型」里配的是同一份（同一个地址、密钥、模型名）。
+两种协议都接（和平台「设置 → 模型」里配的是同一份）：OpenAI 兼容的 tool_calls，Anthropic 的 tool_use。
+网络那一层（退避重试、思考参数、拒收降级、流式拼装）在 app/ai/gateway.py，这里只管拼请求、解结果。
 """
 from __future__ import annotations
 
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Callable, Iterable
+from typing import Callable
 
-import httpx
-
+from app.ai import gateway
 from app.ai.provider import ProviderUnavailable
 from app.agent.tools import Tool
 
@@ -28,9 +28,6 @@ TIMEOUT = 180.0
 TEMPERATURE = 0.3
 
 _learned: dict[str, str] = {}
-
-# 测试用：换成带 MockTransport 的 client
-client_factory: Callable[[], httpx.Client] = lambda: httpx.Client(timeout=TIMEOUT)  # noqa: E731
 
 
 @dataclass
@@ -50,6 +47,7 @@ class Step:
 
 def reset_learned() -> None:
     _learned.clear()
+    gateway.reset_memo()
 
 
 # ------------------------------------------------------------------ 动作协议
@@ -145,47 +143,74 @@ def to_action_messages(messages: list[dict], system: str) -> list[dict]:
     return out
 
 
+def to_anthropic(messages: list[dict]) -> list[dict]:
+    """内部消息 → Anthropic 的 messages：工具调用是 assistant 的 tool_use 块，结果是 user 的 tool_result 块。"""
+    out: list[dict] = []
+    for m in messages:
+        if m["role"] == "tool":
+            out.append({"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": m["call_id"], "content": m["content"] or "（空）"}]})
+        elif m["role"] == "assistant":
+            blocks: list[dict] = [{"type": "text", "text": m["content"]}] if m.get("content") else []
+            blocks += [{"type": "tool_use", "id": c["id"], "name": c["name"], "input": c["args"]}
+                       for c in m.get("calls") or []]
+            out.append({"role": "assistant", "content": blocks or [{"type": "text", "text": "（空）"}]})
+        else:
+            out.append({"role": "user", "content": m["content"]})
+    return gateway.merge_turns(out)
+
+
+def wire(protocol: str, model: str, system: str, messages: list[dict], tools: list[Tool], kind: str) -> dict:
+    if kind == "action":
+        msgs = to_action_messages(messages, system + "\n\n" + action_protocol(tools))
+        return gateway.build_body(protocol, model, msgs, temperature=TEMPERATURE, max_tokens=None, stream=True,
+                                  thinking={})
+    if protocol == gateway.ANTHROPIC:
+        body = {"model": model, "max_tokens": 4096, "temperature": TEMPERATURE, "stream": True,
+                "system": system, "messages": to_anthropic(messages),
+                "tools": [{"name": t.name, "description": t.description, "input_schema": t.schema} for t in tools]}
+    else:
+        body = {"model": model, "temperature": TEMPERATURE, "stream": True,
+                "messages": to_openai(messages, system),
+                "tools": [{"type": "function", "function": {
+                    "name": t.name, "description": t.description, "parameters": t.schema}} for t in tools],
+                "tool_choice": "auto"}
+    return body
+
+
 def _rejects_tools(status: int, body: str) -> bool:
     return status in (400, 404, 422) and bool(re.search(r"tool|function", body, re.I))
 
 
 def step(provider, model: str, system: str, messages: list[dict], tools: list[Tool], *,
          mode: str = "auto", on_delta: Callable[[str], None] | None = None) -> Step:
-    """问模型一次「下一步做什么」。流式收：正文逐段交给 on_delta（toolcall 模式下），工具调用拼完整再返回。"""
+    """问模型一次「下一步做什么」。流式收：正文逐段交给 on_delta（原生工具调用模式下），工具调用拼完整再返回。"""
     key = f"{provider.base_url}::{model}"
     kind = mode if mode in ("toolcall", "action") else _learned.get(key, "toolcall")
     for _ in range(2):
-        if kind == "toolcall":
-            body = {"model": model, "temperature": TEMPERATURE, "stream": True,
-                    "messages": to_openai(messages, system),
-                    "tools": [{"type": "function", "function": {
-                        "name": t.name, "description": t.description, "parameters": t.schema}} for t in tools],
-                    "tool_choice": "auto"}
-        else:
-            body = {"model": model, "temperature": TEMPERATURE, "stream": True,
-                    "messages": to_action_messages(messages, system + "\n\n" + action_protocol(tools))}
-        url = f"{provider.base_url}/chat/completions"
+        body = wire(provider.protocol, model, system, messages, tools, kind)
+        body = gateway.finish_body(body, provider.protocol,
+                                   gateway.thinking_fields(model, provider.protocol, provider.thinking))
         try:
-            with client_factory() as client, client.stream("POST", url, headers=provider._headers(), json=body) as resp:
-                if resp.status_code >= 400:
-                    text = resp.read().decode("utf-8", "replace")
-                    if kind == "toolcall" and mode == "auto" and _rejects_tools(resp.status_code, text):
-                        _learned[key] = kind = "action"
-                        continue
-                    raise ProviderUnavailable(f"{provider.name} 返回 {resp.status_code}：{text[:300]}")
-                ctype = resp.headers.get("content-type", "")
-                if "event-stream" in ctype:
-                    content, calls = _read_stream(resp.iter_lines(), on_delta if kind == "toolcall" else None)
-                else:                   # 要了流式却回了整包：照样能用
-                    content, calls = _read_whole(resp.read().decode("utf-8", "replace"))
-        except httpx.HTTPError as exc:
-            raise ProviderUnavailable(f"连接 {provider.name} 失败：{exc}") from exc
+            client, resp, streamed = gateway.request(provider, body, stream=True, timeout=TIMEOUT)
+        except gateway.GatewayError as exc:
+            if kind == "toolcall" and mode == "auto" and _rejects_tools(exc.status, exc.body):
+                _learned[key] = kind = "action"
+                continue
+            raise
+        try:
+            content, raw_calls = gateway.response_text(resp, streamed, provider.protocol,
+                                                       on_delta if kind == "toolcall" else None)
+        finally:
+            resp.close()
+            client.close()
         if mode == "auto":
             _learned[key] = kind
         if kind == "action":
             s = parse_action(content)
             s.model = model
             return s
+        calls = [Call(c["id"] or _new_id(), c["name"], _parse_args(c["arguments"])) for c in raw_calls if c["name"]]
         return Step(text=content, calls=calls, kind=kind, model=model)
     raise ProviderUnavailable("网关既不接受工具调用，退回动作协议也没成功")
 
@@ -198,46 +223,3 @@ def _parse_args(raw: str) -> dict:
         return v if isinstance(v, dict) else {}
     except json.JSONDecodeError:
         return {}
-
-
-def _read_stream(lines: Iterable[str], on_delta) -> tuple[str, list[Call]]:
-    """SSE → (正文, 工具调用)。工具调用是按 index 一截一截来的（名字先到，参数分好几块），要拼起来。"""
-    text: list[str] = []
-    parts: dict[int, dict] = {}
-    for raw in lines:
-        line = raw.strip()
-        if not line.startswith("data:"):
-            continue
-        data = line[5:].strip()
-        if data == "[DONE]":
-            break
-        try:
-            obj = json.loads(data)
-        except json.JSONDecodeError:
-            continue
-        for ch in obj.get("choices") or []:
-            d = ch.get("delta") or ch.get("message") or {}
-            if d.get("content"):
-                text.append(d["content"])
-                if on_delta:
-                    on_delta(d["content"])
-            for tc in d.get("tool_calls") or []:
-                p = parts.setdefault(int(tc.get("index", len(parts))), {"id": "", "name": "", "args": ""})
-                p["id"] = tc.get("id") or p["id"]
-                fn = tc.get("function") or {}
-                p["name"] += fn.get("name") or ""
-                p["args"] += fn.get("arguments") or ""
-    calls = [Call(p["id"] or _new_id(), p["name"], _parse_args(p["args"]))
-             for _, p in sorted(parts.items()) if p["name"]]
-    return "".join(text), calls
-
-
-def _read_whole(body: str) -> tuple[str, list[Call]]:
-    try:
-        msg = json.loads(body)["choices"][0]["message"]
-    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
-        raise ProviderUnavailable(f"网关返回的不是预期的结构：{body[:200]}") from exc
-    calls = [Call(c.get("id") or _new_id(), (c.get("function") or {}).get("name", ""),
-                  _parse_args((c.get("function") or {}).get("arguments", "")))
-             for c in msg.get("tool_calls") or []]
-    return msg.get("content") or "", [c for c in calls if c.name]

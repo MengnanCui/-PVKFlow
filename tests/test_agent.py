@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.agent import driver, loop, tools
+from app.ai import gateway
 from app.ai.openai_compat import OpenAICompatProvider
 from app.storage import agent_sessions as sessions
 from app.storage import db
@@ -70,7 +71,8 @@ def gw(workspace, monkeypatch):
     def install(*replies, **kw):
         g = Gateway(*replies, **kw)
         holder["g"] = g
-        monkeypatch.setattr(driver, "client_factory", lambda: httpx.Client(transport=httpx.MockTransport(g)))
+        monkeypatch.setattr(gateway, "client_factory",
+                            lambda timeout=None: httpx.Client(transport=httpx.MockTransport(g)))
         return g
 
     driver.reset_learned()

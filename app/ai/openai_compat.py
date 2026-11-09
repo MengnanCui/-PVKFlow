@@ -25,14 +25,15 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Iterable, Iterator
 
-import httpx
 
 from app import config
+from app.ai import gateway
 from app.ai.provider import ChatMessage, ChatResult, ProviderUnavailable
 
 DEFAULT_TIMEOUT = 120.0
+THINKING = ("off", "on", "default")
 
 
 @dataclass
@@ -106,6 +107,7 @@ def describe_config(path: Path | None = None) -> dict:
             "name": pname,
             "base_url": pcfg.get("baseUrl", ""),
             "api": pcfg.get("api", "openai-completions"),
+            "thinking": pcfg.get("thinking") or "off",
             "api_key_masked": _redact(pcfg.get("apiKey", "")),
             "has_key": bool(pcfg.get("apiKey")),
             "models": [ModelInfo(
@@ -119,13 +121,21 @@ def describe_config(path: Path | None = None) -> dict:
 
 
 class OpenAICompatProvider:
-    """一个 provider 条目对应一个实例。"""
+    """一个 provider 条目对应一个实例。
+
+    名字是历史留下的：现在它也接 Anthropic 协议（`api: anthropic-messages`）。
+    网络那一层（两种协议、退避重试、思考参数、拒收降级）全在 app/ai/gateway.py。
+    """
 
     def __init__(self, name: str, cfg: dict) -> None:
         self.name = name
         self.base_url = (cfg.get("baseUrl") or "").rstrip("/")
         self.api_key = cfg.get("apiKey") or ""
         self.compat = cfg.get("compat") or {}
+        self.protocol = gateway.protocol_of(cfg)
+        # 思考：off（缺省，显式关 —— IFlow 在内网网关上实测开着会吞输出）/ on / default（不发参数）
+        t = cfg.get("thinking") or "off"
+        self.thinking = t if t in THINKING else "off"
         self.models = [m.get("id") for m in (cfg.get("models") or []) if m.get("id")]
         self.default_model = self.models[0] if self.models else None
 
@@ -133,10 +143,7 @@ class OpenAICompatProvider:
         return bool(self.base_url and self.default_model)
 
     def _headers(self) -> dict:
-        h = {"Content-Type": "application/json"}
-        if self.api_key:
-            h["Authorization"] = f"Bearer {self.api_key}"
-        return h
+        return gateway.headers(self.protocol, self.api_key)
 
     def _normalize(self, messages: list[ChatMessage]) -> list[dict]:
         out = []
@@ -159,46 +166,10 @@ class OpenAICompatProvider:
     ) -> ChatResult:
         if not self.available():
             raise ProviderUnavailable(f"provider「{self.name}」配置不完整（缺 baseUrl 或 models）")
-
-        payload: dict[str, Any] = {
-            "model": model or self.default_model,
-            "messages": self._normalize(messages),
-            "temperature": temperature,
-            "stream": False,
-        }
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
-
-        url = f"{self.base_url}/chat/completions"
-        try:
-            with httpx.Client(timeout=timeout) as client:
-                resp = client.post(url, headers=self._headers(), json=payload)
-        except httpx.HTTPError as exc:
-            raise ProviderUnavailable(f"连接 {self.name} 失败：{exc}") from exc
-
-        if resp.status_code >= 400:
-            raise ProviderUnavailable(
-                f"{self.name} 返回 {resp.status_code}：{resp.text[:400]}"
-            )
-
-        try:
-            data = resp.json()
-        except ValueError as exc:
-            # 网关返回的不是 JSON。公司网络上这几乎总是同一件事：
-            # 代理/SSO 把请求截下来，回了一个登录页或错误页，状态码还是 200。
-            # 直接把 JSONDecodeError 抛上去的话，用户看到的是
-            # 「Expecting value: line 1 column 1」—— 什么信息都没有。
-            body = resp.text.strip()[:200].replace("\n", " ")
-            raise ProviderUnavailable(
-                f"{self.name} 返回的不是 JSON（可能是代理或登录页拦截了请求）："
-                f"{body or '空响应'}") from exc
-        try:
-            text = data["choices"][0]["message"]["content"] or ""
-        except (KeyError, IndexError, TypeError) as exc:
-            raise ProviderUnavailable(f"{self.name} 返回结构异常：{str(data)[:300]}") from exc
-
-        return ChatResult(text=text, model=payload["model"], provider=self.name,
-                          usage=data.get("usage") or {}, raw=data)
+        mid = model or self.default_model
+        text, usage = gateway.chat(self, self._normalize(messages), model=mid, temperature=temperature,
+                                   max_tokens=max_tokens, timeout=timeout)
+        return ChatResult(text=text, model=mid, provider=self.name, usage=usage)
 
     def chat_stream(
         self,
@@ -209,64 +180,16 @@ class OpenAICompatProvider:
         max_tokens: int | None = None,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> Iterator[str]:
-        """逐块吐字。和 `chat` 走同一个 payload，只是 `stream: True`。
-
-        本地 27B 一次回答动辄十几秒。不流式的话界面只能干转圈，
-        用户不知道它是在想还是已经死了。
-        """
+        """逐块吐字。本地 27B 一次回答动辄十几秒 —— 不流式的话界面只能干转圈。"""
         if not self.available():
             raise ProviderUnavailable(f"provider「{self.name}」配置不完整（缺 baseUrl 或 models）")
-
-        payload: dict[str, Any] = {
-            "model": model or self.default_model,
-            "messages": self._normalize(messages),
-            "temperature": temperature,
-            "stream": True,
-        }
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
-
-        url = f"{self.base_url}/chat/completions"
-        try:
-            with httpx.Client(timeout=timeout) as client:
-                with client.stream("POST", url, headers=self._headers(),
-                                   json=payload) as resp:
-                    if resp.status_code >= 400:
-                        resp.read()
-                        raise ProviderUnavailable(
-                            f"{self.name} 返回 {resp.status_code}：{resp.text[:400]}")
-                    for piece in _iter_sse_text(resp.iter_lines()):
-                        yield piece
-        except httpx.HTTPError as exc:
-            raise ProviderUnavailable(f"连接 {self.name} 失败：{exc}") from exc
+        yield from gateway.chat_stream(self, self._normalize(messages), model=model or self.default_model,
+                                       temperature=temperature, max_tokens=max_tokens, timeout=timeout)
 
 
 def _iter_sse_text(lines: Iterable[str]) -> Iterator[str]:
-    """把 OpenAI 的 SSE 行流切成一段段正文。
-
-    单独成函数是为了能拿假的行流直接测 —— 网关的实现千奇百怪，
-    这里要能扛住的几种：`data:` 后有没有空格、心跳空行、
-    结尾的 `[DONE]`、以及**半截 json**（少见但真的会有，
-    崩在这里的话用户看到的是整个回答消失，而不是少几个字）。
-    """
-    for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith(":"):
-            continue                       # 空行是分隔，`:` 开头是心跳注释
-        if not line.startswith("data:"):
-            continue
-        data = line[5:].strip()
-        if data == "[DONE]":
-            return
-        try:
-            obj = json.loads(data)
-        except json.JSONDecodeError:
-            continue                       # 半截 json 就丢这一块，别把整条流带走
-        for choice in obj.get("choices") or []:
-            delta = choice.get("delta") or {}
-            piece = delta.get("content")
-            if piece:
-                yield piece
+    """OpenAI 的 SSE 行流 → 一段段正文。实现在 gateway（两种协议同一套规矩），这里留个老名字。"""
+    return gateway._iter_text(lines, gateway.OPENAI)
 
 
 def resolve(provider_name: str | None = None, model: str | None = None):
@@ -335,12 +258,23 @@ def test_connection(provider_name: str | None = None, model: str | None = None) 
 # 属于用户自己的配置，只存在 workspace/config/providers.json（已 gitignore）。
 # 界面上填过一次之后会一直回填，不需要写进仓库。
 PRESETS = [
-    {"name": "OpenAI", "base_url": "https://api.openai.com/v1"},
-    {"name": "DeepSeek", "base_url": "https://api.deepseek.com/v1"},
-    {"name": "智谱 GLM", "base_url": "https://open.bigmodel.cn/api/paas/v4"},
-    {"name": "月之暗面 Kimi", "base_url": "https://api.moonshot.cn/v1"},
-    {"name": "本地 vLLM", "base_url": "http://127.0.0.1:8000/v1"},
-    {"name": "本地 Ollama", "base_url": "http://127.0.0.1:11434/v1"},
+    # 照 IFlow 的预设（lib/llm/config.ts）：带协议、模型提示、要不要密钥。内网那条不进仓库（见上）
+    {"name": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "api": "openai-completions",
+     "model_hint": "deepseek-chat"},
+    {"name": "Qwen · 通义（DashScope）", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+     "api": "openai-completions", "model_hint": "qwen-plus"},
+    {"name": "Moonshot · Kimi", "base_url": "https://api.moonshot.cn/v1", "api": "openai-completions",
+     "model_hint": "moonshot-v1-8k"},
+    {"name": "GLM · 智谱", "base_url": "https://open.bigmodel.cn/api/paas/v4", "api": "openai-completions",
+     "model_hint": "glm-4-flash"},
+    {"name": "OpenAI", "base_url": "https://api.openai.com/v1", "api": "openai-completions",
+     "model_hint": "gpt-4o-mini"},
+    {"name": "Anthropic · Claude", "base_url": "https://api.anthropic.com", "api": "anthropic-messages",
+     "model_hint": "claude-sonnet-4-5"},
+    {"name": "本地 vLLM", "base_url": "http://127.0.0.1:8000/v1", "api": "openai-completions",
+     "model_hint": "", "needs_key": False},
+    {"name": "本地 Ollama", "base_url": "http://127.0.0.1:11434/v1", "api": "openai-completions",
+     "model_hint": "qwen2.5:7b", "needs_key": False},
 ]
 
 # 一份本机名单最多存这么多条。这道闸挡的是「点错了按钮攒出几百条」，
@@ -365,7 +299,8 @@ def user_presets(path: Path | None = None) -> list[dict]:
         url = (item.get("base_url") or "").strip().rstrip("/")
         if url:
             out.append({"name": (item.get("name") or url).strip()[:60],
-                        "base_url": url, "origin": "user"})
+                        "base_url": url, "origin": "user",
+                        "api": item.get("api") or gateway.OPENAI})
     return out[:MAX_USER_PRESETS]
 
 
@@ -386,7 +321,7 @@ def all_presets(path: Path | None = None) -> list[dict]:
     return out
 
 
-def save_preset(name: str, base_url: str, path: Path | None = None) -> list[dict]:
+def save_preset(name: str, base_url: str, path: Path | None = None, api: str = "openai-completions") -> list[dict]:
     """把一个地址存进本机名单。地址相同就换个名字，不新增一条。"""
     url = (base_url or "").strip().rstrip("/")
     if not url.startswith(("http://", "https://")):
@@ -400,7 +335,10 @@ def save_preset(name: str, base_url: str, path: Path | None = None) -> list[dict
     keep = [x for x in (cfg.get("presets") or [])
             if isinstance(x, dict)
             and (x.get("base_url") or "").rstrip("/") != url]
-    cfg["presets"] = ([{"name": name, "base_url": url}] + keep)[:MAX_USER_PRESETS]
+    entry = {"name": name, "base_url": url}
+    if api == gateway.ANTHROPIC:
+        entry["api"] = api
+    cfg["presets"] = ([entry] + keep)[:MAX_USER_PRESETS]
     save_config(cfg, path)
     return user_presets(path)
 
@@ -419,58 +357,11 @@ def delete_preset(base_url: str, path: Path | None = None) -> list[dict]:
     return user_presets(path)
 
 
-def list_remote_models(base_url: str, api_key: str = "",
-                       timeout: float = 20.0) -> list[dict]:
-    """`GET {base_url}/models` —— OpenAI 兼容协议的标准发现接口。
+def list_remote_models(base_url: str, api_key: str = "", timeout: float = 20.0,
+                       api: str = "openai-completions") -> list[dict]:
+    """拉网关的模型列表（OpenAI 兼容是 `GET {base}/models`，Anthropic 是 `/v1/models`）。
 
-    有了它就不用手打模型名了。但**不是每个网关都实现它**，所以调用方必须
-    保留「手动填」那条路：拉不到是常见情况，不是故障。
-
-    返回 `[{"id": ..., "owned_by": ...}]`，按 id 排序。
+    有了它就不用手打模型名了。但**不是每个网关都实现它**，所以调用方必须保留「手动填」那条路：
+    拉不到是常见情况，不是故障。返回 `[{"id": ..., "owned_by": ...}]`，按 id 排序。
     """
-    base = (base_url or "").rstrip("/")
-    if not base.startswith(("http://", "https://")):
-        raise ProviderUnavailable("接口地址要以 http:// 或 https:// 开头")
-
-    headers = {"Accept": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            resp = client.get(f"{base}/models", headers=headers)
-    except httpx.HTTPError as exc:
-        raise ProviderUnavailable(f"连不上 {base}：{exc}") from exc
-
-    if resp.status_code == 404:
-        raise ProviderUnavailable(
-            f"{base}/models 返回 404 —— 这个网关没有提供模型列表接口。"
-            "手动填模型名一样能用。")
-    if resp.status_code in (401, 403):
-        raise ProviderUnavailable(
-            f"密钥被拒（HTTP {resp.status_code}）。检查一下 apiKey 是不是填错了。")
-    if resp.status_code >= 400:
-        raise ProviderUnavailable(f"{base}/models 返回 {resp.status_code}："
-                                  f"{resp.text[:300]}")
-
-    try:
-        data = resp.json()
-    except ValueError as exc:
-        # 和 chat() 里同一件事：公司网络上代理/SSO 把请求截下来回了个登录页，
-        # 状态码还是 200。不说清楚的话用户看到的就是「Expecting value」。
-        body = resp.text.strip()[:200].replace("\n", " ")
-        raise ProviderUnavailable(
-            f"{base}/models 返回的不是 JSON（可能是代理或登录页拦截了请求）："
-            f"{body or '空响应'}") from exc
-
-    items = data.get("data") if isinstance(data, dict) else data
-    if not isinstance(items, list):
-        raise ProviderUnavailable(f"返回结构不认识：{str(data)[:200]}")
-
-    out = []
-    for m in items:
-        mid = (m.get("id") if isinstance(m, dict) else str(m)) or ""
-        if mid:
-            out.append({"id": mid, "owned_by": (m.get("owned_by") or "")
-                        if isinstance(m, dict) else ""})
-    return sorted(out, key=lambda x: x["id"])
+    return gateway.list_models(base_url, api_key, gateway.protocol_of({"api": api}), timeout)
