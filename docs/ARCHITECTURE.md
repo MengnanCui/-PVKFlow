@@ -38,7 +38,7 @@ app/
 ├─ batch.py          ★ 批处理：配方 → 每个样品跑一遍各模块 → 长表 + 关键结果
 ├─ api/              路由。错误统一翻译成 {error:{message,kind,detail}}；**全部是普通函数**（放线程池，见下）
 ├─ storage/
-│   ├─ schema.sql    数据模型（13 张表 + 1 个视图，见 DATA_MODEL.md）
+│   ├─ schema.sql    数据模型（14 张表 + 1 个视图，见 DATA_MODEL.md）
 │   ├─ migrations.py ★ 版本号 + 迁移；升级前先备份（见下）
 │   ├─ db.py         连接（按线程缓存）、WAL、设置读写
 │   ├─ ingest.py     ★ 分类落地策略、sha256 去重、断链巡检、导入时判定是不是光谱矩阵
@@ -49,6 +49,7 @@ app/
 │   ├─ relation.py   构效关系：把关键结果「当前值」透视成每个样品一行（范围用数据处理页的筛选式）
 │   ├─ sets.py       保存的样品集
 │   ├─ conversations.py  AI 对话与钉住的分析
+│   ├─ agent_sessions.py 智能体会话（上下文、事件、待批的那一轮）
 │   └─ tabular.py    长表读写（CSV；装了 pyarrow 则 Parquet）
 ├─ modules/          ★ 功能模块（同事写算法的唯一入口，见 docs/MODULE_AUTHORING.md）
 │   ├─ base.py       契约：ModuleSpec / Control / Panel / Curve / Op
@@ -66,11 +67,18 @@ app/
 │   ├─ matrix.py     ★ 光谱矩阵：解析、缓存、`probe()`（「是不是矩阵」只有这一份判断）
 │   └─ render.py     热力图 / 条纹图 PNG
 ├─ plotting/script_export.py  导出一份能自己跑的 plot.py + data.csv
-└─ ai/
-    ├─ provider.py       AIProvider 抽象
-    ├─ openai_compat.py  OpenAI 兼容多 provider 客户端
-    └─ context.py        给模型的「已知事实」：汇总、逐样品标量、曲线摘要
+├─ ai/
+│   ├─ provider.py       AIProvider 抽象
+│   ├─ openai_compat.py  OpenAI 兼容多 provider 客户端
+│   └─ context.py        给模型的「已知事实」：汇总、逐样品标量、曲线摘要
+└─ agent/            智能体（「智能体」页；设计照 IFlow 的 lib/agent，砍到这个平台用得上的部分）
+    ├─ tools.py      ★ 工具与风险等级：read 直接跑 / write 先问（可记住）/ irreversible 每次问；参数校验、结果截断
+    ├─ driver.py     问模型「下一步」：原生 tool_calls（流式拼参数）；网关不认 tools 就退到 JSON 动作协议并记住
+    └─ loop.py       ★ 控制回路：调模型 → 跑工具 → 回灌；轮数 / 时间 / 上下文三道闸；停在审批上的那一轮存进会话
 ```
+
+智能体的会话存在 `agent_session` 一行里：给模型的上下文、给界面回放的事件、停在审批上的那一轮。
+推给界面的事件和存下来的是同一种形状 —— 界面上看到的，就是事后回放出来的。
 
 ## 三条设计原则
 

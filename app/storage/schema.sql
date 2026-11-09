@@ -231,6 +231,23 @@ CREATE TABLE IF NOT EXISTS message (
     created_at      TEXT NOT NULL
 );
 
+-- 智能体（「智能体」页）的会话。和上面的 conversation 分开：那边是「带着一段事实问答」，
+-- 这边是模型自己调工具查数、改东西（改之前停下来问人）。三样东西都存在这一行里：
+--   messages_json  给模型的上下文（不含系统提示；含工具调用与工具结果，早的会被折叠）
+--   events_json    给界面回放的事件 —— 和当时推给界面的是同一种形状（不含逐字增量）
+--   pending_json   停在审批上的那一轮：等你点「批准 / 拒绝」时从这里接着跑。没有就是 NULL
+CREATE TABLE IF NOT EXISTS agent_session (
+    session_id      TEXT PRIMARY KEY,
+    title           TEXT NOT NULL DEFAULT '新任务',
+    messages_json   TEXT NOT NULL DEFAULT '[]',
+    events_json     TEXT NOT NULL DEFAULT '[]',
+    pending_json    TEXT,
+    remembered_json TEXT NOT NULL DEFAULT '[]',   -- 本会话内「不再询问」的写工具（只可能是 write 级）
+    model           TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
 -- 把某条回答钉到某一次对比上。对比页据此显示「AI 分析」。
 CREATE TABLE IF NOT EXISTS ai_pin (
     pin_id          TEXT PRIMARY KEY,

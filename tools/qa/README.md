@@ -40,6 +40,8 @@ HTE_WORKSPACE=/tmp/hte-qa .venv/bin/python tools/qa/seed_relation.py
 NODE_PATH=$(npm root -g) node tools/qa/e_check.js
 # D 组（结果审核 / 断链巡检 / 样品集管理 / 确认框）：样品要跑过两次批处理；第二个参数是工作区目录（会挪走一个文件再放回）
 NODE_PATH=$(npm root -g) node tools/qa/d_check.js smp_xxx /tmp/hte-qa
+# 智能体：设置里的模型要有 fake-1 和 fake-notools（后者拒收 tools，用来测退到 JSON 动作协议）
+NODE_PATH=$(npm root -g) node tools/qa/agent_check.js
 ```
 
 B2 的对比页那一条要用**样品数 ≤ 24** 的那次批处理 —— 超过 24 个，切片柱状图本来就不画（挤不下）。

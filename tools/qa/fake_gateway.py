@@ -4,8 +4,17 @@
 - 问题里有「收窄」→ 回一张 narrow 卡片
 - 问题里有「慢」→ 40 段、每段 150 ms 慢慢流（用来测流式中途切换对话）
 - 其余 → 一句短回答
+
+智能体（请求里带 tools，或系统提示里有动作协议）按剧本走：
+- 「有什么数据」→ 同时调 overview + list_fields → 拿到结果后回一句总结（带上读到的样品数）
+- 「相关」→ 调 correlate(qa_x, qa_y) → 回一句带 r 的结论
+- 「作废结果 123」→ 调 set_quality(reject) —— 要审批；批了之后回「已作废」，拒了回「好，没动」
+- 「删除样品集 set_xxx」→ 调 delete_sample_set —— 每次都要审批
+- 「一直查」→ 每轮都调 list_fields（撞轮数上限）
+- 模型名是 fake-notools 时：带 tools 的请求一律回 400「tools is not supported」，逼平台退到动作协议
 """
 import json
+import re
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,6 +44,8 @@ class H(BaseHTTPRequestHandler):
         req = json.loads(self.rfile.read(n) or b"{}")
         with LOG.open("a", encoding="utf-8") as f:
             f.write(json.dumps(req, ensure_ascii=False) + "\n")
+        if req.get("tools") or "输出格式" in (req.get("messages") or [{}])[0].get("content", ""):
+            return self.agent(req)
         q = next((m["content"] for m in reversed(req.get("messages", []))
                   if m.get("role") == "user"), "")
         # 只看问题本身。前面的「已知事实」里也可能出现「收窄」（样品多了，平台会提示范围太大）
@@ -72,6 +83,82 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(b"data: [DONE]\n\n")
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+    # ---------------------------------------------------------------- 智能体
+    def agent(self, req):
+        msgs = req.get("messages") or []
+        action = "tools" not in req
+        if req.get("model") == "fake-notools" and not action:
+            return self.json(400, {"error": {"message": "tools is not supported by this model"}})
+        # 动作协议下工具结果是一条「【工具结果 …】」的 user 消息
+        last = msgs[-1] if msgs else {}
+        got_result = last.get("role") == "tool" or (action and str(last.get("content", "")).startswith("【工具结果"))
+        users = [m["content"] for m in msgs if m.get("role") == "user" and not str(m["content"]).startswith("【工具结果")]
+        q = users[-1] if users else ""
+        if got_result:
+            results = []
+            for m in reversed(msgs):
+                c = str(m.get("content", ""))
+                if m.get("role") == "tool" or c.startswith("【工具结果"):
+                    results.append(c)
+                else:
+                    break
+            text = " ".join(results)
+            if "一直查" in q:
+                return self.reply(req, [("list_fields", {})], "", action)
+            if "没有执行" in text:
+                return self.reply(req, [], "好，没动。", action)
+            if '"updated"' in text:
+                return self.reply(req, [], "已作废，当前值退回了上一次。", action)
+            if '"deleted"' in text:
+                return self.reply(req, [], "样品集删掉了，样品还在。", action)
+            m = re.search(r'"samples": (\d+)', text)
+            if m:
+                return self.reply(req, [], f"平台里有 **{m.group(1)} 个样品**。", action)
+            m = re.search(r'"r": ([-0-9.]+)', text)
+            if m:
+                return self.reply(req, [], f"两者正相关，r = {float(m.group(1)):.3f}。", action)
+            return self.reply(req, [], "查到了。", action)
+        if "有什么数据" in q:
+            return self.reply(req, [("overview", {}), ("list_fields", {})], "我先看一下概况和字段。", action)
+        if "相关" in q:
+            return self.reply(req, [("correlate", {"x": "qa_x", "y": "qa_y"})], "", action)
+        if m := re.search(r"作废结果 (\d+)", q):
+            return self.reply(req, [("set_quality", {"result_ids": [int(m.group(1))], "quality": "reject",
+                                                     "note": "QA 智能体"})], "", action)
+        if m := re.search(r"删除样品集 (set_\w+)", q):
+            return self.reply(req, [("delete_sample_set", {"set_id": m.group(1)})], "", action)
+        if "一直查" in q:
+            return self.reply(req, [("list_fields", {})], "", action)
+        return self.reply(req, [], "你好，我可以帮你查平台里的数据。", action)
+
+    def reply(self, req, calls, say, action):
+        if action:
+            text = json.dumps({"say": say, "calls": [{"name": n, "args": a} for n, a in calls]}, ensure_ascii=False)
+            chunks = [{"content": text}]
+        else:
+            chunks = [{"content": say}] if say else []
+            for i, (n, a) in enumerate(calls):
+                arg = json.dumps(a, ensure_ascii=False)
+                chunks.append({"tool_calls": [{"index": i, "id": f"call_{time.time_ns()}_{i}", "type": "function",
+                                               "function": {"name": n, "arguments": arg[:4]}}]})
+                chunks.append({"tool_calls": [{"index": i, "function": {"arguments": arg[4:]}}]})
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        for c in chunks:
+            self.wfile.write(f"data: {json.dumps({'choices': [{'delta': c}]}, ensure_ascii=False)}\n\n".encode())
+            self.wfile.flush()
+            time.sleep(0.05)
+        self.wfile.write(b"data: [DONE]\n\n")
+
+    def json(self, status, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
 
 ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()

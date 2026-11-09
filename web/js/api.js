@@ -25,7 +25,14 @@ async function request(path, { method = 'GET', body, signal, raw = false } = {})
   }
 
   if (raw) {
-    if (!res.ok) throw new ApiError(`请求失败（${res.status}）`, 'http', await res.text(), res.status);
+    if (!res.ok) {
+      // 流式接口在开流之前报的错（没配模型 501、会话正忙 409）也是平台的错误结构，照样读出人话
+      const text = await res.text();
+      let e = {};
+      try { e = JSON.parse(text)?.error || {}; } catch { /* 不是 JSON：原文当 detail */ }
+      throw new ApiError(e.message || `请求失败（${res.status}）`, e.kind || 'http',
+                         e.detail || (e.message ? '' : text.slice(0, 500)), res.status);
+    }
     return res;
   }
 
@@ -63,6 +70,26 @@ function parseFrame(block) {
     }
   }
   return event ? { event, data: data || {} } : null;
+}
+
+/** POST 一个 SSE 接口，逐帧回调。出错（含开流之前的 501）照常抛 ApiError。 */
+async function streamPost(path, body, { signal, onFrame } = {}) {
+  const res = await request(path, { method: 'POST', body, signal, raw: true });
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    // SSE 以空行分帧。最后一段可能是半截，留在缓冲里等下一块。
+    const blocks = buf.split('\n\n');
+    buf = blocks.pop();
+    for (const block of blocks) {
+      const frame = parseFrame(block);
+      if (frame) onFrame?.(frame.event, frame.data);
+    }
+  }
 }
 
 export const api = {
@@ -198,25 +225,17 @@ export const api = {
    * 'http'，「没配模型」的 no_model 会在那儿丢掉，界面就没法给出「去设置」
    * 这个恰当的出口了。
    */
-  sendMessage: async (id, body, { signal, onFrame } = {}) => {
-    const res = await request(`/api/chat/conversations/${id}/messages`,
-                              { method: 'POST', body, signal, raw: true });
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      // SSE 以空行分帧。最后一段可能是半截，留在缓冲里等下一块。
-      const blocks = buf.split('\n\n');
-      buf = blocks.pop();
-      for (const block of blocks) {
-        const frame = parseFrame(block);
-        if (frame) onFrame?.(frame.event, frame.data);
-      }
-    }
-  },
+  sendMessage: (id, body, opts = {}) => streamPost(`/api/chat/conversations/${id}/messages`, body, opts),
+
+  // 智能体：发一句话 / 批完接着跑（都是 SSE）。没配模型时 501 在开流之前就回来
+  agentTools: () => get('/api/agent/tools'),
+  agentSettings: () => get('/api/agent/settings'),
+  saveAgentSettings: (patch) => post('/api/agent/settings', patch),
+  agentSessions: () => get('/api/agent/sessions'),
+  agentSession: (id) => get(`/api/agent/sessions/${encodeURIComponent(id)}`),
+  deleteAgentSession: (id) => request(`/api/agent/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  agentRun: (body, opts = {}) => streamPost('/api/agent/run', body, opts),
+  agentResume: (id, body, opts = {}) => streamPost(`/api/agent/sessions/${encodeURIComponent(id)}/resume`, body, opts),
 
   // 模型配好了没有（AI 抽屉和 ⓘ 用）
   assistStatus: () => get('/api/assist/status'),

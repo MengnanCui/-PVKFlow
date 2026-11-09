@@ -65,7 +65,7 @@ def test_an_old_workspace_is_backed_up_then_upgraded_without_losing_data(ws):
     assert {r[1] for r in conn.execute("PRAGMA table_info(key_result)")} >= {"quality_note", "quality_at"}
     # 后来加的表、视图都建出来了
     names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
-    assert {"task", "sample_set", "conversation", "key_result_current"} <= names
+    assert {"task", "sample_set", "conversation", "key_result_current", "agent_session"} <= names
     # 老数据一行没少
     assert conn.execute("SELECT name FROM sample WHERE sample_id='smp_old'").fetchone()[0] == "S1"
     assert conn.execute("SELECT COUNT(*) FROM analysis_run").fetchone()[0] == 1
