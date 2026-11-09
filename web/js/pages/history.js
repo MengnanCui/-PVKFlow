@@ -6,7 +6,7 @@
 
 import { api } from '../api.js';
 import { withInfo } from '../components/info.js';
-import { h, render, empty, fmtInt, fmtTime } from '../ui.js';
+import { h, render, empty, fmtInt, fmtTime, statusText } from '../ui.js';
 
 export const meta = {
   id: 'history',
@@ -76,7 +76,8 @@ function row(r, ctx, nPins) {
 // 没跑完的要看得出来：取消了只算了一部分、服务重启时被打断、还在跑。
 // 原来这一列不显示状态，一次只算了 3/40 就被取消的对比，看起来和跑完的一模一样。
 function runStatus(status) {
-  const label = { cancelled: '已取消 · 只有一部分', failed: '没跑完', running: '运行中' }[status];
+  const label = { cancelled: `${statusText('cancelled')} · 只有一部分`, failed: `${statusText('failed')} · 没跑完`,
+                  running: statusText('running') }[status];
   return label ? h('span.status.status-warn.small', { style: { marginLeft: '8px' } }, label) : null;
 }
 

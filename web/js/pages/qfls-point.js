@@ -2,7 +2,7 @@
 // 身份、分数怎么来的、异常、全部指标（带组内 z 和组均值）、六张图、qvdf 元数据；上一个 / 下一个走当前筛选的顺序。
 
 import { api } from '../api.js';
-import { h, render, toast } from '../ui.js';
+import { h, mount, render, toast, empty } from '../ui.js';
 import { figure } from '../components/figure.js';
 import { S, openRun, filtered, fmtMetric, unitOf, FLAG_TEXT, toggleCompare, COMPARE_MAX } from './qfls-state.js';
 import { gradeChip, limits } from './qfls-views.js';
@@ -16,10 +16,19 @@ export const meta = {
 
 export function view(host, ctx) {
   const [runId, key] = String(ctx.arg || '').split('/');
+  if (!runId || !key) {
+    mount(host, empty('没有指定样点', h('button.btn.btn-sm', { onclick: () => ctx.nav('qfls', { arg: 'rank' }) }, '去排名表挑一个')));
+    return null;
+  }
+  const alive = ctx.alive || (() => true);
   return render(host, async () => {
     if (S.runId !== runId || !S.points) await openRun(runId);
     return api.qflsPoint(runId, key);
-  }, (d) => page(ctx, runId, d));
+  }, (d) => {
+    // 标题写样点编号（和样品页、批处理页一样，标题栏说的是「现在看的是哪一个」）
+    if (alive()) document.querySelector('#pageTitle').textContent = `QFLS 样点 · ${d.point.code}`;
+    return page(ctx, runId, d);
+  });
 }
 
 const fact = (k, v) => h('div', h('div.fact-k', k), h('div.fact-v', v ?? '—'));

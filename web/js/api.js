@@ -106,18 +106,9 @@ export const api = {
     for (const f of fileList) fd.append('files', f, f.webkitRelativePath || f.name);
     return request('/api/files/upload', { method: 'POST', body: fd });
   },
-  listFiles: (params) => get('/api/files', params),
-  fileFacets: () => get('/api/files/facets'),
-  fileDetail: (id) => get(`/api/files/${id}`),
   verifyFiles: () => post('/api/files/verify'),
   namingPreview: (paths, rules) => post('/api/files/naming/preview', { paths, rules }),
 
-  // artifact 内容
-  preview: (id, rows = 400) => get(`/api/artifacts/${id}/preview`, { rows }),
-  headText: (id, lines = 60) => request(`/api/artifacts/${id}/head?lines=${lines}`, { raw: true })
-                                  .then((r) => r.text()),
-  rawUrl: (id) => `/api/artifacts/${id}/raw`,
-  thumbUrl: (id) => `/api/artifacts/${id}/thumb`,
 
   // 功能模块（同事放进 workspace/modules/ 的那些）
   modules: () => get('/api/modules'),
@@ -135,11 +126,7 @@ export const api = {
     return request('/api/modules/import', { method: 'POST', body: fd });
   },
 
-  // 一次运行的详情（参数、结果、数值表）
-  runDetail: (id) => get(`/api/runs/${id}`),
 
-  // 结果
-  results: (params) => get('/api/results', params),
   fields: () => get('/api/results/fields'),
   // 构效关系：两个字段的散点 + 相关；按批次的箱线图。filter 和数据处理页同一个筛选式
   relationPairs: (body) => post('/api/relation/pairs', body),
@@ -148,15 +135,12 @@ export const api = {
   setQuality: (id, quality, note = '') => post(`/api/results/${id}/quality`, { quality, note }),
   setQualityMany: (ids, quality, note = '') => post('/api/results/quality', { ids, quality, note }),
   sampleResults: (sampleId) => get(`/api/results/by-sample/${encodeURIComponent(sampleId)}`),
-  table: (id, limit) => get(`/api/tables/${id}`, { limit }),
-  samples: () => get('/api/samples'),
   storageStats: () => get('/api/storage/stats'),
 
   // 选择：传的是筛选式，不是 ID 列表
   selectionQuery: (body) => post('/api/selection/query', body),
-  selectionCount: (filter) => post('/api/selection/count', { filter }),
   selectionFacets: (body) => post('/api/selection/facets', body),
-  selectionIds: (filter, limit) => post('/api/selection/ids', { filter, limit }),
+  // 目前没有页面在用：给「勾了几个样品 → 建议扩成一个筛选式」留着（process-run.js 开头写了原因）
   suggestExpansion: (sampleIds, filter) =>
     post('/api/selection/suggest', { sample_ids: sampleIds, filter }),
   listSets: () => get('/api/selection/sets'),
@@ -191,8 +175,7 @@ export const api = {
   cacheStatus: () => get('/api/settings/cache'),
   clearCache: () => post('/api/settings/cache/clear'),
 
-  // 光谱矩阵
-  spectraSamples: () => get('/api/spectra/samples'),
+  // 光谱矩阵（样品页）
   spectraMeta: (id) => get(`/api/spectra/${id}/meta`),
   spectraFrames: (id, params) => get(`/api/spectra/${id}/frames`, params),
   spectraFramesBin: async (dataUrl) => {
@@ -201,8 +184,6 @@ export const api = {
   },
   heatmapUrl: (id, params) => `/api/spectra/${id}/heatmap.png?` + new URLSearchParams(
     Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')),
-  spectraCurve: (id, params) => get(`/api/spectra/${id}/curve`, params),
-  spectraThickness: (id, params) => get(`/api/spectra/${id}/thickness`, params),
 
   // AI 抽屉：会话、流式、钉住
   conversations: (q) => get('/api/chat/conversations', q),

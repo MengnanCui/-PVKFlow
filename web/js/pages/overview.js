@@ -3,7 +3,7 @@
 import { api } from '../api.js';
 import { withInfo } from '../components/info.js';
 import { fieldNameCell, unitCell } from '../components/field-cells.js';
-import { h, render, fmtInt, fmtTime, empty, sampleLabel } from '../ui.js';
+import { h, render, fmtInt, fmtTime, empty, sampleLabel, statusText, statusClass } from '../ui.js';
 
 export const meta = {
   id: 'overview',
@@ -138,10 +138,3 @@ function fieldTable(fields) {
       h('td.num.small', f.min_v === null ? '—' : Number(f.min_v).toPrecision(4)),
       h('td.num.small', f.max_v === null ? '—' : Number(f.max_v).toPrecision(4))))));
 }
-
-export const statusClass = (s) =>
-  s === 'ok' ? 'status-ok' : s === 'failed' ? 'status-danger' :
-  s === 'running' ? 'status-accent' : 'status-idle';
-
-export const statusText = (s) =>
-  ({ ok: '完成', failed: '失败', running: '进行中' }[s] || s);

@@ -13,8 +13,8 @@ import { h, toast } from './ui.js';
 // CSV 的拼法在 csv.js（不碰 DOM，node 里能直接测）
 import { seriesToCsv } from './csv.js';
 
-/** 触发一次浏览器下载。 */
-function saveBlob(blob, filename) {
+/** 触发一次浏览器下载。全平台只有这一份（QFLS 的导出也用它）。 */
+export function saveBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = h('a', { href: url, download: filename });
   document.body.appendChild(a);
@@ -141,7 +141,7 @@ export function downloadMenu({ svg, spec, imageUrl = null, csv: makeCsv = null, 
       ...items.map(([label, fn]) => h('button.ai-menu-item', {
         onclick: async () => {
           close();
-          try { await fn(); } catch (err) { toast(`下载失败：${err.message}`, 'danger'); }
+          try { await fn(); } catch (err) { toast(`下载失败：${err.message}`, 'err'); }
         },
       }, label)));
 

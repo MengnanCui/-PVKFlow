@@ -9,7 +9,7 @@
 
 import { api } from '../api.js';
 import {
-  h, mount, clear, toast, empty, skeletonRows, errorBox, fmtInt, fmtTime, sampleLabel,
+  h, mount, clear, toast, empty, skeletonRows, errorBox, fmtInt, fmtTime, sampleLabel, confirmDialog,
 } from '../ui.js';
 import { drawChart, loadCurves } from './batch-curves.js';
 import { drawRecipe, loadRecipe } from './batch-recipe.js';
@@ -188,7 +188,13 @@ function drawPins() {
               `${p.conversation_title || '已删除的对话'} · ${fmtTime(p.created_at)}`),
             h('button.ai-act', {
               onclick: async () => {
-                await api.deletePin(p.pin_id);
+                // 对话删掉之后，钉住的这段就是唯一的一份 —— 先问
+                if (!await confirmDialog('取消钉住这段分析？对话已经删掉的话，这段文字就找不回来了。',
+                  { confirmLabel: '取消钉住', danger: true })) return;
+                try {
+                  await api.deletePin(p.pin_id);
+                } catch (err) { toast(err.message, 'err'); return; }
+                if (!refs.alive()) return;
                 S.pins = S.pins.filter((x) => x.pin_id !== p.pin_id);
                 drawPins();
                 toast('已取消钉住');

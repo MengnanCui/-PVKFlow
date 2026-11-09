@@ -314,7 +314,7 @@ export function openInfo(id, { anchor = null, extra = null, spot = null } = {}) 
         const r = await api.newConversation({ topic: TOPIC(id), label: t.title }, t.title);
         S.conv = r.conversation.conversation_id;
       } catch (err) {
-        toast(err?.message || '建不了对话', 'danger');
+        toast(err?.message || '建不了对话', 'err');
         return;
       }
     }

@@ -8,7 +8,9 @@
 // **不同物镜的绝对 QFLS 和面积占比不可直接比较**（P-58）—— 总览按物镜分开画，对比时物镜不同会提示。
 
 import { api } from '../api.js';
-import { h, mount, render, empty, errorBox, toast, modal, confirmDialog, busy, fmtTime, fmtBytes, skeletonRows, latest } from '../ui.js';
+import {
+  h, mount, render, empty, errorBox, toast, modal, confirmDialog, busy, fmtTime, fmtBytes, skeletonRows, latest, statusText,
+} from '../ui.js';
 import { rowsToCsv } from '../csv.js';
 import { S, openRun, clearRun, rememberedRun, filtered, filterActive, FLAG_TEXT, download } from './qfls-state.js';
 import { overviewTab, rankTab, compareTab } from './qfls-views.js';
@@ -41,6 +43,9 @@ export function view(host, ctx) {
     const page = h('div', refs.bar = h('div'), refs.progress = h('div'), refs.body);
     drawBar();
     if (pending) resume(pending.run_id);
+    // 同一次处理已经取过了：直接画，不重新取 —— 原来每切一次标签、从样点页回来都会重取一遍，
+    // 还把筛选清空了（和「筛选在标签之间共用」的说法正相反，C070）
+    if (want && want === S.runId && S.points) { drawTabs(); return page; }
     if (want) selectRun(want);
     else if (refs.tab === 'method') drawTabs();
     else mount(refs.body, firstUse());
@@ -57,7 +62,7 @@ function drawBar() {
   },
     !runs.length ? h('option', { value: '' }, '还没有处理过') : null,
     ...runs.map((r) => h('option', { value: r.run_id, selected: r.run_id === S.runId, disabled: r.status !== 'ok' },
-      `${r.title} · ${fmtTime(r.created_at)} · ${r.status === 'ok' ? `${r.n_frames} 帧` : runStatus(r.status)}`)));
+      `${r.title} · ${fmtTime(r.created_at)} · ${r.status === 'ok' ? `${r.n_frames} 帧` : statusText(r.status)}`)));
   mount(refs.bar, h('div.qfls-bar',
     h('label.inline-field', h('span.small.muted', '处理结果'), sel),
     h('span.grow'),
@@ -69,7 +74,6 @@ function drawBar() {
     S.runId ? h('button.btn.btn-sm.btn-ghost', { onclick: removeRun, title: '只删这次处理的输出目录，不碰原始数据' }, '删除') : null));
 }
 
-const runStatus = (s) => ({ running: '处理中', failed: '失败', cancelled: '已停止' }[s] || s);
 
 async function selectRun(runId) {
   const fresh = runTicket();
@@ -110,7 +114,7 @@ function drawTabs() {
   drawTab();
 }
 
-export function refresh() {
+function refresh() {
   if (refs.tabHost?.isConnected) { drawFilter(); drawTab(); }
 }
 
@@ -201,36 +205,50 @@ async function startDemo(btn) {
     const r = await api.qflsStart({ demo: true });
     watch(r.task.task_id, r.run_id);
   } catch (err) {
-    toast(err.message, 'danger');
+    toast(err.message, 'err');
   } finally { busy(btn, false); }
 }
 
 function watch(taskId, runId) {
   refs.taskId = taskId;
   clearTimeout(polling);
+  let misses = 0;
+  const again = (ms) => { clearTimeout(polling); polling = setTimeout(tick, ms); };
   const tick = async () => {
     if (!refs.alive()) return;
     let t;
-    try { t = await api.getTask(taskId); } catch (err) { mount(refs.progress, errorBox(err)); return; }
+    try {
+      t = await api.getTask(taskId);
+      misses = 0;
+    } catch (err) {
+      // 偶尔取不到进度（服务忙）不该让界面卡死：连着失败 3 次才停，并给一个「重试」（和数据处理页的轮询一样，C070）
+      if (!refs.alive()) return;
+      if (++misses < 3) { again(1500); return; }
+      mount(refs.progress, errorBox(err, () => watch(taskId, runId), '重新查看进度'));
+      return;
+    }
     if (!refs.alive()) return;
     mount(refs.progress, h('div.progress-card.mb-4',
       h('div.row-between', h('div.strong', t.title), h('button.btn.btn-xs', {
-        disabled: t.done, onclick: () => api.cancelTask(taskId).then(tick),
+        // 只发「停止」，进度由正在跑的那条轮询接着看 —— 原来这里再 tick 一次，会多出一条轮询链（C070）
+        disabled: t.done, onclick: (e) => { busy(e.currentTarget, true); api.cancelTask(taskId).catch((err) => toast(err.message, 'err')); },
       }, '停止')),
       h('div.progress-bar', h('i', { style: { width: `${t.percent ?? 0}%` } })),
       h('div.xsmall.muted.truncate', t.message || '排队中…')));
-    if (!t.done) { polling = setTimeout(tick, 700); return; }
+    if (!t.done) { again(700); return; }
     refs.taskId = null;
     mount(refs.progress);
+    try {
+      refs.runs = (await api.qflsRuns()).runs;
+    } catch (err) { toast(err.message, 'err'); }
+    if (!refs.alive()) return;
     if (t.status === 'ok') {
       toast(`处理完了：${t.result.n_frames} 帧，${t.result.n_valid} 帧有效，${t.result.n_anomaly} 个有异常标记`, 'ok', 6000);
-      refs.runs = (await api.qflsRuns()).runs;
       selectRun(runId);
     } else {
       mount(refs.progress, h('div.notice.notice-danger.mb-4', h('div.grow',
         h('div', t.status === 'cancelled' ? '处理停了（已经做完的那部分留在输出目录里）' : '处理失败'),
         t.error ? h('pre', t.error.split('\n\n')[0]) : null)));
-      refs.runs = (await api.qflsRuns()).runs;
       drawBar();
     }
   };
@@ -254,7 +272,7 @@ async function removeRun() {
     clearRun();
     toast('删了', 'ok');
     refs.nav('qfls', { arg: refs.tab });
-  } catch (err) { toast(err.message, 'danger'); }
+  } catch (err) { toast(err.message, 'err'); }
 }
 
 /** 选数据根目录：浏览本机目录 → 扫描预览（认出了什么、跳过了什么）→ 开始处理。 */
@@ -340,7 +358,7 @@ function openProcessDialog() {
       m.close();
       watch(r.task.task_id, r.run_id);
     } catch (err) {
-      toast(err.message, 'danger');
+      toast(err.message, 'err');
       busy(startBtn, false);
     }
   }

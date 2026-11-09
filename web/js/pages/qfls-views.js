@@ -5,6 +5,8 @@ import { h, mount, empty, errorBox, skeletonRows, toast } from '../ui.js';
 import { xyChart } from '../chart.js';
 import { figure, selectControl } from '../components/figure.js';
 import { boxPlot } from '../components/relation-charts.js';
+import { downloadMenu } from '../download.js';
+import { rowsToCsv } from '../csv.js';
 import {
   S, filtered, metricDefs, FLAG_TEXT, BETTER, fmtMetric, unitOf, boxStats, toggleCompare, setCompare, COMPARE_MAX,
 } from './qfls-state.js';
@@ -18,6 +20,18 @@ export function limits(extra = null) {
     h('span.strong', '读之前：'),
     '不同物镜（20X / 100X）的绝对 QFLS 和面积占比不能直接比较 —— 比较只在同一物镜内做，或看组内 z；',
     '只有单一光强（1 sun），不做伪 JV、理想因子、PCE、FF。', extra));
+}
+
+/** 行可点：回车 / 空格打开；行里的复选框、按钮上的按键不冒泡成「打开」。 */
+export function clickableRow(open) {
+  return {
+    tabindex: 0,
+    onclick: open,
+    onkeydown: (e) => {
+      if (e.target !== e.currentTarget) return;
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+    },
+  };
 }
 
 /** 箱线图 / 表格里的数：占比用 %，eV 差值用 meV。 */
@@ -45,12 +59,18 @@ export function overviewTab(ctx) {
     const d = defs[S.metric];
     mount(boxHost, ...objs.map((o) => {
       const exps = S.summary.experiments.filter((e) => valid.some((p) => p.experiment === e.name && (p.objective || '?') === o));
+      const pts = valid.filter((p) => (p.objective || '?') === o && p[S.metric] != null);
       const groups = exps.map((e) => boxStats(`${e.code} ${e.name}`,
-        valid.filter((p) => p.experiment === e.name && (p.objective || '?') === o && p[S.metric] != null)
-          .map((p) => ({ y: p[S.metric] * mul, name: p.code, sample_id: p.key }))));
+        pts.filter((p) => p.experiment === e.name).map((p) => ({ y: p[S.metric] * mul, name: p.code, sample_id: p.key }))));
+      const yLabel = `${d.label}${unit ? ` (${unit})` : ''}`;
+      const chart = boxPlot({ groups, y_label: yLabel, x_label: '实验' },
+                            { height: 260, onPick: (pt) => ctx.openPoint(pt.sample_id) });
       return figure(`${d.label} · ${o}`, {
-        body: boxPlot({ groups, y_label: `${d.label}${unit ? ` (${unit})` : ''}`, x_label: '实验' },
-                      { height: 260, onPick: (pt) => ctx.openPoint(pt.sample_id) }),
+        head: downloadMenu({
+          svg: () => chart.querySelector('svg'), name: `QFLS_${S.metric}_${o}`,
+          csv: () => rowsToCsv(['样点', '实验', '物镜', yLabel], pts.map((p) => [p.code, p.experiment, o, p[S.metric] * mul])),
+        }),
+        body: chart,
         note: h('div.chart-caption', d.cross_objective
           ? '这个指标是相对量，不同物镜之间可以比，这里仍按物镜分开画。'
           : '绝对量：只在同一物镜内比较。', ' 点离群点打开那个样点。'),
@@ -111,11 +131,7 @@ function gradeTable(rows, ctx) {
       const sc = ps.filter((p) => p.valid).map((p) => p.score).sort((a, b) => a - b);
       const md = ps.filter((p) => p.valid).map((p) => p.median).sort((a, b) => a - b);
       const mid = (v) => (v.length ? v[Math.floor((v.length - 1) / 2)] / 2 + v[Math.ceil((v.length - 1) / 2)] / 2 : null);
-      return h('tr.is-clickable', {
-        tabindex: 0,
-        onclick: () => { S.filter.exps = new Set([exp]); S.filter.objs = new Set([obj]); ctx.refresh(); },
-        onkeydown: (e) => { if (e.key === 'Enter') e.currentTarget.click(); },
-      },
+      return h('tr.is-clickable', clickableRow(() => { S.filter.exps = new Set([exp]); S.filter.objs = new Set([obj]); ctx.refresh(); }),
         h('td', h('span.mono.xsmall.dim', code(exp) + ' '), exp), h('td', obj),
         ...GRADES.map((g) => h('td.num', String(ps.filter((p) => p.grade === g).length || ''))),
         h('td.num', String(ps.filter((p) => !p.valid).length || '')),
@@ -212,11 +228,7 @@ export function rankTab(ctx) {
                 ctx.refresh();
               },
             });
-            return h(`tr.is-clickable.lv-${p.level}`, {
-              tabindex: 0, title: '打开这个样点',
-              onclick: () => ctx.openPoint(p.key),
-              onkeydown: (e) => { if (e.key === 'Enter') ctx.openPoint(p.key); },
-            },
+            return h(`tr.is-clickable.lv-${p.level}`, { ...clickableRow(() => ctx.openPoint(p.key)), title: '打开这个样点' },
               h('td', box),
               h('td.num', p.rank ? String(p.rank) : '—', p.rank_in_objective ? h('div.xsmall.dim', `${p.objective} 内 ${p.rank_in_objective}`) : null),
               h('td.mono.small', p.code),
@@ -262,6 +274,16 @@ function colorbar(obj) {
   const stops = S.summary.colormap.map((c, i, a) => `${c} ${(100 * i) / (a.length - 1)}%`).join(', ');
   return h('div.qfls-cbar', h('span.mono.xsmall', lo.toFixed(3)),
     h('i', { style: { background: `linear-gradient(90deg, ${stops})` } }), h('span.mono.xsmall', `${hi.toFixed(3)} eV`));
+}
+
+/** 对比用的一张叠加图：带「下载 ▾」（图片 / 数据）。 */
+function overlay(title, key, spec, note = null) {
+  const chart = xyChart(spec, { height: 260 });
+  return figure(title, {
+    head: downloadMenu({ svg: () => chart.querySelector('svg'), spec: () => spec, name: `QFLS_对比_${key}` }),
+    body: chart,
+    note: note ? h('div.chart-caption', note) : null,
+  });
 }
 
 function compareBody(ctx, pts, details, objs) {
@@ -310,10 +332,11 @@ function compareBody(ctx, pts, details, objs) {
 
     h('div.section',
       h('div.qfls-grid',
-        figure('直方图（像素占比）', { body: xyChart({ series: hist, x_label: 'QFLS (eV)', y_label: '像素占比' }, { height: 260 }) }),
-        figure('水平剖面（中间 5% 行的平均）', { body: xyChart({ series: prof, x_label: allUm ? '位置 (µm)' : '位置（像素）', y_label: 'QFLS (eV)' }, { height: 260 }) }),
-        figure('变异函数', { body: xyChart({ series: vario, x_label: allUm ? '滞后 (µm)' : '滞后（像素）', y_label: 'γ (meV²)' }, { height: 260 }),
-          note: h('div.chart-caption', '横轴按各自的像素尺寸换成 µm；γ 第一次到 95% 基台的地方就是变程。') }))),
+        overlay('直方图（像素占比）', 'hist', { series: hist, x_label: 'QFLS (eV)', y_label: '像素占比' }),
+        overlay('水平剖面（中间 5% 行的平均）', 'profile',
+                { series: prof, x_label: allUm ? '位置 (µm)' : '位置（像素）', y_label: 'QFLS (eV)' }),
+        overlay('变异函数', 'variogram', { series: vario, x_label: allUm ? '滞后 (µm)' : '滞后（像素）', y_label: 'γ (meV²)' },
+                '横轴按各自的像素尺寸换成 µm；γ 第一次到 95% 基台的地方就是变程。'))),
 
     h('div.section',
       h('div.section-head', h('div.section-title', '指标对照'), h('div.section-note', '每行最好的那个加粗（只标有「好坏方向」的指标）')),

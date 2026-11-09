@@ -4,6 +4,7 @@
 // 点进一个样点再「下一个」，走的是筛出来的那串。
 
 import { api } from '../api.js';
+import { saveBlob } from '../download.js';
 
 export const S = {
   runId: null, run: null, summary: null, scan: null, points: null,
@@ -75,7 +76,6 @@ export const filterActive = () => {
 
 /** 指标定义（键 → {label, unit, cross_objective}），来自 summary.json。 */
 export const metricDefs = () => Object.fromEntries((S.summary?.metrics || []).map((m) => [m.key, m]));
-export const expName = (code) => S.summary?.experiments.find((e) => e.code === code)?.name || code;
 
 export const FLAG_TEXT = {
   invalid: '数据无效', out_of_range: '超范围像素', name_problem: '文件名不规范', meta_mismatch: '物镜与 qvdf 不符',
@@ -124,10 +124,5 @@ export function boxStats(name, items) {
 }
 
 export function download(name, text, type = 'text/csv;charset=utf-8') {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type }));
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  saveBlob(new Blob([text], { type }), name);
 }

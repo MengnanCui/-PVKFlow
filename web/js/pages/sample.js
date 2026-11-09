@@ -24,15 +24,11 @@ export const meta = {
   desc: '',
 };
 
-// 页面上有哪几个模块 = 平台自带的两个 + **所有已装的功能模块**。
+// 页面上有哪几节 = 手写的「光谱处理」+ **所有已装的功能模块**（平台自带的膜厚、特殊处理，和同事装的）+ 关键结果。
 //
-// 「特殊处理」现在就是一个功能模块（app/modules/builtin/special_processing），
-// 和同事装的模块走完全同一条路 —— 平台自己吃自己的契约。
-// 同事放一个模块进 workspace/modules/，它就出现在下面这个导航里，
-// 这个文件一个字都不用改。
-// 平台自己还手写着的只剩「光谱处理」了 —— 膜厚和特殊处理都已经是功能模块，
-// 和同事装的走完全同一条路。光谱那一格和叠加谱、时间控件耦合得深，
-// 等契约在真实使用里再站一站再迁。
+// 膜厚和特殊处理都是功能模块（app/modules/builtin/），和同事装的模块走完全同一条路 —— 平台自己吃自己的契约。
+// 同事放一个模块进 workspace/modules/，它就出现在下面这个导航里，这个文件一个字都不用改。
+// 平台自己还手写着的只剩「光谱处理」：它和叠加谱、时间控件耦合得深，等契约在真实使用里再站一站再迁。
 const CORE_MODULES = [
   { id: 'spectra', name: '光谱处理' },
 ];
@@ -458,10 +454,13 @@ async function loadModules() {
     if (!alive()) return;
   } catch (err) {
     if (!alive()) return;
-    // 取不到模块列表不该让整页空着 —— 上面两个平台模块是好的
-    mount(refs.body, ...refs.body.childNodes, errorBox(err, loadModules));
+    // 取不到模块列表不该让整页空着 —— 上面的光谱处理是好的。报错放进固定的一格：
+    // 重试成功就拿掉，再失败就换掉（原来每失败一次叠一个报错框、成功了旧的也不走，C070）
+    refs.body.querySelector(':scope > .modules-error')?.remove();
+    refs.body.appendChild(h('div.modules-error', errorBox(err, loadModules)));
     return;
   }
+  refs.body.querySelector(':scope > .modules-error')?.remove();
   // 平台自带的排前面，同事装的排后面；各自按名字排
   S.modules = mods.sort((a, b) =>
     (a.origin === b.origin ? 0 : a.origin === 'builtin' ? -1 : 1)

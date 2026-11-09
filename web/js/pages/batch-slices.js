@@ -39,7 +39,6 @@ export async function loadSlices() {
   if (!refs.sliceHost) return;
   const alive = refs.alive;
   const fresh = sliceTicket();
-  S.sliceBusy = true;
   S.sliceErr = null;
   drawSlices();
   const wins = S.win2 ? [WIN_HEAD, S.win2] : [WIN_HEAD];
@@ -60,7 +59,6 @@ export async function loadSlices() {
     S.sliceErr = err;
     S.slices = null;
   }
-  S.sliceBusy = false;
   drawSlices();
 }
 
@@ -115,7 +113,6 @@ function drawSlices() {
  * 你要在两个量级之间来回跳着读 —— 而它们本来就该各自有一条基线。
  */
 function sliceBody(d) {
-  const n = d.rows.length;
   // 柱子下面只写样品名。所有样品同批次时，标签里那截重复的 `ZG0013/` 前缀
   // 每根柱子写一遍，占掉的横向空间正是「名字被截断」的原因。
   const names = shortLabels(d.rows.map((r) => r.label));
@@ -229,11 +226,10 @@ function timeControl() {
   if (!Number.isFinite(S.tMax) || S.tMax <= WIN_SPAN) return null;
   const max = r3(S.tMax - WIN_SPAN);
   const readout = h('span.xsmall.dim', fmtWin(S.win2));
-  let pending = S.win2[0];
   return [
     numberControl('时刻起点', S.win2[0], 0, max, 0.5,
-      (v) => { pending = v; readout.textContent = fmtWin([v, r3(v + WIN_SPAN)]); },
-      (v) => { S.win2 = [v, r3(v + WIN_SPAN)]; pending = v; loadSlices(); }),
+      (v) => { readout.textContent = fmtWin([v, r3(v + WIN_SPAN)]); },
+      (v) => { S.win2 = [v, r3(v + WIN_SPAN)]; loadSlices(); }),
     h('span.row.gap-2.items-center',
       readout,
       h('span.xsmall.dim', `窗宽 ${WIN_SPAN} s · 这批数据测到 ${fmtNum(S.tMax, 2)} s`)),
@@ -284,7 +280,7 @@ function sliceTable(d, labels) {
     (b.values[0]?.mean ?? -Infinity) - (a.values[0]?.mean ?? -Infinity));
 
   return h('div.panel.panel-body.flush.mt-4',
-    h('table.table',
+    h('table.data',
       h('thead', h('tr',
         h('th', '样品'),
         ...labels.map((l) => h('th', l)),

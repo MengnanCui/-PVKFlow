@@ -272,6 +272,15 @@ export async function render(host, loader, view) {
   }
 }
 
+// ------------------------------------------------------------------ 状态
+// 任务 / 运行 / 处理的状态，全平台一份叫法（原来五个页面各写一份：失败 / 没跑完、进行中 / 运行中 / 处理中、
+// 已取消 / 已停止，C070）。后端的状态值：queued | running | ok | failed | cancelled
+export const STATUS = { queued: '排队中', running: '进行中', ok: '完成', failed: '失败', cancelled: '已停止' };
+export const statusText = (s) => STATUS[s] || s || '';
+export const statusClass = (s) =>
+  s === 'ok' ? 'status-ok' : s === 'failed' ? 'status-danger'
+    : s === 'running' || s === 'queued' ? 'status-accent' : 'status-warn';
+
 export function busy(button, on) {
   button.classList.toggle('is-busy', on);
   button.disabled = on;

@@ -36,7 +36,8 @@ const FUNCTIONS = [
     desc: '原位吸收光谱矩阵：强度热力图、干涉条纹、光学膜厚、谱斜率与波段积分' },
   { id: 'pl-pl', name: '荧光 & 荧光', ready: false, desc: '双通道荧光关联' },
   { id: 'pl-scatter', name: '荧光 & 散射', ready: false, desc: '荧光与散射同步采集' },
-  { id: 'qfls', name: 'QFLS', ready: false, desc: '准费米能级分裂' },
+  // QFLS 是一条独立的流水线（实验 / 批次 / slot / point 的目录，不走样品库），在「分析 → QFLS 成像」
+  { id: 'qfls', name: 'QFLS', ready: false, goto: 'qfls', desc: '在「QFLS 成像」页处理（独立流水线）' },
 ];
 
 const PAGE = 200;
@@ -66,7 +67,7 @@ function consumeAIFilter() {
 
 export async function view(host, ctx) {
   resetRefs({ host, nav: ctx.nav, ctx, alive: ctx.alive || (() => true) });
-  S.checked = new Set();
+  // 勾选不在这里清：从样品页回来还要在（原来每次进页面都清空，C070）。改筛选时 process-filter 会清，切功能时下面清
   stopPolling();
 
   const shell = h('div');
@@ -82,11 +83,14 @@ export async function view(host, ctx) {
 function functionTabs() {
   return h('div.fn-tabs', ...FUNCTIONS.map((f) => h('button.fn-tab', {
     'aria-selected': String(S.fn === f.id),
-    disabled: !f.ready,
-    title: f.ready ? f.desc : '规划中',
-    onclick: () => { if (f.ready) { S.fn = f.id; S.filter = {}; view(refs.host, refs.ctx); } },
-  }, h('span.fn-tab-name', f.name),
-     h('span.fn-tab-desc', f.ready ? f.desc : '规划中'))));
+    disabled: !f.ready && !f.goto,
+    title: f.ready || f.goto ? f.desc : '规划中',
+    onclick: () => {
+      if (f.goto) { refs.nav(f.goto); return; }
+      if (f.ready) { S.fn = f.id; S.filter = {}; S.checked = new Set(); view(refs.host, refs.ctx); }
+    },
+  }, h('span.fn-tab-name', f.name, f.goto ? ' →' : ''),
+     h('span.fn-tab-desc', f.ready || f.goto ? f.desc : '规划中'))));
 }
 
 function drawShell() {

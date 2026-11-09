@@ -60,6 +60,12 @@ const rec = (name, ok, detail) => { out.push({ name, ok }); console.log(`${ok ? 
   rec('筛选 + 导出', n100.includes('筛出 28 / 60') && groupRows.every((o) => o === '100X') && lines.length === +nAnom + 1
       && csv.startsWith('\ufeff') && lines.slice(1).every((l) => l.includes('100X')) && dlName.endsWith(`筛选_${nAnom}点.csv`),
       `100X 28 个、只看异常 ${nAnom} 个；CSV ${lines.length - 1} 行（${dlName}）`);
+  // 筛选在标签之间共用：切到排名再切回总览，筛选还在（原来每切一次都被清空，C070）
+  await p.click('#page-qfls .qfls-tab:has-text("排名与筛选")'); await sleep(600);
+  const keptRank = (await p.textContent('#page-qfls .qfls-filter')).includes(`筛出 ${nAnom} / 60`);
+  await p.click('#page-qfls .qfls-tab:has-text("总览")'); await sleep(600);
+  const keptBack = (await p.textContent('#page-qfls .qfls-filter')).includes(`筛出 ${nAnom} / 60`);
+  rec('切标签筛选不丢', keptRank && keptBack, `切到排名 ${keptRank}、切回总览 ${keptBack}`);
   await p.click('#page-qfls button:has-text("清空筛选")'); await sleep(300);
 
   // 4. 排名：异常整行标色、无效的排最后；点表头换排序

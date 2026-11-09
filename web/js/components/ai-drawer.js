@@ -731,5 +731,5 @@ async function probeModel() {
 }
 
 function showError(err) {
-  toast(err?.message || String(err), 'danger');
+  toast(err?.message || String(err), 'err');
 }

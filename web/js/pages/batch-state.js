@@ -17,7 +17,7 @@ export const S = {
   win2: null,            // 第二张图的窗口。要先知道数据测到哪儿才定得下来
   win2Resolved: false,   // 已经按实际时间范围定过一次默认值了
   tMax: null,            // 这批数据里最晚的一帧
-  slices: null, sliceErr: null, sliceBusy: false,
+  slices: null, sliceErr: null,
 };
 
 export const refs = {};

@@ -88,7 +88,7 @@ function recipePanel() {
         // 跳到新的一次 —— 旧的那次原样留在对比历史里
         refs.nav('batch', { arg: r.task.task_id });
       } catch (err) {
-        toast(err.message, 'danger');
+        toast(err.message, 'err');
         busy(e.target, false);
       }
     },
@@ -114,8 +114,9 @@ function recipePanel() {
 /** 重跑标题里带上最能说明这次改了什么的那个参数。 */
 function rerunTag(recipe) {
   const band = recipe.module_params?.['thickness.fringe_ot']?.band;
-  return Array.isArray(band) ? `${band[0]}–${band[1]} nm`
-                             : `${recipe.band_min}–${recipe.band_max} nm`;
+  if (Array.isArray(band)) return `${band[0]}–${band[1]} nm`;
+  // 老配方的写法；两样都没有（没装膜厚模块）就不带这一截 —— 原来会写成「undefined–undefined nm」（C070）
+  return recipe.band_min != null ? `${recipe.band_min}–${recipe.band_max} nm` : '改了参数';
 }
 
 /**

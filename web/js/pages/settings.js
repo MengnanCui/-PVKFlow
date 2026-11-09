@@ -25,7 +25,11 @@ function reloadSoon(ms) {
   }, ms);
 }
 
-export function view(host) {
+// 这一次进入页面的 signal：离开时把还在跑的批量测速一起停掉（原来离开后还会把整串模型测完，C070）
+let pageSignal = null;
+
+export function view(host, ctx = {}) {
+  pageSignal = ctx.signal || null;
   return render(host,
     () => Promise.all([api.settings(), api.models(), api.health(), api.modules()]),
     ([cfg, models, health, mods]) => h('div',
@@ -246,7 +250,7 @@ function moduleSection(mods) {
 }
 
 function moduleTable(list, status) {
-  return h('table.table',
+  return h('table.data',
     h('thead', h('tr',
       h('th', '名字'), h('th', 'id'), h('th', '版本'), h('th', '面板'),
       h('th', '批处理曲线'), h('th', '来源'), h('th', ''))),
@@ -486,6 +490,8 @@ function simpleForm(providers, presets) {
   async function probeAll(ids) {
     F.ctl = new AbortController();
     const signal = F.ctl.signal;
+    const ctl = F.ctl;
+    pageSignal?.addEventListener('abort', () => ctl.abort(), { once: true });
     for (const id of ids) F.probe.set(id, { id, pending: true });
     drawModels();
     drawProbeBtns();

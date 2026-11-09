@@ -1,7 +1,7 @@
 // 数据处理页：把选中的样品交给批处理 —— 确认对话框、排队、进度、跑完跳到对比页。
 
 import { api } from '../api.js';
-import { h, toast, busy, fmtInt, modal } from '../ui.js';
+import { h, toast, busy, fmtInt, modal, statusText } from '../ui.js';
 import { S, hooks, refs } from './process-state.js';
 
 // 「选择即示例」那个建议条删掉了：它挂在列表上方向下弹出，一出现就把
@@ -145,8 +145,6 @@ export function progressBlock() {
                    : `${fmtInt(t.n_ok)} 成功`)));
 }
 
-const statusText = (s) => ({ queued: '排队中', running: '进行中', ok: '完成',
-                             failed: '失败', cancelled: '已取消' }[s] || s);
 
 function startPolling(taskId) {
   stopPolling();
