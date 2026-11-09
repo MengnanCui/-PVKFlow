@@ -130,10 +130,6 @@ def normalize(raw: Any) -> dict:
     return out
 
 
-def is_empty(flt: dict) -> bool:
-    return not normalize(flt)
-
-
 # ------------------------------------------------------------------ 编译成 SQL
 @dataclass
 class Compiled:

@@ -454,3 +454,16 @@ def test_the_event_loop_stays_free_during_a_slow_upload(workspace, monkeypatch):
     finally:
         server.should_exit = True
         t.join(timeout=5)
+
+
+def test_wrong_method_and_bad_paging_use_the_platform_error_shape(workspace):
+    """405（Starlette 自己抛的）和分页传负数也得是 {error:{message,kind,detail}}（C069）。"""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    with TestClient(app) as c:
+        r = c.put("/api/health")
+        assert r.status_code == 405 and "请求方法" in r.json()["error"]["message"]
+        for url in ("/api/batch/runs?limit=-1", "/api/tasks?limit=0", "/api/files?offset=-5"):
+            r = c.get(url)
+            assert r.status_code == 400 and r.json()["error"]["message"], url

@@ -1,6 +1,6 @@
 """SQLite 连接、建表与设置读写。
 
-用原生 sqlite3 而不是 ORM：表不多（13 张 + 1 个视图），显式 SQL 更容易读、
+用原生 sqlite3 而不是 ORM：表不多（15 张 + 1 个视图 + 迁移记录表 schema_migration，见 docs/REFERENCE.md §5），显式 SQL 更容易读、
 也更容易在需要时整体迁到 PostgreSQL。
 """
 from __future__ import annotations

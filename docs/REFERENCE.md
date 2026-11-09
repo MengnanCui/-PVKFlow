@@ -214,7 +214,7 @@
 | 任务种类 | 执行函数 | 说明 |
 |---|---|---|
 | `batch.abs_thickness` | `app.batch.run_batch` | 任务执行体。参数：{filter, recipe, title} |
-| `qfls_process` | `app.api.qfls._task` | 一次 QFLS 处理（演示数据时先生成）。参数：{root \| demo, full, run_id, title, figures, params} |
+| `qfls_process` | `app.qfls.task.run_qfls` | 一次 QFLS 处理（演示数据时先生成）。参数：{root \| demo, full, run_id, title, figures, params} |
 
 ## 4. 智能体工具
 
@@ -282,7 +282,7 @@
 | `HTE_LLM_RETRIES` | "3" | `app/ai/gateway.py:35` |
 | `HTE_LLM_RETRY_BASE` | "1.0" | `app/ai/gateway.py:36` |
 | `HTE_LLM_TIMEOUT` | "120" | `app/ai/gateway.py:33` |
-| `HTE_NO_BROWSER` | （无） | `app/main.py:211` |
+| `HTE_NO_BROWSER` | （无） | `app/main.py:217` |
 | `HTE_PORT` | "8765" | `app/config.py:42` |
 | `HTE_WORKSPACE` | ROOT / "workspace" | `app/config.py:19` |
 

@@ -1,4 +1,4 @@
-"""API 层共用的东西：统一错误结构、分页参数。
+"""API 层共用的东西：统一错误结构、把领域异常翻译成接口错误。
 
 错误响应永远是这个形状，前端只需要写一遍处理逻辑：
 
@@ -19,12 +19,13 @@ class ApiError(HTTPException):
                          detail={"message": message, "kind": kind, "detail": detail})
 
 
-def error_response(exc: HTTPException) -> JSONResponse:
+def error_response(exc) -> JSONResponse:
     d = exc.detail
     if isinstance(d, dict) and "message" in d:
         payload = d
-    else:
-        payload = {"message": str(d), "kind": "error", "detail": ""}
+    else:   # Starlette 自己抛的（405 等）：detail 是英文短语，换成人话，原文留在 detail 里
+        human = {405: "这个接口不接受这种请求方法（GET / POST / DELETE 用错了）", 404: "没有这个接口"}
+        payload = {"message": human.get(exc.status_code, str(d)), "kind": "http", "detail": str(d)}
     return JSONResponse(status_code=exc.status_code, content={"error": payload})
 
 

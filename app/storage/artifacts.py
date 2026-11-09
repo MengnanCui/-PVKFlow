@@ -45,39 +45,6 @@ def local_path(artifact_id: str) -> Path:
     return p
 
 
-def register_derived(
-    analysis_run_id: str,
-    name: str,
-    data: bytes,
-    mime: str = "image/svg+xml",
-    sample_id: str | None = None,
-) -> dict:
-    """登记 skill 产出的派生文件（图等）。"""
-    import hashlib
-
-    config.ensure_dirs()
-    sha = hashlib.sha256(data).hexdigest()
-    ext = {"image/svg+xml": ".svg", "image/png": ".png", "image/jpeg": ".jpg",
-           "text/plain": ".txt", "application/json": ".json"}.get(mime, ".bin")
-    rel = Path("derived") / "figures" / f"{sha}{ext}"
-    target = config.WORKSPACE / rel
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if not target.exists():
-        target.write_bytes(data)
-
-    aid = db.new_id("art")
-    with db.tx() as c:
-        c.execute(
-            "INSERT INTO artifact(artifact_id, kind, storage_mode, sha256, original_path,"
-            " display_path, stored_path, filename, ext, mime, size, status, meta_json,"
-            " sample_id, produced_by, created_at)"
-            " VALUES(?,'derived','copied',?,NULL,?,?,?,?,?,?, 'ok','{}',?,?,?)",
-            (aid, sha, name, rel.as_posix(), name, ext, mime, len(data),
-             sample_id, analysis_run_id, db.now()),
-        )
-    return {"artifact_id": aid, "name": name, "mime": mime, "path": rel.as_posix()}
-
-
 def search(
     q: str = "",
     kind: str = "raw",

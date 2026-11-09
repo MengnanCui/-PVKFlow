@@ -125,7 +125,7 @@ def upload(files: list[UploadFile] = File(...)) -> dict:
 def list_files(
     q: str = "", sample_id: str | None = None, batch_id: str | None = None,
     ext: str | None = None, status: str | None = None,
-    limit: int = Query(200, le=1000), offset: int = 0,
+    limit: int = Query(200, ge=1, le=1000), offset: int = Query(0, ge=0),
 ) -> dict:
     return artifacts.search(q=q, sample_id=sample_id, batch_id=batch_id, ext=ext,
                             status=status, limit=limit, offset=offset)

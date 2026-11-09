@@ -196,7 +196,7 @@ def resolve(provider_name: str | None = None, model: str | None = None):
     """按「设置里选的 → 配置里第一个」的顺序找一个可用 provider。
 
     返回 (provider, model_id)。找不到就抛 ProviderUnavailable，
-    调用方负责退回规则引擎。
+    调用方负责说清「没配模型」（接口回 501）。
     """
     from app.storage import db
 

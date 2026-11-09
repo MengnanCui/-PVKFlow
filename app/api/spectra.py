@@ -52,8 +52,12 @@ def _load(artifact_id: str) -> matrix.SpectralMatrix:
     if not row:
         raise ApiError(f"文件不存在：{artifact_id}", 404, "not_found")
     path = guard(artifacts.local_path, artifact_id)
+    # 只有复制进工作区的（只读副本，内容不会变）才信库里记的 sha；原地引用的文件可能被仪器软件改过，
+    # 得现算 —— 不然样品页拿到旧缓存、批处理算的是新内容，两边对不上（体检发现，C069）。
+    # 批处理那边（app/batch.py）一律现算，口径和这里的引用型一致。
+    known = row.get("sha256") if row.get("storage_mode") == "copied" else None
     try:
-        return matrix.load_cached(path, row.get("sha256"))
+        return matrix.load_cached(path, known)
     except ValueError as exc:
         raise ApiError(str(exc), 400, "not_a_matrix") from exc
     except Exception as exc:
@@ -345,7 +349,7 @@ def samples() -> dict:
     """带光谱矩阵的样品清单 —— 「吸收光谱 & 膜厚」的入口列表。
 
     判断一个文件是不是光谱矩阵只读文件头（列数 ≥ 8），不整个解析。
-    判断结果缓存进 artifact.meta_json，第二次就不用再看文件了。
+    判断结果存在 artifact.is_matrix 列里（导入时判一次，老数据第一次列出时惰性补判），第二次就不用再看文件了。
     """
     import json as _json
 

@@ -30,7 +30,7 @@ def overview() -> dict:
 @router.get("/results")
 def list_results(
     field: str | None = None, sample_id: str | None = None, quality: str | None = None,
-    limit: int = Query(200, le=2000), offset: int = 0, history: bool = False,
+    limit: int = Query(200, ge=1, le=2000), offset: int = Query(0, ge=0), history: bool = False,
 ) -> dict:
     """默认每个 (样品, 字段) 只给当前值；`?history=true` 给全部历史。"""
     return results.query_results(field, sample_id, quality, limit, offset, history)
@@ -68,12 +68,12 @@ def run_detail(run_id: str) -> dict:
 
 
 @router.get("/tables/{table_id}")
-def table(table_id: str, limit: int = Query(2000, le=50000)) -> dict:
+def table(table_id: str, limit: int = Query(2000, ge=1, le=50000)) -> dict:
     return guard(tabular.read_table, table_id, limit)
 
 
 @router.get("/samples")
-def samples(limit: int = Query(500, le=5000)) -> dict:
+def samples(limit: int = Query(500, ge=1, le=5000)) -> dict:
     return {"samples": db.query(
         "SELECT s.*,"
         " (SELECT COUNT(*) FROM artifact a WHERE a.sample_id = s.sample_id) AS n_files,"

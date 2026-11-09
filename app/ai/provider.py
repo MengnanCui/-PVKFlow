@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Iterator, Protocol
 
 
 class ProviderUnavailable(RuntimeError):
-    """没有可用模型。调用方应该退回规则引擎，而不是把错误抛给用户。"""
+    """没有可用模型。调用方应该说清「先去设置里配模型」（接口回 501），而不是把原始错误抛给用户。"""
 
 
 @dataclass
@@ -36,12 +36,17 @@ class ChatResult:
 
 
 class AIProvider(Protocol):
+    """一个模型服务要长成什么样（现在唯一的实现是 openai_compat.OpenAICompatProvider，两种协议都走它；
+    请求的细节在 gateway.py）。要接一个完全不同的服务，实现这几个方法即可。"""
     name: str
 
     def available(self) -> bool: ...
 
     def chat(self, messages: list[ChatMessage], *, model: str | None = None,
              temperature: float = 0.2, max_tokens: int | None = None) -> ChatResult: ...
+
+    def chat_stream(self, messages: list[ChatMessage], *, model: str | None = None,
+                    temperature: float = 0.2, max_tokens: int | None = None) -> Iterator[str]: ...
 
 
 class NullProvider:

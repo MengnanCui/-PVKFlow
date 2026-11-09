@@ -317,3 +317,35 @@ def test_demo_known_answers_are_all_found(workspace, tmp_path):
             pair.setdefault((p["experiment"], p["batch"], p["slot_no"], p["point_no"]), {})[p["objective"]] = p["median"]
     d = [v["100X"] - v["20X"] for v in pair.values() if len(v) == 2]
     assert len(d) >= 10 and abs(np.mean(d) + 0.024) < 0.002           # 造的物镜差是 −24 meV
+
+
+# ------------------------------------------------------------------ 体检修的（C069）
+def test_param_overrides_are_validated_and_deep_merged():
+    P = pipeline.merge_params({"score": {"scratch": {"per": 5}}, "low_abs_ev": 1.12})
+    assert P["score"]["scratch"] == {"max": 20, "per": 5}            # 只改一项，其余照旧
+    assert P["score"]["spread"]["max"] == 25 and P["low_abs_ev"] == 1.12
+    for bad, msg in (({"valid_range_ev": 5}, "2 个数的列表"), ({"nope": 1}, "没有这个参数"),
+                     ({"score": {"spread": {"oops": 1}}}, "score.spread.oops"), ({"sigma_k": "2"}, "应该是数字"),
+                     ({"score": 3}, "一组键值")):
+        with pytest.raises(ValueError, match=msg):
+            pipeline.merge_params(bad)
+
+
+def test_interrupted_runs_are_reaped_and_ids_do_not_collide(workspace, tmp_path):
+    d = pipeline.runs_dir() / "qr_x"
+    d.mkdir(parents=True)
+    (d / "run.json").write_text('{"run_id": "qr_x", "status": "running"}', encoding="utf-8")
+    assert pipeline.reap_interrupted() == 1
+    assert pipeline.load("qr_x", "run.json")["status"] == "failed"
+    assert len({pipeline.new_run_id() for _ in range(200)}) == 200
+
+
+def test_api_rejects_bad_params_and_reads_string_flags(workspace, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.api import qfls as qapi
+    from app.main import app
+    assert qapi._flag("false") is False and qapi._flag("0") is False and qapi._flag("yes") is True
+    with TestClient(app) as c:
+        r = c.post("/api/qfls/runs", json={"demo": True, "params": {"valid_range_ev": 5}})
+        assert r.status_code == 400 and "列表" in r.json()["error"]["message"]

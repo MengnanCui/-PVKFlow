@@ -13,7 +13,8 @@
   · 平台的库：样品、关键结果、样品集
   · 文件：只在「能碰的文件夹」名单里（app/agent/files.py）；写之前备份、可撤销，所以算 write 不算 irreversible
   · 批处理与后台任务：提交一次批处理（会给每个样品写一套新结果）、看进度 / 等它跑完、停下来
-**不跑任意命令**（没有 shell）。参数校验在这里做：模型给的参数不可信。
+  · 跑命令（P-52）：只在专用目录 workspace/agent/ 里跑，危险命令每次问（app/agent/commands.py）
+参数校验在这里做：模型给的参数不可信。
 """
 from __future__ import annotations
 
@@ -30,7 +31,9 @@ from app.storage import db
 
 READ, WRITE, IRREVERSIBLE = "read", "write", "irreversible"
 
-# 回路在派发工具前填：这一轮属于哪个会话、用户有没有点「停止」（等任务时每秒看一眼）
+# 这一次工具调用属于哪个会话、用户有没有点「停止」（等任务、跑命令时每秒看一眼）。
+# **只在 dispatch() 里、同一个线程上设置和清掉**：回路是个流式生成器，每一步可能在线程池的不同线程上跑，
+# 在回路开头设一次的话，派发工具时可能已经换了线程 —— 读到空值或者别的会话留下的旧值（体检发现，C069）。
 _ctx = threading.local()
 
 
@@ -727,8 +730,25 @@ def _clip(text: str) -> str:
     return text[:TOOL_MAX_CHARS] + f"\n…（结果太长，只给了前 {TOOL_MAX_CHARS} 字。缩小范围再查；没看到的不要当作看到了）"
 
 
-def dispatch(name: str, args: Any) -> dict:
-    """执行一个调用。永不抛异常 —— 出错也变成一段模型看得懂的结果，让它自己改。"""
+def dispatch(name: str, args: Any, *, session_id: str | None = None,
+             should_stop: Callable[[], bool] | None = None) -> dict:
+    """执行一个调用。永不抛异常 —— 出错也变成一段模型看得懂的结果，让它自己改。
+
+    session_id / should_stop：这次调用的上下文，在本线程里设好、调用完恢复原样（见 _ctx 的说明）。
+    不给就沿用当前线程上已有的（测试里直接设 _ctx 的写法照样能用）。
+    """
+    saved = (getattr(_ctx, "session_id", None), getattr(_ctx, "should_stop", None))
+    if session_id is not None:
+        _ctx.session_id = session_id
+    if should_stop is not None:
+        _ctx.should_stop = should_stop
+    try:
+        return _dispatch(name, args)
+    finally:
+        _ctx.session_id, _ctx.should_stop = saved
+
+
+def _dispatch(name: str, args: Any) -> dict:
     t0 = time.perf_counter()
     tool = BY_NAME.get(name)
     if not tool:

@@ -237,6 +237,12 @@ def test_missing_conversation_is_404_not_500(client):
 
 
 def test_pin_roundtrip_through_the_api(client):
+    from app.storage import db
+    with db.tx() as c:
+        c.execute("INSERT INTO analysis_run(analysis_run_id, skill_id, skill_version, status, started_at)"
+                  " VALUES('run_1', 'batch.abs_thickness', '1', 'ok', ?)", (db.now(),))
+    # 钉到不存在的对比上会被拒（原来能钉，留下孤儿，C069）
+    assert client.post("/api/chat/pins", json={"analysis_run_id": "run_nope", "note": "x"}).status_code == 404
     r = client.post("/api/chat/pins",
                     json={"analysis_run_id": "run_1", "note": "积分比偏低"})
     assert r.status_code == 200

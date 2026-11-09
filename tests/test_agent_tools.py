@@ -269,3 +269,23 @@ def test_api_roots_and_ui_rollback(workspace, tmp_path):
         assert not (data / "n.txt").exists()
         sid = sessions.create()
         assert c.post(f"/api/agent/sessions/{sid}/stop").json() == {"ok": True, "running": False}
+
+
+def test_dispatch_carries_its_own_session_on_any_thread(workspace):
+    """回路是流式生成器，每一步可能换线程：上下文必须跟着这一次调用走，不能靠回路开头设一次（C069）。"""
+    import threading
+
+    from app.agent import files
+
+    out = {}
+
+    def worker():
+        out["r"] = tools.dispatch("write_file", {"path": "agent/t.md", "content": "x"}, session_id="ses_A")
+        out["after"] = tools.session_id()
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+    assert out["r"]["ok"] and out["after"] is None              # 调完就清掉，不留给这个线程的下一次
+    assert [c["path"].endswith("t.md") for c in files.changes(session_id="ses_A")] == [True]
+    assert tools.session_id() is None                            # 主线程上什么也没留下

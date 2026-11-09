@@ -209,8 +209,10 @@ def execute_prompt(text: str, plan: dict) -> str:
 def run(session_id: str, *, provider, model: str, prompt: str | None = None,
         resume: dict | None = None, permission: str = "ask", mode: str = "auto",
         run_mode: str = "exec", approved_plan: dict | None = None) -> Iterator[dict]:
-    """run_mode：exec = 直接执行；plan = 先调研、交计划，批准后再执行（approved_plan 带着批准的那份计划）。"""
-    """跑一轮（新的一句话，或者批完接着跑）。逐个产出事件；结束时（包括你点了停止）把会话存回去。"""
+    """跑一轮（新的一句话，或者批完接着跑）。逐个产出事件；结束时（包括你点了停止）把会话存回去。
+
+    run_mode：exec = 直接执行；plan = 先调研、交计划，批准后再执行（approved_plan 带着批准的那份计划）。
+    """
     s = sessions.get(session_id)
     messages: list[dict] = s["messages"]
     events: list[dict] = s["events"]
@@ -231,12 +233,10 @@ def run(session_id: str, *, provider, model: str, prompt: str | None = None,
             events.append({**e, "at": datetime.now().isoformat(timespec="seconds")})
         return e
 
-    tools._ctx.session_id = session_id
-    tools._ctx.should_stop = lambda: session_id in _stop
     _stop.discard(session_id)
 
     def call_tool(c: dict) -> Iterator[dict]:
-        r = tools.dispatch(c["name"], c["args"])
+        r = tools.dispatch(c["name"], c["args"], session_id=session_id, should_stop=lambda: session_id in _stop)
         messages.append({"role": "tool", "call_id": c["id"], "name": c["name"], "content": r["content"]})
         yield emit({"type": "tool_result", "id": c["id"], "name": c["name"], "ok": r["ok"], "ms": r["ms"],
                     "summary": _summary(r["content"]), "detail": r["content"][:DETAIL_CHARS]})
@@ -391,7 +391,6 @@ def run(session_id: str, *, provider, model: str, prompt: str | None = None,
     finally:
         cancel.set()
         _stop.discard(session_id)
-        tools._ctx.should_stop = None
         if not finished:
             # 你点了停止 / 关了页面：生成器在某个 yield 那儿被关掉。这里不能再 yield，只把状态存好
             events.append({"type": "done", "reason": "canceled", "turns": turns, "model": model,

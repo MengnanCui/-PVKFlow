@@ -16,6 +16,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import secrets
 import shutil
 import time
 from collections import Counter, defaultdict
@@ -25,7 +26,7 @@ from typing import Callable
 
 import numpy as np
 
-from app import config
+from app import config, tasks
 from app.qfls import frame as F
 from app.qfls import metrics as M
 from app.qfls import render as R
@@ -65,7 +66,55 @@ def _clean(v):
 
 
 def new_run_id() -> str:
-    return "qr_" + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + format(int(time.time() * 1e6) % 4096, "03x")
+    """qr_日期_时间_6 位随机 hex：按时间排得出先后，同一秒提交两次也撞不上（原来只有 3 位，C069）。"""
+    return "qr_" + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + secrets.token_hex(3)
+
+
+def merge_params(overrides: dict | None) -> dict:
+    """平台默认阈值 + 这一次的覆盖。键要认识、类型和形状要对上（数字 / 列表长度 / 嵌套字典）；
+    嵌套的（score、grades）做**深合并** —— 只改一项扣分不会把整张扣分表换掉。不合法就 ValueError（接口回 400）。
+
+    原来只核对键名：valid_range_ev=5 这种会让每一帧都「处理出错」、却报一个 ok（体检发现，C069）。
+    """
+    P = json.loads(json.dumps(M.PARAMS))
+
+    def merge(base, new, path):
+        if isinstance(base, dict):
+            if not isinstance(new, dict):
+                raise ValueError(f"参数 {path} 应该是一组键值（像 {json.dumps(base, ensure_ascii=False)[:60]}…）")
+            for k, v in new.items():
+                if k not in base:
+                    raise ValueError(f"没有这个参数：{path}.{k}" if path else f"没有这个参数：{k}")
+                base[k] = merge(base[k], v, f"{path}.{k}" if path else k)
+            return base
+        if isinstance(base, list):
+            if not isinstance(new, list) or len(new) != len(base) or not all(
+                    isinstance(x, (int, float)) and not isinstance(x, bool) for x in new):
+                raise ValueError(f"参数 {path} 应该是 {len(base)} 个数的列表，比如 {base}")
+            return new
+        if isinstance(base, bool) or not isinstance(base, (int, float)):
+            return new
+        if isinstance(new, bool) or not isinstance(new, (int, float)) or not math.isfinite(new):
+            raise ValueError(f"参数 {path} 应该是数字，给的是 {new!r}")
+        return int(new) if isinstance(base, int) and float(new).is_integer() else float(new)
+
+    return merge(P, overrides or {}, "")
+
+
+def reap_interrupted() -> int:
+    """服务重启时把上次没跑完的处理标成失败（原来 run.json 永远停在「处理中」、也删不掉，C069）。"""
+    n = 0
+    d = runs_dir()
+    if not d.is_dir():
+        return 0
+    for p in d.iterdir():
+        r = _read(p / "run.json") if p.is_dir() else None
+        if r and r.get("status") == "running":
+            r.update(status="failed", error="服务重启，这次处理被中断；已经做完的部分留在目录里，要完整结果请重新处理",
+                     finished_at=datetime.now().isoformat(timespec="seconds"))
+            _dump(p / "run.json", r)
+            n += 1
+    return n
 
 
 def check_root(root: str) -> Path:
@@ -267,16 +316,21 @@ def write_csv(path: Path, rows: list[dict]) -> None:
 def process(root: str | Path, *, run_id: str | None = None, params: dict | None = None, figures: bool = True,
             title: str = "", progress: Callable[[int, int, str], None] | None = None) -> dict:
     root = check_root(str(root))
-    P = json.loads(json.dumps(M.PARAMS))
-    for k, v in (params or {}).items():
-        if k not in P:
-            raise ValueError(f"没有这个参数：{k}")
-        P[k] = v
+    P = merge_params(params)
     run_id = run_id or new_run_id()
     out = runs_dir() / run_id
-    (out / "points").mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=False)           # 撞号就报错，不把两次处理并进一个目录
+    (out / "points").mkdir()
+    note = None
+    if figures:
+        try:
+            import matplotlib  # noqa: F401
+        except ImportError:   # 出图要 matplotlib；没装的话照样算指标，只是不出图，并说出来
+            figures, note = False, "这台电脑没装 matplotlib，这次只算了指标、没出图（装上后重新处理即可）"
     run = {"run_id": run_id, "title": title or root.name, "root": str(root), "status": "running",
            "created_at": datetime.now().isoformat(timespec="seconds"), "figures": figures, "params": P}
+    if note:
+        run["note"] = note
     _dump(out / "run.json", run)
     t0 = time.monotonic()
     try:
@@ -348,7 +402,7 @@ def process(root: str | Path, *, run_id: str | None = None, params: dict | None 
             progress(n, n, "完成")
         return run
     except BaseException as exc:
-        run.update(status="cancelled" if type(exc).__name__ == "Cancelled" else "failed", error=str(exc)[:2000],
+        run.update(status="cancelled" if isinstance(exc, tasks.Cancelled) else "failed", error=str(exc)[:2000],
                    finished_at=datetime.now().isoformat(timespec="seconds"))
         raise
     finally:

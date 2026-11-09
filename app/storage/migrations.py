@@ -131,8 +131,11 @@ def backup(conn: sqlite3.Connection, from_version: int) -> Path:
     d.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     dest = d / f"hte.db.v{from_version}-{stamp}.bak"
-    with sqlite3.connect(dest) as out:
+    out = sqlite3.connect(dest)
+    try:
         conn.backup(out)
+    finally:
+        out.close()          # `with sqlite3.connect()` 只提交不关闭 —— Windows 上开着的备份文件以后删不掉
     return dest
 
 

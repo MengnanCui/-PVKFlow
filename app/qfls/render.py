@@ -4,11 +4,12 @@
 图里的文字一律英文 + 编号（E1、E2……）：服务器上不一定有中文字体，中文会变成方框；
 编号和实验名的对照写在 summary.json 和网页上。
 
-matplotlib 用面向对象的 Figure + Agg，不碰 pyplot 的全局状态。
+matplotlib 用面向对象的 Figure + Agg，不碰 pyplot；样式靠 rc_context（会改全局 rcParams），所以出图整段在 _RC_LOCK 里。
 """
 from __future__ import annotations
 
 import math
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,9 @@ RC = {
 }
 DPI = 110
 CMAP = "viridis"
+# rc_context 改的是进程全局的 rcParams：同时有两处在画（以后任务并行、或同事模块的 compute 也用 matplotlib）
+# 就会串样式。画图的整段都在这把锁里（体检发现，C069）
+_RC_LOCK = threading.Lock()
 
 
 def _mpl():
@@ -76,7 +80,7 @@ def point_figures(out: Path, arr: np.ndarray, m: dict, extra: dict, title: str) 
     ext, (xl, yl) = _extent(arr.shape, 1, um)
     lo, hi = m["p1"], m["p99"]
     made = []
-    with matplotlib.rc_context(RC):
+    with _RC_LOCK, matplotlib.rc_context(RC):
         # 热图
         fig = Figure(figsize=(6, 4))
         ax = fig.add_subplot()
@@ -220,7 +224,7 @@ def global_figures(out: Path, rows: list[dict], codes: dict[str, str]) -> list[s
     lab = [f"{codes[e]}·{o}" for e, o in groups]
     keys = [("median", "Median QFLS (eV)"), ("p90_p10", "P90 − P10 (eV)"), ("low_2s_frac", "Low < med−2σ (frac)"),
             ("morans_i", "Moran's I"), ("variogram_range_px", "Variogram range (px)"), ("score", "Quality score")]
-    with matplotlib.rc_context(RC):
+    with _RC_LOCK, matplotlib.rc_context(RC):
         fig = Figure(figsize=(14, 8))
         for i, (k, yl) in enumerate(keys):
             ax = fig.add_subplot(2, 3, i + 1)

@@ -10,10 +10,11 @@ import threading
 import webbrowser
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import config, security
 from app.api import (agent, artifacts, assist, batch, chat, files, qfls, relation, results, selection,
@@ -42,6 +43,9 @@ async def lifespan(app: FastAPI):
     reaped = task_queue.reap_interrupted()
     if reaped:
         log.warning("有 %d 个任务因为上次重启被中断，已标记", reaped)
+    from app.qfls import pipeline as qfls_pipeline
+    if n := qfls_pipeline.reap_interrupted():
+        log.warning("有 %d 次 QFLS 处理因为上次重启被中断，已标记", n)
     # 旧的 Skill 机制已经退役（2026-11）。工作区里还留着同事写的 skill 时要说出来，
     # 不能让它们悄悄不生效 —— 设置页上也有同一条提示。
     legacy = legacy_skills()
@@ -77,8 +81,10 @@ for router in (files.router, results.router, artifacts.router,
     app.include_router(router)
 
 
-@app.exception_handler(HTTPException)
-async def http_error(_: Request, exc: HTTPException):
+# 注册在 Starlette 的 HTTPException 上（FastAPI 的是它的子类）：方法不对（405）这类由 Starlette 自己抛的错误
+# 原来漏网，返回的是 {"detail": "Method Not Allowed"}，不是平台的错误结构（体检发现，C069）
+@app.exception_handler(StarletteHTTPException)
+async def http_error(_: Request, exc: StarletteHTTPException):
     return error_response(exc)
 
 

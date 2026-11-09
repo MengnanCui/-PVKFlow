@@ -5,7 +5,7 @@
 
 单机单用户，不需要 Celery/Redis 那一套 —— 一个线程池 + 一张表就够，
 而且任务状态落在 SQLite 里，服务重启后还能看到上次跑到哪儿了
-（重启时正在跑的会被标成 interrupted，不会永远挂在 running）。
+（重启时正在跑的会被标成 failed 并写明「服务重启，任务被中断」，不会永远挂在 running）。
 """
 from __future__ import annotations
 

@@ -28,6 +28,10 @@ openpyxl==3.1.5          # xlsx 解析
 Pillow==13.0.0           # 图像元信息与缩略图
 
 httpx==0.28.1            # OpenAI 兼容模型调用
+# QFLS 成像每个样点出热图 / 直方图 / 剖面 / 异常图（P-56）。约 30 MB（含 contourpy、fonttools、kiwisolver）。
+# 原来只在 requirements-dev.txt 里 —— 同事机器上双击 run.bat 装不到它，QFLS 出图会全部失败（体检发现，C069）。
+# 3.11 – 3.15 都有 Windows wheel（CI 的 Windows 3.11 / 3.15 一直在装它）。没装时 QFLS 照样算指标、只是不出图。
+matplotlib==3.11.2
 
 # ── 装了会更好、不装也不影响的 ─────────────────────────────────────
 # pyarrow：批处理长表用 Parquet 而不是 CSV。

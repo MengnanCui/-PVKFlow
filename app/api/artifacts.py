@@ -34,7 +34,7 @@ def thumb(artifact_id: str):
 
 
 @router.get("/{artifact_id}/head")
-def head(artifact_id: str, lines: int = Query(60, le=500)) -> PlainTextResponse:
+def head(artifact_id: str, lines: int = Query(60, ge=1, le=500)) -> PlainTextResponse:
     """看文件前几行 —— 判断分隔符/抬头对不对时最直接的办法。"""
     path = guard(artifacts.local_path, artifact_id)
     try:
@@ -45,7 +45,7 @@ def head(artifact_id: str, lines: int = Query(60, le=500)) -> PlainTextResponse:
 
 
 @router.get("/{artifact_id}/preview")
-def preview(artifact_id: str, rows: int = Query(200, le=5000)) -> dict:
+def preview(artifact_id: str, rows: int = Query(200, ge=1, le=5000)) -> dict:
     """把文件解析成表格预览。前端表格与图表都吃这个。"""
     path = guard(artifacts.local_path, artifact_id)
     row = artifacts.get(artifact_id) or {}

@@ -1,7 +1,6 @@
 """QFLS 成像接口（P-54）。处理走后台任务；结果全是输出目录里的文件，这里只读出来。"""
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Body
@@ -9,30 +8,21 @@ from fastapi.responses import FileResponse
 
 from app import tasks
 from app.api.common import ApiError, guard
-from app.qfls import demo, pipeline, scan
+from app.qfls import pipeline, scan
 from app.qfls import metrics as M
+from app.qfls.task import KIND
 
 router = APIRouter(prefix="/api/qfls", tags=["qfls"])
-KIND = "qfls_process"
 _SERVE = {".png": "image/png", ".csv": "text/csv; charset=utf-8", ".json": "application/json",
           ".md": "text/markdown; charset=utf-8"}
 
 
-@tasks.register(KIND)
-def _task(ctx: tasks.TaskContext) -> dict:
-    """一次 QFLS 处理（演示数据时先生成）。参数：{root | demo, full, run_id, title, figures, params}"""
-    p = ctx.params
-    root = p.get("root")
-    if p.get("demo"):
-        root = str(pipeline.demo_dir())
-        if Path(root).exists():          # 演示数据是平台自己生成的，重新生成前清掉旧的
-            shutil.rmtree(root)
-        demo.generate(root, full=bool(p.get("full")),
-                      progress=lambda i, n: ctx.progress(i, n, f"生成演示数据 {i} / {n}"))
-    run = pipeline.process(root, run_id=p["run_id"], figures=p.get("figures", True), title=p.get("title", ""),
-                           params=p.get("params") or None, progress=ctx.progress)
-    return {"run_id": run["run_id"], "n_frames": run.get("n_frames"), "n_valid": run.get("n_valid"),
-            "n_anomaly": run.get("n_anomaly")}
+
+def _flag(v) -> bool:
+    """JSON 里的 true / false；也认 "false" / "0" 这种字符串（原来字符串 "false" 被当成真，C069）。"""
+    if isinstance(v, str):
+        return v.strip().lower() not in ("", "0", "false", "no", "off")
+    return bool(v)
 
 
 @router.get("/method")
@@ -67,13 +57,11 @@ def start(payload: dict = Body(...)) -> dict:
     if not is_demo:
         guard(pipeline.check_root, payload.get("root", ""))
     params = payload.get("params") or {}
-    bad = [k for k in params if k not in M.PARAMS]
-    if bad:
-        raise ApiError(f"没有这些参数：{', '.join(bad)}")
+    guard(pipeline.merge_params, params)          # 键、类型、形状不对直接 400，不等跑完才发现每帧都出错
     run_id = pipeline.new_run_id()
     title = payload.get("title") or ("演示数据（假想）" if is_demo else Path(payload["root"]).name)
     task = tasks.submit(KIND, {"root": payload.get("root"), "demo": is_demo, "full": bool(payload.get("full")),
-                               "run_id": run_id, "title": title, "figures": payload.get("figures", True),
+                               "run_id": run_id, "title": title, "figures": _flag(payload.get("figures", True)),
                                "params": params}, title=f"QFLS：{title}")
     return {"run_id": run_id, "task": task}
 

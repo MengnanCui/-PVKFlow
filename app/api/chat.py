@@ -1,7 +1,7 @@
 """AI 抽屉的后端：会话、流式回答、结构化动作卡片、钉住。
 
-跟 `app/api/assist.py` 的分工：assist 是单文件页里那个「规则引擎 + 一问一答」
-的小面板，无状态；这里是右侧抽屉，有历史、有数据范围、有能落到界面上的动作。
+跟 `app/api/assist.py` 的分工：assist 只剩「模型配好了没有」的状态接口；
+这里是右侧抽屉，有历史、有数据范围、有能落到界面上的动作。
 
 三件值得单独说的事：
 
@@ -361,6 +361,10 @@ def create_pin(payload: dict = Body(...)) -> dict:
         raise ApiError("请选择要钉到哪一次对比", 400)
     if not note:
         raise ApiError("空的分析没什么好钉的", 400)
+    from app.storage import db
+    if not db.query_one("SELECT 1 FROM analysis_run WHERE analysis_run_id=?", (run_id,)):
+        # ai_pin 没有外键：原来能钉到一次不存在的对比上，留下一条永远显示不出来的孤儿（体检发现，C069）
+        raise ApiError(f"没有这次对比：{run_id}", 404, "not_found")
     pid = conversations.pin(run_id, payload.get("conversation_id"),
                             payload.get("message_id"), note)
     return {"pin_id": pid, "pins": conversations.pins_for(run_id)}
@@ -389,7 +393,7 @@ def _resolve_or_501(provider_name: str | None, model: str | None):
 
 
 def _clean_scope(raw) -> dict:
-    """范围只留三个键，filter 走 selection 自己的校验。
+    """范围只留认识的几个键（mode、filter、label、topic、run_id），filter 走 selection 自己的校验。
 
     这里不接受 ID 列表以外的任何自由结构 —— 范围一旦能塞进任意 json，
     以后就会有人往里塞快照，然后历史对话点开是一批不存在的样品。

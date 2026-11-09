@@ -51,7 +51,7 @@ def preview(payload: dict = Body(default={})) -> dict:
 
 
 @router.get("/runs")
-def runs(limit: int = Query(20, le=100)) -> dict:
+def runs(limit: int = Query(20, ge=1, le=100)) -> dict:
     return {"runs": batch_mod.recent_batches(limit)}
 
 
@@ -384,7 +384,7 @@ tasks_router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
 @tasks_router.get("")
-def list_tasks(limit: int = Query(20, le=100)) -> dict:
+def list_tasks(limit: int = Query(20, ge=1, le=100)) -> dict:
     return {"tasks": tasks.recent(limit)}
 
 
