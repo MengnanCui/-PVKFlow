@@ -185,11 +185,11 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <header class="doc">
   <h1>HTE Studio 开发计划与进度</h1>
   <div class="meta">
-    <span>版本 v8</span><span>更新于 2026-11-09（P16 结束）</span>
+    <span>版本 v9</span><span>更新于 2026-11-09（P17 结束）</span>
     <span>基于提交 <code>f0df0bc</code></span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
   </div>
   <div class="cards">
-    <div class="card"><div class="k">修改报告</div><div class="v">66</div><div class="d">C001 – C066</div></div>
+    <div class="card"><div class="k">修改报告</div><div class="v">67</div><div class="d">C001 – C067</div></div>
     <div class="card"><div class="k">阶段</div><div class="v">P1–P16</div><div class="d">P16 = 权限 + 命令 + 轻量窗口</div></div>
     <div class="card"><div class="k">测试</div><div class="v">563</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 10 组（12 + 15 + 13 + 8 + 13 + 22 + 15 + 5 + 8 + 10 条）</div></div>
     <div class="card"><div class="k">你明确指定的</div><div class="v">58</div><div class="d">P-01 … P-58（P-54 … P-58 是 QFLS 成像的规格）</div></div>
@@ -269,7 +269,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
       <tr><td>关键结果长表（当前值 + 全部历史）、运行可追溯（含模块版本）</td><td><span class="chip ok">完成</span></td><td>C034 / C035</td></tr>
       <tr><td>结果质量审核（可信 / 待查 / 作废）</td><td><span class="chip ok">完成</span></td><td>样品页「关键结果」、构效关系页就地审；作废后当前值退回上一次，带理由和时间（C054）。批处理写入时就是「可信」（D-115 待你确认）</td></tr>
       <tr><td>构效关系</td><td>X / Y 散点（按批次着色）、皮尔逊 / 斯皮尔曼（带 p 值）、按批次的箱线图</td><td><span class="chip ok">第一版</span></td><td>C052；统计对着 scipy 的参考值验过。异常识别、模型总结还没做</td></tr>
-      <tr><td>QFLS 成像</td><td>按层级扫描（实验 / 批次 / slot / point）、逐帧校验、15 项指标、综合分 / ABCD / 异常、独立输出目录；总览 / 排名与筛选 / 单点详情 / 多点对比 / 方法说明、导出当前筛选；假想演示数据</td><td><span class="chip ok">第一版</span></td><td>C065 C066；<strong>只在假想数据上验过</strong>；10 项阈值待你确认；qvdf 真实格式未知</td></tr>
+      <tr><td>QFLS 成像</td><td>按层级扫描（实验 / 批次 / slot / point）、逐帧校验、15 项指标、综合分 / ABCD / 异常、独立输出目录；总览 / 排名与筛选 / 单点详情 / 多点对比 / 方法说明、导出当前筛选；假想演示数据</td><td><span class="chip ok">第一版</span></td><td>C065 C066；<strong>只在假想数据上验过</strong>（造进去的 10 类已知答案全部找到，C067）；10 项阈值待你确认；qvdf 真实格式未知</td></tr>
       <tr><td rowspan="6">AI</td><td>侧栏：流式、数据范围、动作卡片、钉住、对话历史</td><td><span class="chip ok">完成</span></td><td>收窄范围生效、换对话先停流（C037）；点停止后已说的字保存（C047）；抽屉和 ⓘ 共用一个客户端（C045）；打开抽屉不再建空会话（C050）；用本地假网关测过</td></tr>
       <tr><td>曲线摘要：每个样品的曲线按时间分段取平均给模型（P-44）</td><td><span class="chip ok">完成</span></td><td>C038；假网关端到端验过</td></tr>
       <tr><td>ⓘ 术语浮层 + 带读数提问（33 个 ⓘ，25 个带数）</td><td><span class="chip ok">完成</span></td><td></td></tr>
@@ -616,10 +616,15 @@ ol.steps li, ul.plain li { margin: 4px 0; }
       <p>你说「参考 iflow 改网关，然后做 pi-agent：读写文件、跑批处理、任务」：网关照 IFlow 重写一层（Anthropic 协议、退避重试、思考参数缺省关、拒收降级、拉取并测速）；
       智能体能在你给的文件夹里读写文件（写前备份、卡片上一键撤销、密钥打码）、提交批处理并等它跑完看汇总、查看 / 停止后台任务。自查修了改文件凭空加 BOM。</p>
       <p class="note"><a href="phases/P15_2026-W46_网关-pi-agent.md">阶段报告 P15</a></p></li>
-    <li class="now"><span class="t">P16 权限 + 命令 + 轻量窗口（本次）</span><span class="d">11-09 · W46 · C061–C064 · → 563 测试</span>
+    <li><span class="t">P16 权限 + 命令 + 轻量窗口</span><span class="d">11-09 · W46 · C061–C064 · → 563 测试</span>
       <p>内网 NewAPI 网关成了内设预设；智能体只写专用目录 <code>workspace/agent/</code>、平台核心永远改不了；能跑命令（危险命令每次问、改了核心一定报）；
       顶栏「询问 / 自动」「直接执行 / 先出计划」；智能体页变成一栏的轻量 pi-agent 式窗口，带斜杠命令和 /undo。</p>
       <p class="note"><a href="phases/P16_2026-W46_权限-命令-轻量窗口.md">阶段报告 P16</a></p></li>
+    <li class="now"><span class="t">P17 QFLS 成像（本次）</span><span class="d">11-09 · W46 · C065–C067 · → 580 测试</span>
+      <p>你给了 QFLS 的目录 / 文件格式和要提取的信息：平台按层级认出 实验 / 批次 / slot / point，逐帧校验（行列、缺失、范围）、算 15 项指标、综合分、ABCD、异常，
+      <strong>输出写进独立目录、原始数据不动</strong>；网页有总览、排名与筛选、单点详情、多点对比、方法说明，能导出当前筛选。
+      用自己生成的 60 帧假想数据做了分析：造进去的 10 类已知答案全部找到，划痕 6 / 6、误报 0，物镜差 −24.2 meV（造的 −24）。顺带修了图宽度跟不上容器的老问题。</p>
+      <p class="note"><a href="phases/P17_2026-W46_QFLS成像.md">阶段报告 P17</a> · <a href="../QFLS_演示数据分析.md">演示数据分析</a></p></li>
   </ul>
 </section>
 
@@ -723,7 +728,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id">E2</td><td><strong>构效关系第二步</strong>：异常识别（偏离趋势的样品挑出来、标在图上、点进去回溯到原始文件）+ 让模型写一段总结（可以直接用智能体的工具：相关、按批次比较、样品结果）</td><td>第三层「看出问题」</td><td>1–2 天</td><td><span class="chip danger">建议下一个</span></td></tr>
     </tbody>
   </table></div>
-  <div class="callout warn"><b>等你定（P16 之后）：</b>智能体这一块你要的都有了。现在最有价值的一步只有你能做：<b>在内网网关上试智能体</b>（设置 → 模型里地址已经填好了，填上密钥、拉取并测速；智能体先用「询问」模式）。代码这边我建议接着做 <b>E2</b>（构效关系的异常识别 + 模型总结）。另一件只有你能做的：<b>Windows 实机清单</b>。§4 里 <b>17 项</b>「还待你确认」，D-02 最要紧；本阶段新增两项都关于跑命令：D-155（哪些命令每次都问）、D-156（自动模式下普通命令直接跑）。</div>
+  <div class="callout warn"><b>等你定（P17 之后）：</b>QFLS 成像能用了，但<b>只在我自己造的假想数据上验过</b>。最有价值的一步只有你能做：<b>给我一个真实的实验文件夹</b>（哪怕一个 slot、几个点，连同 qvdf），我拿它校阈值、确认 qvdf 格式。其次：在内网网关上试智能体；Windows 实机清单。§4 里 <b>27 项</b>「还待你确认」，D-02 最要紧；本阶段新增 10 项都是 QFLS 的阈值和口径（D-162、D-165 … D-173），其中最影响结论的是 <b>D-172 综合分怎么扣</b>和 <b>D-166 低荧光阈值 1.10 eV</b>。</div>
 </section>
 
 <!-- ================================================================ 8 -->
@@ -811,6 +816,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C064_2026-11-09_本提交.md">C064</a></td><td class="nowrap">11-09</td><td>P16</td><td>修 Windows CI：测试里写中文没指定编码</td><td class="small">我自查（CI 红）</td></tr>
 <tr><td class="id"><a href="changes/C065_2026-11-09_本提交.md">C065</a></td><td class="nowrap">11-09</td><td>P17</td><td>QFLS 成像：假想数据生成、按层级扫描、校验、指标、评分、出图、独立输出目录、接口</td><td class="small">你的要求（P-54 … P-56、P-58）</td></tr>
 <tr><td class="id"><a href="changes/C066_2026-11-09_本提交.md">C066</a></td><td class="nowrap">11-09</td><td>P17</td><td>QFLS 成像（网页）：总览、排名与筛选、单点详情、多点对比、方法说明、导出；修图宽度跟不上容器的老问题</td><td class="small">你的要求（P-57）+ 我自查</td></tr>
+<tr><td class="id"><a href="changes/C067_2026-11-09_本提交.md">C067</a></td><td class="nowrap">11-09</td><td>P17</td><td>基于演示数据的分析（已知答案全部找到）+ P17 收尾：阶段报告、计划文档 v9</td><td class="small">你的要求 + 记录规则（阶段结束）</td></tr>
     </tbody>
   </table></div>
 </section>

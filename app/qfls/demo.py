@@ -44,6 +44,26 @@ PLAN = [
     (E3, "c81d0f6a2b44", 3, 3, ["20X", "100X"], dict(level=1.204, amp=0.005, dark=1, scratch=2, bright=4)),  # 划伤
     (E3, "c81d0f6a2b44", 4, 3, ["100X"], dict(level=1.202, amp=0.005, dark=1, edge=0.05, bright=3)),  # 边缘衰减
 ]
+# 每个 slot 造的是什么情形（分析报告和方法说明用；真实数据没有这张表）
+TREATMENT = {
+    (E1, 1): "100 °C 退火", (E1, 2): "120 °C 退火", (E1, 3): "140 °C 退火", (E1, 4): "160 °C 退火（过退火）",
+    (E2, 1): "无钝化", (E2, 2): "PEAI 钝化", (E2, 3): "OAI 钝化", (E2, "9b7a3f0e", 1): "PEAI 钝化（复测批次）",
+    (E3, 1): "ITO 衬底", (E3, 2): "FTO 衬底", (E3, 3): "FTO，表面划伤", (E3, 4): "FTO，边缘衰减",
+}
+# 造进去的「已知答案」：哪些帧该被判成什么
+DESIGNED = [
+    ("数据无效：行列不一致", "invalid", "退火 slot3 point4 的 20X（少一个值）"),
+    ("数据无效：缺失值", "invalid", "衬底 slot4 point3 的 100X（空字段）"),
+    ("超范围像素（3% 为 0）", "out_of_range", "钝化 批次 5e0c41d2 slot1 point1 的 100X"),
+    ("尺寸不同", "shape_differs", "衬底 slot3 point1 的 100X（少 1/16 的行）"),
+    ("物镜和 qvdf 不符", "meta_mismatch", "退火 slot3 point2（qvdf 写 100X）"),
+    ("缺 qvdf", "no_qvdf", "退火 slot1 point4"),
+    ("划痕", "scratch", "衬底 slot3 的 6 帧（20X、100X 各 3，每帧 2 条）"),
+    ("边缘效应", "edge_effect", "衬底 slot4（边缘低 50 meV；3 帧里 point3 是做坏的那帧，有效 2 帧）"),
+    ("平行点离群", "group_outlier", "衬底 slot1 point3（整体低 22 meV）"),
+    ("大面积低值", "large_low_area", "退火 slot4（一个大暗斑 + 6 个小暗斑）"),
+]
+
 OBJ_OFFSET = {"20X": 0.0, "100X": -0.024}   # 不同物镜收集效率 / 标定不同 → 绝对值本来就不可比
 OBJ_SCALE = {"20X": 1.0, "100X": 2.0}       # 100X 下同样的结构在像素上大 5 倍；这里取 2 倍让画面里还看得到几个
 

@@ -298,3 +298,22 @@ def test_api_demo_run_points_files(workspace, monkeypatch, tmp_path):
         assert c.get("/api/qfls/method").json()["params"]["moran_threshold"] == 0.15
         assert c.delete(f"/api/qfls/runs/{rid}").json()["ok"]
         assert [x["run_id"] for x in c.get("/api/qfls/runs").json()["runs"]] == [rid2]
+
+
+def test_demo_known_answers_are_all_found(workspace, tmp_path):
+    """演示数据里造进去的每一类问题都要被标出来（演示数据的意义就在这）。用默认尺寸 304 × 456。"""
+    demo.generate(tmp_path / "d")
+    run = pipeline.process(tmp_path / "d", figures=False)
+    pts = pipeline.load(run["run_id"], "points.json")
+    flags = {c for p in pts for c in p["flag_codes"]}
+    for what, flag, _where in demo.DESIGNED:
+        assert flag in flags, what
+    scratched = [p for p in pts if p["valid"] and p["experiment"] == demo.E3 and p["slot_no"] == 3]
+    assert [p["scratch_count"] for p in scratched] == [2] * 6
+    assert not [p for p in pts if p["valid"] and p["scratch_count"] and p not in scratched]   # 没有误报
+    pair = {}
+    for p in pts:
+        if p["valid"]:
+            pair.setdefault((p["experiment"], p["batch"], p["slot_no"], p["point_no"]), {})[p["objective"]] = p["median"]
+    d = [v["100X"] - v["20X"] for v in pair.values() if len(v) == 2]
+    assert len(d) >= 10 and abs(np.mean(d) + 0.024) < 0.002           # 造的物镜差是 −24 meV
