@@ -20,6 +20,7 @@ _SERVE = {".png": "image/png", ".csv": "text/csv; charset=utf-8", ".json": "appl
 
 @tasks.register(KIND)
 def _task(ctx: tasks.TaskContext) -> dict:
+    """一次 QFLS 处理（演示数据时先生成）。参数：{root | demo, full, run_id, title, figures, params}"""
     p = ctx.params
     root = p.get("root")
     if p.get("demo"):

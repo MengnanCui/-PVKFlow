@@ -189,11 +189,11 @@ ol.steps li, ul.plain li { margin: 4px 0; }
     <span>基于提交 <code>f0df0bc</code></span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
   </div>
   <div class="cards">
-    <div class="card"><div class="k">修改报告</div><div class="v">67</div><div class="d">C001 – C067</div></div>
+    <div class="card"><div class="k">修改报告</div><div class="v">68</div><div class="d">C001 – C068</div></div>
     <div class="card"><div class="k">阶段</div><div class="v">P1–P16</div><div class="d">P16 = 权限 + 命令 + 轻量窗口</div></div>
     <div class="card"><div class="k">测试</div><div class="v">563</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 10 组（12 + 15 + 13 + 8 + 13 + 22 + 15 + 5 + 8 + 10 条）</div></div>
     <div class="card"><div class="k">你明确指定的</div><div class="v">58</div><div class="d">P-01 … P-58（P-54 … P-58 是 QFLS 成像的规格）</div></div>
-    <div class="card"><div class="k">我自行决定的</div><div class="v">182</div><div class="d">D-01 … D-182，<b>27</b> 项还待你确认</div></div>
+    <div class="card"><div class="k">我自行决定的</div><div class="v">183</div><div class="d">D-01 … D-183，<b>27</b> 项还待你确认</div></div>
     <div class="card"><div class="k">自查发现</div><div class="v">30 / 30</div><div class="d"><b>全部处理完</b>（P10 12 条 · P11 11 条 · P12 7 条）</div></div>
   </div>
 </header>
@@ -557,6 +557,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr data-c="显示"><td class="id">D-180</td><td class="nowrap">显示</td><td>排名表：默认按综合分降序，点表头换排序（第一次点：分数降序、其它升序）；无效帧永远排最后；有 warn 的整行浅黄、error 的整行浅红（info 不标色）；可切到「组内 z」显示，|z| ≥ 2 标色；差值显示成 meV、占比显示成 %</td><td>异常高亮（你要的）落在整行上，一眼能扫到。</td><td>C066</td><td class="loc">pages/qfls-views.js</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="显示"><td class="id">D-181</td><td class="nowrap">显示</td><td>多点对比：热图用同一物镜同一色标（<strong>改了 D-174 的色标口径</strong>：该物镜所有帧 P1 的第 5 百分位到 P99 的第 95 百分位 —— 原来取中位数，最好的那几帧整片饱和）；直方图 / 水平剖面 / 变异函数叠加（有像素尺寸时横轴换成 µm）；指标对照表每行把「最好」的加粗，只标有好坏方向的指标，物镜不同时绝对量不标</td><td>物镜不同时会提示哪些数不要横着比。</td><td>C066</td><td class="loc">pages/qfls-views.js · app/qfls/pipeline.py</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="显示"><td class="id">D-182</td><td class="nowrap">显示</td><td>「导出当前筛选」在浏览器里生成 CSV：中文表头、UTF-8 带 BOM、36 列指标与身份 + 5 列组内 z（中位数、P90−P10、低值占比、Moran's I、综合分），文件名 <code>QFLS_&lt;处理编号&gt;_筛选_&lt;n&gt;点.csv</code>；「全部样点 CSV」是输出目录里那份 points.csv（英文列名，全部指标和 z）</td><td>筛选结果导出（你要的）。</td><td>C066</td><td class="loc">pages/qfls.js</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="平台"><td class="id">D-183</td><td class="nowrap">平台</td><td>文档分两半：讲「为什么」的人写（<code>docs/HANDOFF.md</code>）；讲「是什么」的（接口、页面、工具、表、环境变量、QFLS 阈值）由 <code>tools/gen_reference.py</code> 从代码生成 <code>docs/REFERENCE.md</code>，测试守着一致</td><td>手写清单迟早和代码对不上，接手的人（或别的模型）最容易被它坑。</td><td>C068</td><td class="loc">tools/gen_reference.py</td><td><span class="chip info">可随时改</span></td></tr>
     </tbody>
   </table></div>
 </section>
@@ -817,6 +818,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C065_2026-11-09_本提交.md">C065</a></td><td class="nowrap">11-09</td><td>P17</td><td>QFLS 成像：假想数据生成、按层级扫描、校验、指标、评分、出图、独立输出目录、接口</td><td class="small">你的要求（P-54 … P-56、P-58）</td></tr>
 <tr><td class="id"><a href="changes/C066_2026-11-09_本提交.md">C066</a></td><td class="nowrap">11-09</td><td>P17</td><td>QFLS 成像（网页）：总览、排名与筛选、单点详情、多点对比、方法说明、导出；修图宽度跟不上容器的老问题</td><td class="small">你的要求（P-57）+ 我自查</td></tr>
 <tr><td class="id"><a href="changes/C067_2026-11-09_本提交.md">C067</a></td><td class="nowrap">11-09</td><td>P17</td><td>基于演示数据的分析（已知答案全部找到）+ P17 收尾：阶段报告、计划文档 v9</td><td class="small">你的要求 + 记录规则（阶段结束）</td></tr>
+<tr><td class="id"><a href="changes/C068_2026-11-09_本提交.md">C068</a></td><td class="nowrap">11-09</td><td>P18</td><td>参考手册改成从代码生成（docs/REFERENCE.md + 守护测试）</td><td class="small">你的要求（体检 + 完备文档）</td></tr>
     </tbody>
   </table></div>
 </section>

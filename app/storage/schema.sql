@@ -221,6 +221,7 @@ CREATE TABLE IF NOT EXISTS conversation (
     updated_at      TEXT NOT NULL
 );
 
+-- 对话里的一条消息（用户 / 模型）；模型的回答连同当时给它的数据范围一起存，事后能复原「它看到了什么」。
 CREATE TABLE IF NOT EXISTS message (
     message_id      TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL REFERENCES conversation(conversation_id) ON DELETE CASCADE,
