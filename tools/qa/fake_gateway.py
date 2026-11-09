@@ -110,6 +110,22 @@ class H(BaseHTTPRequestHandler):
                 else:
                     break
             text = " ".join(results)
+            # ---- 文件、批处理、任务（P-49）
+            if '"change_id"' in text:
+                m = re.search(r'"path": "([^"]+)"', text)
+                return self.reply(req, [], f"文件写好了：{m.group(1) if m else ''}。改之前备份过，可以撤销。", action)
+            if '"encoding"' in text and '"lines"' in text:
+                m = re.search(r'"lines": (\d+)', text)
+                return self.reply(req, [], f"读到了，一共 {m.group(1)} 行。", action)
+            if '"task_id"' in text and "get_task" in text and '"n_samples"' in text:
+                m = re.search(r'"task_id": "([^"]+)"', text)
+                return self.reply(req, [("get_task", {"task_id": m.group(1), "wait_seconds": 60})], "提交了，等它跑完。", action)
+            if '"done": true' in text and '"run_id"' in text:
+                m = re.search(r'"run_id": "([^"]+)"', text)
+                return self.reply(req, [("batch_summary", {"run_id": m.group(1)})], "", action)
+            if '"fields"' in text and '"n_ok"' in text:
+                n = re.search(r'"n_ok": (\d+)', text).group(1)
+                return self.reply(req, [], f"批处理跑完了：{n} 个样品成功。", action)
             if "一直查" in q:
                 return self.reply(req, [("list_fields", {})], "", action)
             if "没有执行" in text:
@@ -125,6 +141,13 @@ class H(BaseHTTPRequestHandler):
             if m:
                 return self.reply(req, [], f"两者正相关，r = {float(m.group(1)):.3f}。", action)
             return self.reply(req, [], "查到了。", action)
+        if m := re.search(r"写文件 (\S+)", q):
+            return self.reply(req, [("write_file", {"path": m.group(1), "content": "# QA 报告\n\n膜厚偏薄。\n",
+                                                    "note": "QA"})], "", action)
+        if m := re.search(r"读文件 (\S+)", q):
+            return self.reply(req, [("read_file", {"path": m.group(1)})], "", action)
+        if m := re.search(r"跑批处理 (\S+)", q):
+            return self.reply(req, [("run_batch", {"batch": m.group(1), "title": "QA 智能体批处理"})], "", action)
         if "有什么数据" in q:
             return self.reply(req, [("overview", {}), ("list_fields", {})], "我先看一下概况和字段。", action)
         if "相关" in q:

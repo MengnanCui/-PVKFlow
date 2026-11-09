@@ -16,7 +16,7 @@ import { modelSelect, pickedModel, onModelPicked, syncSelect } from '../componen
 export const meta = {
   id: 'agent',
   title: '智能体',
-  desc: '让 AI 自己调工具查数据、帮你审结果 —— 会改数据的操作先问你',
+  desc: '让 AI 自己调工具查数据、读写文件、跑批处理 —— 会改东西的操作先问你',
 };
 
 const RISK = {
@@ -34,7 +34,8 @@ const DONE_NOTE = {
 const SUGGEST = [
   '现在平台里有什么数据？还有多少结果没审？',
   '有哪些字段？挑两个看起来相关的算一下相关性，告诉我哪些样品偏离趋势',
-  '原始文件都还在吗？',
+  '对 ZG0013 这一批跑一次批处理，跑完告诉我膜厚的范围',
+  '把这次的结论写成一份 Markdown 报告，存到 agent/报告.md',
 ];
 
 const S = {
@@ -64,11 +65,12 @@ function buildShell(host) {
   });
   refs.send = h('button.btn.btn-primary', { onclick: () => send() }, '发送');
   // 用 display 而不是 hidden 属性：.btn 自己的 display 会盖过 [hidden]
-  refs.stop = h('button.btn', { style: { display: 'none' }, onclick: () => S.ctrl?.abort() }, '停止');
+  refs.stop = h('button.btn', { style: { display: 'none' }, onclick: () => stopRun() }, '停止');
   refs.modelHost = h('span');
   refs.sessions = h('div.agent-sessions');
   refs.toolList = h('div.agent-tools');
   refs.perm = h('div');
+  refs.roots = h('div');
   refs.limits = h('div.xsmall.dim');
 
   refs.root = h('div.agent-layout',
@@ -84,10 +86,12 @@ function buildShell(host) {
           h('button.btn.btn-sm', { onclick: () => newSession() }, '新任务')),
         refs.sessions),
       h('div.panel.panel-body',
-        h('div.panel-title', '会改数据的操作'), refs.perm),
+        h('div.panel-title', '会改东西的操作'), refs.perm),
+      h('div.panel.panel-body',
+        h('div.panel-title', '它能碰的文件夹'), refs.roots),
       h('div.panel.panel-body',
         h('div.panel-title', '它能用的工具'),
-        h('p.xsmall.dim', '只碰平台自己的库（样品、结果、样品集）；不碰你电脑上的文件，不跑命令。'),
+        h('p.xsmall.dim', '平台的库（样品、结果、样品集）、上面那几个文件夹、批处理和后台任务。不跑任意命令。'),
         refs.toolList, refs.limits)));
   mount(host, refs.root);
   drawEmpty();
@@ -103,7 +107,7 @@ async function drawModel() {
 
 function drawEmpty() {
   mount(refs.log, h('div.agent-empty',
-    h('p.small', '它会自己决定先查什么、再查什么，每一步都会摊在这里。会改数据的操作（审核结果、存样品集、删样品集）执行前会停下来问你。'),
+    h('p.small', '它会自己决定先查什么、再查什么，每一步都会摊在这里。会改东西的操作（审核结果、存 / 删样品集、写文件、跑批处理、停任务）执行前会停下来问你；写文件前会自动备份，随时能撤销。'),
     h('div.agent-suggest', ...SUGGEST.map((t) => h('button.btn.btn-sm.btn-ghost', {
       onclick: () => { refs.input.value = t; refs.input.focus(); },
     }, t)))));
@@ -124,6 +128,7 @@ async function loadSide() {
   } catch (err) { toast(err.message, 'err'); }
   drawTools();
   drawPerm();
+  drawRoots();
   drawSessions();
 }
 
@@ -135,8 +140,9 @@ function drawTools() {
       h(`span.${r.cls}`, r.tag));
   }));
   if (S.limits) {
-    refs.limits.textContent = `一次最多 ${S.limits.max_turns} 轮、${Math.round(S.limits.max_seconds / 60)} 分钟；`
-      + `每个工具结果最多给模型 ${S.limits.tool_max_chars} 字，上下文超过 ${S.limits.compact_at_chars} 字就折叠早期的工具结果。`;
+    refs.limits.textContent = `一次最多 ${S.limits.max_turns} 轮、${Math.round(S.limits.max_seconds / 60)} 分钟（等批处理也算在里面，`
+      + `每次最多等 ${S.limits.task_wait_max} 秒）；每个工具结果最多给模型 ${S.limits.tool_max_chars} 字，`
+      + `上下文超过 ${S.limits.compact_at_chars} 字就折叠早期的工具结果。`;
   }
 }
 
@@ -159,11 +165,50 @@ function drawPerm() {
   }, ...[['auto', '自动判断（推荐）'], ['toolcall', '原生工具调用'], ['action', 'JSON 动作协议']]
     .map(([v, t]) => h('option', { value: v, selected: S.settings.driver === v }, t)));
   mount(refs.perm,
-    opt('ask', '每次问我', '审核结果、存样品集之前停下来，你点了才做'),
-    opt('auto', '改得回来的直接做', '审核、存样品集不再问；删除样品集仍然每次问'),
+    opt('ask', '每次问我', '审核结果、存样品集、写文件、跑批处理、停任务之前停下来，你点了才做'),
+    opt('auto', '改得回来的直接做', '上面这些不再问（写文件照样先备份）；删除样品集仍然每次问'),
     h('div.row.gap-2.mt-3', { style: { alignItems: 'center' } }, h('span.small', '模型怎么调工具'), driver),
     h('p.xsmall.dim', '自动：先按标准的工具调用发；网关不认就改成让模型输出一段 JSON 动作，并记住。'
       + '网关认工具调用、但模型用得不好时，可以手动选 JSON 动作协议。'));
+}
+
+/** 它能碰的文件夹：工作区总在（里面 raw / config / modules / 数据库只读）；你加的每个单独选只读还是读写。 */
+function drawRoots() {
+  const roots = S.settings.roots || [];
+  const mine = roots.filter((r) => !r.builtin);
+  const save = async (next) => {
+    try {
+      S.settings = await api.saveAgentSettings({ roots: next.map((r) => ({ path: r.path, write: r.write })) });
+      drawRoots();
+      toast('已保存。下一句话起生效', 'ok');
+    } catch (err) { toast(err.message, 'err', 6000); }
+  };
+  const path = h('input.input.input-sm', { placeholder: '完整路径，如 D:\\数据\\2026', 'aria-label': '要加的文件夹',
+                                            style: { width: '100%' } });
+  const rw = h('input', { type: 'checkbox', 'aria-label': '允许写' });
+  mount(refs.roots,
+    ...roots.map((r) => h('div.agent-root-row' + (r.builtin ? '.is-builtin' : ''),
+      h('span.mono.xsmall.grow', { title: r.path }, r.builtin ? '工作区' : r.path),
+      r.builtin
+        ? h('span.tag', { title: 'raw / config / modules / tables / derived / cache 和数据库文件只读' }, '读写·部分只读')
+        : h('button.btn.btn-sm.btn-ghost', {
+            title: '切换只读 / 读写',
+            onclick: () => save(mine.map((x) => (x.path === r.path ? { ...x, write: !x.write } : x))),
+          }, r.write ? '读写' : '只读'),
+      r.builtin ? null : h('button.icon-btn', {
+        title: '不让它再碰这个文件夹', 'aria-label': `移除 ${r.path}`,
+        onclick: () => save(mine.filter((x) => x.path !== r.path)),
+      }, '✕'))),
+    h('div.col.gap-1.mt-2', path,
+      h('div.row.gap-2', { style: { alignItems: 'center' } },
+        h('label.xsmall.row.gap-1', rw, '允许写'), h('span.grow'),
+        h('button.btn.btn-sm', {
+          onclick: () => {
+            if (!path.value.trim()) { toast('先填文件夹路径', 'err'); return; }
+            save([...mine, { path: path.value.trim(), write: rw.checked }]);
+          },
+        }, '加上'))),
+    h('p.xsmall.dim.mt-1', '相对路径从工作区算。写之前会备份到 workspace/agent_backups/，读出来的密钥会先打码再给模型。'));
 }
 
 async function drawSessions() {
@@ -245,6 +290,12 @@ async function stream(start) {
     busy(false);
     drawSessions();
   }
+}
+
+/** 停止：先告诉服务端（正在等批处理的那一步每秒看一眼这个标记），再断开连接。 */
+async function stopRun() {
+  if (S.sessionId) { try { await api.agentStop(S.sessionId); } catch { /* 断开连接照样能停 */ } }
+  S.ctrl?.abort();
 }
 
 function busy(on) {
@@ -347,6 +398,22 @@ function fillCard(card, e) {
   card.__body.append(
     h('div.xsmall.dim.mt-2', e.ok ? '拿回来的（给模型的原文）' : '出错了（原样告诉了模型，让它自己改）'),
     h('pre.agent-pre', pretty(e.detail || e.summary)));
+  // 写了文件：卡片上直接给「撤销这次改动」—— 是你点的，不经过模型、也不用再批
+  let out = null;
+  try { out = JSON.parse(e.detail || ''); } catch { /* 不是 JSON */ }
+  if (e.ok && card.dataset.name === 'write_file' && out?.change_id) {
+    const undo = h('button.btn.btn-sm', {
+      onclick: async (ev) => {
+        ev.stopPropagation();
+        try {
+          const r = await api.agentRollback(out.change_id);
+          if (r.restored?.length) { toast(`已撤销：${r.restored.join('、')}`, 'ok'); undo.disabled = true; undo.textContent = '已撤销'; }
+          else toast(r.skipped?.[0] || '没有可撤销的', 'warn', 6000);
+        } catch (err) { toast(err.message, 'err', 6000); }
+      },
+    }, '撤销这次改动');
+    card.querySelector('summary').append(h('span.xsmall.dim', out.path), undo);
+  }
 }
 
 const pretty = (text) => {
@@ -372,12 +439,22 @@ function approvalCard(e, active) {
     h('div.row.gap-2', { style: { alignItems: 'center' } },
       h('span.strong.small', `要执行「${label(e.name)}」吗？`), h(`span.${r.cls}`, r.tag), h('span.grow'),
       h('span.agent-approval-state.xsmall.dim', active ? '' : '（这一轮已经过去了）')),
-    h('div.agent-preview.small', e.preview),
+    previewNode(e.preview),
     h('div.row.gap-2.mt-2', { style: { alignItems: 'center' } },
       h('button.btn.btn-sm.btn-primary', { disabled: !active, onclick: () => decide(true) }, '批准'),
       h('button.btn.btn-sm', { disabled: !active, onclick: () => decide(false) }, '拒绝'),
       remember));
   return card;
+}
+
+/** 审批卡上的那句话。写文件的预览带差异：+ 行绿、- 行红、@@ 行灰。 */
+function previewNode(text) {
+  const lines = String(text || '').split('\n');
+  const hasDiff = lines.some((l) => l.startsWith('@@ '));
+  if (!hasDiff) return h('div.agent-preview.small', text);
+  return h('div.agent-preview.small', ...lines.map((l) => h(
+    `div${l.startsWith('+ ') ? '.diff-add' : l.startsWith('- ') ? '.diff-del' : l.startsWith('@@') ? '.diff-hunk' : ''}`,
+    l || ' ')));
 }
 
 function settleApproval(e) {

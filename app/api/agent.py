@@ -11,7 +11,7 @@ from typing import Iterator
 
 from fastapi import APIRouter, Body
 
-from app.agent import loop, tools
+from app.agent import files, loop, tools
 from app.api.chat import _ClosingStream, _frame, _resolve_or_501
 from app.api.common import ApiError, guard
 from app.storage import agent_sessions as sessions
@@ -31,13 +31,14 @@ _busy_lock = threading.Lock()
 def _settings() -> dict:
     p = db.get_setting("agent.permission", "ask")
     d = db.get_setting("agent.driver", "auto")
-    return {"permission": p if p in PERMISSIONS else "ask", "driver": d if d in DRIVERS else "auto"}
+    return {"permission": p if p in PERMISSIONS else "ask", "driver": d if d in DRIVERS else "auto",
+            "roots": files.roots()}
 
 
 @router.get("/tools")
 def list_tools() -> dict:
     return {"tools": [t.public() for t in tools.TOOLS],
-            "limits": {"max_turns": loop.MAX_TURNS, "max_seconds": loop.MAX_SECONDS,
+            "limits": {"max_turns": loop.MAX_TURNS, "max_seconds": loop.MAX_SECONDS, "task_wait_max": tools.TASK_WAIT_MAX,
                        "tool_max_chars": tools.TOOL_MAX_CHARS, "compact_at_chars": loop.COMPACT_AT_CHARS}}
 
 
@@ -56,7 +57,48 @@ def save_settings(payload: dict = Body(...)) -> dict:
         if payload["driver"] not in DRIVERS:
             raise ApiError(f"driver 只能是 {' / '.join(DRIVERS)}", 400)
         db.set_setting("agent.driver", payload["driver"])
+    if "roots" in payload:
+        # 智能体能碰的文件夹（工作区之外的那些）：[{path, write}]。工作区总在，不用传
+        raw = payload["roots"] or []
+        if not isinstance(raw, list) or len(raw) > 20:
+            raise ApiError("roots 要是列表，最多 20 个", 400)
+        clean, seen = [], set()
+        for r in raw:
+            if not isinstance(r, dict):
+                raise ApiError("roots 的每一项要是 {path, write}", 400)
+            try:
+                path = files.check_new_root(str(r.get("path") or ""))
+            except files.FileToolError as exc:
+                raise ApiError(str(exc), 400, "bad_root") from exc
+            if path in seen:
+                continue
+            seen.add(path)
+            clean.append({"path": path, "write": bool(r.get("write"))})
+        db.set_setting("agent.roots", clean)
     return _settings()
+
+
+@router.get("/file-changes")
+def file_changes(session_id: str = "") -> dict:
+    return {"changes": files.changes(session_id or None, None, 100)}
+
+
+@router.post("/file-changes/{change_id}/rollback")
+def rollback_change(change_id: str, payload: dict = Body(default={})) -> dict:
+    """界面上「撤销这次改动」—— 是你点的，不经过模型、也不用再批。"""
+    try:
+        return files.rollback(change_id, None, bool(payload.get("force")))
+    except files.FileToolError as exc:
+        raise ApiError(str(exc), 400, "rollback_failed") from exc
+
+
+@router.post("/sessions/{session_id}/stop")
+def stop(session_id: str) -> dict:
+    """「停止」：回路在下一步之间、等任务的下一秒就停。前端点停止时先调它再断开连接。"""
+    guard(sessions.get, session_id)
+    if session_id in _busy:
+        loop.request_stop(session_id)
+    return {"ok": True, "running": session_id in _busy}
 
 
 @router.get("/sessions")

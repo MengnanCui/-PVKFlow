@@ -385,7 +385,9 @@ def test_api_tools_and_settings(client):
     t = client.get("/api/agent/tools").json()
     risks = {x["name"]: x["risk"] for x in t["tools"]}
     assert risks["set_quality"] == "write" and risks["delete_sample_set"] == "irreversible"
-    assert sum(r == "read" for r in risks.values()) == 9 and t["limits"]["max_turns"] == loop.MAX_TURNS
-    assert client.get("/api/agent/settings").json() == {"permission": "ask", "driver": "auto"}
+    assert sum(r == "read" for r in risks.values()) == 16 and t["limits"]["max_turns"] == loop.MAX_TURNS
+    assert risks["write_file"] == "write" and risks["run_batch"] == "write" and risks["get_task"] == "read"
+    st = client.get("/api/agent/settings").json()
+    assert (st["permission"], st["driver"]) == ("ask", "auto") and st["roots"][0]["builtin"] is True
     assert client.post("/api/agent/settings", json={"permission": "auto"}).json()["permission"] == "auto"
     assert client.post("/api/agent/settings", json={"permission": "yolo"}).status_code == 400

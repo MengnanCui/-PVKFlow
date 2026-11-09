@@ -38,7 +38,7 @@ app/
 ├─ batch.py          ★ 批处理：配方 → 每个样品跑一遍各模块 → 长表 + 关键结果
 ├─ api/              路由。错误统一翻译成 {error:{message,kind,detail}}；**全部是普通函数**（放线程池，见下）
 ├─ storage/
-│   ├─ schema.sql    数据模型（14 张表 + 1 个视图，见 DATA_MODEL.md）
+│   ├─ schema.sql    数据模型（15 张表 + 1 个视图，见 DATA_MODEL.md）
 │   ├─ migrations.py ★ 版本号 + 迁移；升级前先备份（见下）
 │   ├─ db.py         连接（按线程缓存）、WAL、设置读写
 │   ├─ ingest.py     ★ 分类落地策略、sha256 去重、断链巡检、导入时判定是不是光谱矩阵
@@ -69,10 +69,12 @@ app/
 ├─ plotting/script_export.py  导出一份能自己跑的 plot.py + data.csv
 ├─ ai/
 │   ├─ provider.py       AIProvider 抽象
-│   ├─ openai_compat.py  OpenAI 兼容多 provider 客户端
+│   ├─ gateway.py        ★ 模型网关（照 IFlow）：OpenAI 兼容 / Anthropic 两种协议、退避重试、思考参数、拒收降级、拉列表与测速
+│   ├─ openai_compat.py  provider 配置（providers.json）、预设；请求都交给 gateway.py
 │   └─ context.py        给模型的「已知事实」：汇总、逐样品标量、曲线摘要
 └─ agent/            智能体（「智能体」页；设计照 IFlow 的 lib/agent，砍到这个平台用得上的部分）
     ├─ tools.py      ★ 工具与风险等级：read 直接跑 / write 先问（可记住）/ irreversible 每次问；参数校验、结果截断
+    ├─ files.py      ★ 碰文件：文件夹名单、真实路径核对、只读区、打码、写前备份、改动记录、撤销（照 IFlow 的 serverFs）
     ├─ driver.py     问模型「下一步」：原生 tool_calls（流式拼参数）；网关不认 tools 就退到 JSON 动作协议并记住
     └─ loop.py       ★ 控制回路：调模型 → 跑工具 → 回灌；轮数 / 时间 / 上下文三道闸；停在审批上的那一轮存进会话
 ```

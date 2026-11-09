@@ -1141,3 +1141,8 @@ tr.is-rejected td .quality-ctl, tr.is-rejected td .xsmall { text-decoration: non
 .model-opt .ok { color: var(--ok); }
 .model-opt .danger { color: var(--danger); }
 .model-opt.is-bad span.mono { color: var(--ink-4); text-decoration: line-through; }
+.agent-preview .diff-add { color: var(--ok); font-family: var(--mono); white-space: pre-wrap; }
+.agent-preview .diff-del { color: var(--danger); font-family: var(--mono); white-space: pre-wrap; }
+.agent-preview .diff-hunk { color: var(--ink-3); font-family: var(--mono); }
+.agent-root-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.agent-root-row .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

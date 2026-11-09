@@ -664,6 +664,32 @@ def curve_catalog(parent_run_id: str) -> list[dict]:
     return out
 
 
+class EmptySelection(ValueError):
+    pass
+
+
+def submit_batch(raw_filter: dict | None = None, *, set_id: str | None = None,
+                 recipe: dict | None = None, title: str = "") -> dict:
+    """提交一次批处理 —— 界面上的「批处理」按钮和智能体的 run_batch 走同一条路。
+
+    错误：筛选式不对 → selection.FilterError；一个带矩阵的样品都没命中 → EmptySelection；
+    配方不对 → ValueError；样品集不存在 → KeyError。立刻返回 task，进度去 tasks.get 看。
+    """
+    from app.storage import selection, sets
+
+    if set_id:
+        raw_filter = sets.resolve(set_id)
+    flt = selection.normalize(raw_filter or {})
+    n = selection.count({**flt, "has_matrix": True})
+    if not n:
+        raise EmptySelection("这个筛选式没有命中任何带光谱矩阵的样品")
+    r = Recipe.from_dict(recipe)
+    title = (title or "").strip() or f"{n} 个样品"
+    # title 也放进 params：它要跟着**父运行**落库，对比历史才找得回来
+    task = tasks.submit(BATCH_SKILL_ID, {"filter": flt, "recipe": r.as_dict(), "title": title}, title=title)
+    return {"task": task, "n_samples": n, "recipe": r.as_dict()}
+
+
 def recent_batches(limit: int = 20) -> list[dict]:
     return db.query(
         "SELECT r.analysis_run_id, r.status, r.started_at, r.finished_at, r.params_json,"

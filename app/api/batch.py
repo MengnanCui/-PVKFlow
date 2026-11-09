@@ -9,7 +9,7 @@ from app import batch as batch_mod
 from app import tasks
 from app.api.common import ApiError, guard
 from app.plotting import script_export
-from app.storage import selection, sets, tabular
+from app.storage import selection, tabular
 
 router = APIRouter(prefix="/api/batch", tags=["batch"])
 
@@ -21,33 +21,17 @@ def run(payload: dict = Body(...)) -> dict:
     配方就是单样品页当前那套参数 —— 不做第二套参数表单。
     立刻返回 task_id，前端轮询进度。
     """
-    raw_filter = payload.get("filter")
-    if payload.get("set_id"):
-        raw_filter = guard(sets.resolve, payload["set_id"])
-
     try:
-        flt = selection.normalize(raw_filter or {})
+        return batch_mod.submit_batch(payload.get("filter"), set_id=payload.get("set_id") or None,
+                                      recipe=payload.get("recipe"), title=payload.get("title") or "")
+    except KeyError as exc:
+        raise ApiError(str(exc).strip("'\""), 404, "not_found") from exc
     except selection.FilterError as exc:
         raise ApiError(str(exc), 400, "bad_filter") from exc
-
-    n = selection.count({**flt, "has_matrix": True})
-    if not n:
-        raise ApiError("这个筛选式没有命中任何带光谱矩阵的样品", 400, "empty_selection")
-
-    try:
-        recipe = batch_mod.Recipe.from_dict(payload.get("recipe"))
+    except batch_mod.EmptySelection as exc:
+        raise ApiError(str(exc), 400, "empty_selection") from exc
     except ValueError as exc:
         raise ApiError(str(exc), 400, "bad_recipe") from exc
-
-    title = (payload.get("title") or "").strip() or f"{n} 个样品"
-    task = tasks.submit(
-        batch_mod.BATCH_SKILL_ID,
-        # title 也放进 params：它要跟着**父运行**落库，对比历史才找得回来。
-        # 只放在 task 上的话，任务表清掉之后这次对比就没名字了。
-        {"filter": flt, "recipe": recipe.as_dict(), "title": title},
-        title=title,
-    )
-    return {"task": task, "n_samples": n, "recipe": recipe.as_dict()}
 
 
 @router.post("/preview")

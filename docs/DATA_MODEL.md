@@ -1,6 +1,6 @@
 # 数据模型
 
-建表语句在 `app/storage/schema.sql`（14 张表 + 1 个视图），版本与迁移在 `app/storage/migrations.py`
+建表语句在 `app/storage/schema.sql`（15 张表 + 1 个视图），版本与迁移在 `app/storage/migrations.py`
 （它另建一张 `schema_migration` 记每一步升级）。这里说的是**为什么这么设计**。
 
 ## 一句话
@@ -144,6 +144,7 @@ pyarrow 缺失或列类型异常时会退回 CSV —— 宁可格式降级也不
 | `task` | 后台任务（批处理）：进度、取消、出错原因；服务重启时正在跑的标成 `interrupted`，不会永远挂在「进行中」 |
 | `conversation` / `message` | AI 对话。抽屉第一次发送时才建会话；没有消息的会话不进历史列表。被打断的回答也存（`meta.aborted`），已经说出来的字不丢 |
 | `ai_pin` | 钉在某次对比上的 AI 分析 |
+| `agent_file_change` | 智能体改过的文件：路径、改前改后的 sha、备份放在哪（`workspace/agent_backups/<改动 id>/`）、撤销过没有。撤销时先核对当前文件就是这次改出来的那份 |
 | `agent_session` | 智能体的会话，一行装三样：给模型的上下文（含工具调用与结果，早的会折叠）、给界面回放的事件（不含逐字增量）、停在审批上的那一轮（`pending_json`，批了 / 拒了就清掉）。也是第一句话发出时才建 |
 | `app_setting` | 平台设置（模型密钥不在这里，在 `workspace/config/providers.json`） |
 | `schema_migration` | 数据库升级到了第几步、每一步什么时候做的 |

@@ -248,6 +248,22 @@ CREATE TABLE IF NOT EXISTS agent_session (
     updated_at      TEXT NOT NULL
 );
 
+-- 智能体改过的文件（照 IFlow 的 agent_fs_changes）：改之前先把原文件拷一份到 workspace/agent_backups/<change_id>/，
+-- 这里记前后的 sha。回滚时先核对「现在的文件就是这次改出来的那份」，被别人又改过就拒绝（除非强制）。
+CREATE TABLE IF NOT EXISTS agent_file_change (
+    change_id       TEXT PRIMARY KEY,
+    session_id      TEXT,
+    path            TEXT NOT NULL,                -- 绝对路径
+    existed         INTEGER NOT NULL,             -- 改之前在不在（不在 = 新建，回滚 = 删掉）
+    before_sha      TEXT,
+    after_sha       TEXT NOT NULL,
+    backup          TEXT,                         -- 备份文件的绝对路径
+    note            TEXT,
+    created_at      TEXT NOT NULL,
+    rolled_back_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_afc_session ON agent_file_change(session_id, created_at);
+
 -- 把某条回答钉到某一次对比上。对比页据此显示「AI 分析」。
 CREATE TABLE IF NOT EXISTS ai_pin (
     pin_id          TEXT PRIMARY KEY,

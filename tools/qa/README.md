@@ -44,6 +44,8 @@ NODE_PATH=$(npm root -g) node tools/qa/d_check.js smp_xxx /tmp/hte-qa
 NODE_PATH=$(npm root -g) node tools/qa/agent_check.js
 # 网关：设置页的协议 / 思考 / 拉取并测速，以及经 Anthropic 协议（假网关的 /v1/messages）的 AI 助手
 NODE_PATH=$(npm root -g) node tools/qa/gateway_check.js
+# 智能体读写文件、跑批处理、管任务（参数是工作区目录；样品里要有批次 ZG0013）
+NODE_PATH=$(npm root -g) node tools/qa/pi_check.js /tmp/hte-qa
 ```
 
 B2 的对比页那一条要用**样品数 ≤ 24** 的那次批处理 —— 超过 24 个，切片柱状图本来就不画（挤不下）。

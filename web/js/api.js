@@ -236,6 +236,8 @@ export const api = {
   deleteAgentSession: (id) => request(`/api/agent/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   agentRun: (body, opts = {}) => streamPost('/api/agent/run', body, opts),
   agentResume: (id, body, opts = {}) => streamPost(`/api/agent/sessions/${encodeURIComponent(id)}/resume`, body, opts),
+  agentStop: (id) => post(`/api/agent/sessions/${encodeURIComponent(id)}/stop`),
+  agentRollback: (changeId) => post(`/api/agent/file-changes/${encodeURIComponent(changeId)}/rollback`, {}),
 
   // 模型配好了没有（AI 抽屉和 ⓘ 用）
   assistStatus: () => get('/api/assist/status'),
