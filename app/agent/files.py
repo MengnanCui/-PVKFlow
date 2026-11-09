@@ -308,7 +308,12 @@ def plan_write(path: str, content: str | None = None, find: str | None = None,
         t, e = _decode(old)
         if t is None:
             raise FileToolError(f"{path} 是二进制文件，不能按文本改")
+        if e == "latin-1":
+            raise FileToolError(f"认不出 {path} 的编码，按文本改可能会弄坏它")
         old_text, enc = t, (e or "utf-8")
+        # utf-8-sig 也能解没有 BOM 的 UTF-8 —— 原文没有 BOM 就别在写回时凭空加一个
+        if enc == "utf-8-sig" and not old.startswith(b"\xef\xbb\xbf"):
+            enc = "utf-8"
     if find is not None:
         if old is None:
             raise FileToolError(f"{path} 不存在，不能按片段替换；要新建文件请给 content")
@@ -348,7 +353,7 @@ def write(path: str, content: str | None = None, find: str | None = None, replac
         shutil.copy2(p, bk)
         backup = str(bk)
     try:
-        data = new.encode(enc if enc not in ("latin-1",) else "utf-8")
+        data = new.encode(enc)
     except (UnicodeEncodeError, LookupError):
         data = new.encode("utf-8")
     p.parent.mkdir(parents=True, exist_ok=True)

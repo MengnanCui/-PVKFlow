@@ -140,6 +140,22 @@ def test_write_backs_up_and_rollback_restores(workspace):
         tools._ctx.session_id = None
 
 
+def test_edits_keep_the_files_encoding_and_do_not_add_a_bom(workspace):
+    d = config.WORKSPACE / "agent"
+    d.mkdir(exist_ok=True)
+    (d / "u8.txt").write_bytes("阈值 = 2.0\n".encode("utf-8"))
+    (d / "bom.txt").write_bytes("阈值 = 2.0\n".encode("utf-8-sig"))
+    (d / "gb.txt").write_bytes("阈值 = 2.0\n".encode("gb18030"))
+    (d / "u16.txt").write_bytes("阈值 = 2.0\n".encode("utf-16"))
+    for name in ("u8.txt", "bom.txt", "gb.txt", "u16.txt"):
+        ok, _ = _run("write_file", path=f"agent/{name}", find="2.0", replace="2.5")
+        assert ok, name
+    assert (d / "u8.txt").read_bytes() == "阈值 = 2.5\n".encode("utf-8")          # 没有凭空多一个 BOM
+    assert (d / "bom.txt").read_bytes() == "阈值 = 2.5\n".encode("utf-8-sig")
+    assert (d / "gb.txt").read_bytes() == "阈值 = 2.5\n".encode("gb18030")
+    assert (d / "u16.txt").read_bytes() == "阈值 = 2.5\n".encode("utf-16")
+
+
 def test_rollback_refuses_when_someone_changed_the_file_since(workspace):
     ok, r = _run("write_file", path="agent/a.txt", content="智能体写的")
     (config.WORKSPACE / "agent" / "a.txt").write_text("你后来手改的", encoding="utf-8")

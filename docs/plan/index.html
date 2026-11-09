@@ -513,6 +513,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr data-c="AI" data-confirm="1"><td class="id">D-147</td><td class="nowrap">AI</td><td><strong>不给任意命令（没有 shell / bash）</strong></td><td>你要的是读写文件、跑批处理、管任务，没说要跑命令；pi-agent 有 bash。<span class="why">要不要加一个「跑命令」工具（每次都问、限定目录），是你的决定</span></td><td>C058</td><td class="loc">app/agent/tools.py</td><td><span class="chip warn">建议你确认</span></td></tr>
 <tr data-c="显示"><td class="id">D-148</td><td class="nowrap">显示</td><td>「停止」先通知服务端（stop 接口）再断开连接；工具卡上的「撤销这次改动」是你点的，不经过模型、也不用再批</td><td>光断开连接的话，正在等批处理的那一步要等满才回得来。</td><td>C058</td><td class="loc">pages/agent.js · app/api/agent.py</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="AI"><td class="id">D-149</td><td class="nowrap">AI</td><td><code>batch_summary</code> 给的是这一次批处理算出来的数（不是当前值）：每个字段的样品数、均值、中位数、最小、最大；失败的样品最多列 20 个</td><td>「这次跑出来怎么样」和「现在每个样品的值」是两件事，说明里写清楚。</td><td>C058</td><td class="loc">app/agent/tools.py</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="平台"><td class="id">D-150</td><td class="nowrap">平台</td><td>智能体改文件时保持原编码：没有 BOM 的 UTF-8 不凭空加 BOM，带 BOM 的保留，GB18030 / UTF-16 按原样写回；认不出编码（只能当 latin-1 解）的文件不按文本改</td><td>自查发现 C058 改 UTF-8 文件会多出 BOM；按 latin-1 写回会把没动的部分也弄坏。</td><td>C059</td><td class="loc">app/agent/files.py</td><td><span class="chip info">可随时改</span></td></tr>
     </tbody>
   </table></div>
 </section>
@@ -751,6 +752,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C056_2026-11-09_本提交.md">C056</a></td><td class="nowrap">11-09</td><td>P14</td><td>P14 收尾：阶段报告 + 计划文档 v6</td><td class="small">记录规则（阶段结束）</td></tr>
 <tr><td class="id"><a href="changes/C057_2026-11-09_本提交.md">C057</a></td><td class="nowrap">11-09</td><td>P15</td><td>网关照 IFlow 改：Anthropic 协议、退避重试、思考参数、拒收降级、预设、拉取并测速</td><td class="small">你的要求「参考 iflow 进行网关修改」（P-48）</td></tr>
 <tr><td class="id"><a href="changes/C058_2026-11-09_本提交.md">C058</a></td><td class="nowrap">11-09</td><td>P15</td><td>智能体能读写文件、跑批处理、管任务（文件夹名单、写前备份、撤销、等任务、停止）</td><td class="small">你的要求「我需要读写文件，可以跑批处理，任务」（P-49）</td></tr>
+<tr><td class="id"><a href="changes/C059_2026-11-09_本提交.md">C059</a></td><td class="nowrap">11-09</td><td>P15</td><td>自查：智能体改文件时凭空加了 BOM —— 保持原编码；认不出编码的不改</td><td class="small">我自查发现</td></tr>
     </tbody>
   </table></div>
 </section>
