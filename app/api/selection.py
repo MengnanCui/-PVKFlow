@@ -5,8 +5,9 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter
 
+from app.api import bodies as B
 from app.api.common import ApiError, guard
 from app.storage import selection, sets
 
@@ -21,8 +22,9 @@ def _filter(payload: dict) -> dict:
 
 
 @router.post("/query")
-def query(payload: dict = Body(default={})) -> dict:
+def query(body: B.SelectionQueryBody | None = None) -> dict:
     """按筛选式取一页样品。服务端分页 —— 千级列表不能整个推给前端。"""
+    payload = B.dump(body)
     flt = _filter(payload)
     return selection.page(
         flt,
@@ -33,23 +35,26 @@ def query(payload: dict = Body(default={})) -> dict:
 
 
 @router.post("/count")
-def count(payload: dict = Body(default={})) -> dict:
+def count(body: B.FilterBody | None = None) -> dict:
+    payload = B.dump(body)
     return {"count": selection.count(_filter(payload))}
 
 
 @router.post("/facets")
-def facets(payload: dict = Body(default={})) -> dict:
+def facets(body: B.FilterBody | None = None) -> dict:
     """分面与计数。
 
     每个分面的计数是在**去掉自己这一面之后**的筛选式下算的 ——
     否则选了 B20 之后其他批次全变成 0，就没法改选了。
     """
+    payload = B.dump(body)
     return selection.facets(_filter(payload))
 
 
 @router.post("/suggest")
-def suggest(payload: dict = Body(...)) -> dict:
+def suggest(body: B.SuggestBody) -> dict:
     """手选几个之后，提议扩展成一条规则。返回的是筛选式，不是 ID 列表。"""
+    payload = B.dump(body)
     ids = payload.get("sample_ids") or []
     if len(ids) < 2:
         return {"suggestions": []}
@@ -57,8 +62,9 @@ def suggest(payload: dict = Body(...)) -> dict:
 
 
 @router.post("/ids")
-def ids(payload: dict = Body(default={})) -> dict:
+def ids(body: B.IdsBody | None = None) -> dict:
     """展开成 ID 列表。只在真的要执行时用。"""
+    payload = B.dump(body)
     flt = _filter(payload)
     limit = min(int(payload.get("limit") or 5000), 50000)
     out = selection.sample_ids(flt, limit=limit)
@@ -73,7 +79,8 @@ def list_sets() -> dict:
 
 
 @router.post("/sets")
-def create_set(payload: dict = Body(...)) -> dict:
+def create_set(body: B.CreateSetBody) -> dict:
+    payload = B.dump(body)
     try:
         return sets.create(
             name=payload.get("name", ""),
@@ -100,7 +107,8 @@ def freeze_set(set_id: str) -> dict:
 
 
 @router.post("/sets/{set_id}/rename")
-def rename_set(set_id: str, payload: dict = Body(...)) -> dict:
+def rename_set(set_id: str, body: B.RenameBody) -> dict:
+    payload = B.dump(body)
     # SetError 是 ValueError → 400；不存在 → 404（guard 统一翻译）
     return guard(sets.rename, set_id, payload.get("name", ""))
 

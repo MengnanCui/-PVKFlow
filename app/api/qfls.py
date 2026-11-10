@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
 from app import tasks
+from app.api import bodies as B
 from app.api.common import ApiError, guard
 from app.qfls import pipeline, scan
 from app.qfls import metrics as M
@@ -34,8 +35,9 @@ def method() -> dict:
 
 
 @router.post("/scan")
-def preview(payload: dict = Body(...)) -> dict:
+def preview(body: B.QflsScanBody) -> dict:
     """只扫描不处理：认出了哪些实验、多少帧、跳过了什么。"""
+    payload = B.dump(body)
     root = guard(pipeline.check_root, payload.get("root", ""))
     sc = guard(scan.scan, root, [pipeline.runs_dir()])
     frames = sc.pop("frames")
@@ -52,7 +54,8 @@ def runs() -> dict:
 
 
 @router.post("/runs")
-def start(payload: dict = Body(...)) -> dict:
+def start(body: B.QflsStartBody) -> dict:
+    payload = B.dump(body)
     is_demo = bool(payload.get("demo"))
     if not is_demo:
         guard(pipeline.check_root, payload.get("root", ""))

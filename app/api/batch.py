@@ -1,12 +1,13 @@
 """批处理与后台任务。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Query
+from fastapi import APIRouter, Query
 from fastapi.responses import Response
 
 from app import batch as batch_mod
 from app import batch_views as views
 from app import tasks
+from app.api import bodies as B
 from app.api.common import ApiError, guard
 from app.errors import NotFound
 from app.storage import selection
@@ -15,12 +16,13 @@ router = APIRouter(prefix="/api/batch", tags=["batch"])
 
 
 @router.post("/run")
-def run(payload: dict = Body(...)) -> dict:
+def run(body: B.BatchRunBody) -> dict:
     """提交一次批处理。
 
     配方就是单样品页当前那套参数 —— 不做第二套参数表单。
     立刻返回 task_id，前端轮询进度。
     """
+    payload = B.dump(body)
     try:
         return batch_mod.submit_batch(payload.get("filter"), set_id=payload.get("set_id") or None,
                                       recipe=payload.get("recipe"), title=payload.get("title") or "")
@@ -35,8 +37,9 @@ def run(payload: dict = Body(...)) -> dict:
 
 
 @router.post("/preview")
-def preview(payload: dict = Body(default={})) -> dict:
+def preview(body: B.FilterBody | None = None) -> dict:
     """跑之前先看会处理多少个、有多少个没有矩阵。"""
+    payload = B.dump(body)
     try:
         flt = selection.normalize(payload.get("filter") or {})
     except selection.FilterError as exc:

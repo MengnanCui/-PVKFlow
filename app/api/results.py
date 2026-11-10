@@ -1,8 +1,9 @@
 """关键结果与运行记录的查询。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Query
+from fastapi import APIRouter, Query
 
+from app.api import bodies as B
 from app.api.common import guard
 from app.storage import catalog, results, tabular
 
@@ -40,15 +41,17 @@ def fields() -> dict:
 
 
 @router.post("/results/{result_id}/quality")
-def set_quality(result_id: int, payload: dict = Body(...)) -> dict:
+def set_quality(result_id: int, body: B.QualityBody) -> dict:
     """审核一条：{quality: validated|review|reject, note?}。返回这条和审核之后的当前值。"""
+    payload = B.dump(body)
     out = guard(results.set_quality, result_id, payload.get("quality", ""), payload.get("note", ""))
     return {"ok": True, **out}
 
 
 @router.post("/results/quality")
-def set_quality_many(payload: dict = Body(...)) -> dict:
+def set_quality_many(body: B.QualityManyBody) -> dict:
     """一次审核几条：{ids: [...], quality, note?}。一条不存在就一条都不改。"""
+    payload = B.dump(body)
     return guard(results.set_quality_many, payload.get("ids") or [],
                  payload.get("quality", ""), payload.get("note", ""))
 

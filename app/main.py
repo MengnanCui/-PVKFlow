@@ -89,6 +89,8 @@ async def http_error(_: Request, exc: StarletteHTTPException):
 # pydantic 的边界报错原文是英文（"Input should be greater than or equal to 1"）。
 _BOUND = {"greater_than_equal": ("不小于", "ge"), "less_than_equal": ("不大于", "le"),
           "greater_than": ("大于", "gt"), "less_than": ("小于", "lt")}
+_TYPE = {"string_type": "文本", "list_type": "列表", "dict_type": "一组键值（JSON 对象）", "bool_type": "真假值",
+         "bool_parsing": "真假值", "model_type": "一组键值（JSON 对象）"}
 
 
 @app.exception_handler(RequestValidationError)
@@ -113,6 +115,11 @@ async def bad_request(_: Request, exc: RequestValidationError):
             parts.append(f"{where} 只能是 {opts}，给的是 {got!r}")
         elif kind == "missing":
             parts.append(f"少了一个参数：{where}")
+        elif kind == "extra_forbidden":
+            # 请求体只收声明过的键（app/api/bodies.py）—— 拼错的键原来静悄悄地被当成没给
+            parts.append(f"不认识的参数：{where}")
+        elif kind in _TYPE:
+            parts.append(f"{where} 要是{_TYPE[kind]}，给的是 {got!r}")
         elif kind.endswith("_parsing"):
             parts.append(f"{where} 要是数字，给的是 {got!r}")
         elif kind in _BOUND:

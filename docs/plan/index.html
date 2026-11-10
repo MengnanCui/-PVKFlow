@@ -189,11 +189,11 @@ ol.steps li, ul.plain li { margin: 4px 0; }
     <span>基于提交 <code>14f5d19</code></span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
   </div>
   <div class="cards">
-    <div class="card"><div class="k">修改报告</div><div class="v">74</div><div class="d">C001 – C074</div></div>
+    <div class="card"><div class="k">修改报告</div><div class="v">75</div><div class="d">C001 – C075</div></div>
     <div class="card"><div class="k">阶段</div><div class="v">P1–P18</div><div class="d">P18 = 全项目体检 + 交接文档</div></div>
     <div class="card"><div class="k">测试</div><div class="v">586</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 11 组（12 + 15 + 13 + 8 + 13 + 22 + 15 + 5 + 8 + 10 + 11 条）</div></div>
     <div class="card"><div class="k">你明确指定的</div><div class="v">58</div><div class="d">P-01 … P-58（P-54 … P-58 是 QFLS 成像的规格）</div></div>
-    <div class="card"><div class="k">我自行决定的</div><div class="v">194</div><div class="d">D-01 … D-194，<b>27</b> 项还待你确认</div></div>
+    <div class="card"><div class="k">我自行决定的</div><div class="v">195</div><div class="d">D-01 … D-195，<b>27</b> 项还待你确认</div></div>
     <div class="card"><div class="k">自查发现</div><div class="v">30 / 30</div><div class="d"><b>全部处理完</b>（P10 12 条 · P11 11 条 · P12 7 条）</div></div>
   </div>
 </header>
@@ -570,6 +570,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr data-c="平台"><td class="id">D-192</td><td class="nowrap">平台</td><td>批处理：找不到文件的样品在主线程里先记失败、不进计算线程；落库出错时撤掉剩下没开始的样品、立即报错（已写入的保留）</td><td>原来计算线程里读库（还会写 missing），落库出错要等剩下的全部算完才报。</td><td>C074</td><td class="loc">app/batch.py _resolve_path · run_batch</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="算法"><td class="id">D-193</td><td class="nowrap">算法</td><td>QFLS 扣分表里的 <code>metric / label / unit / abs</code> 是口径，处理时不能覆盖（只能改数字）</td><td>分数完全由参数表驱动之后，口径若能随手改，同一个「分数」就不是同一套方法了。</td><td>C074</td><td class="loc">app/qfls/metrics.py PARAMS["score"] · pipeline.merge_params</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="平台"><td class="id">D-194</td><td class="nowrap">平台</td><td>任务中断收尾由各任务注册的 <code>on_interrupted</code> 做；批处理的收尾把所有「运行中」的分析运行标失败</td><td>原来两份收尾分在任务队列和 main.py 里，各管各的。</td><td>C074</td><td class="loc">app/tasks.py register · app/batch.py · app/qfls/task.py</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="平台"><td class="id">D-195</td><td class="nowrap">平台</td><td>请求体只收声明过的键（<code>app/api/bodies.py</code>），别的键回 400「不认识的参数」；<code>POST /api/settings</code> 例外（任意键，按 editable 核对）</td><td>原来拼错一个键静悄悄地被当成没给。</td><td>C075</td><td class="loc">app/api/bodies.py · app/main.py bad_request</td><td><span class="chip info">可随时改</span></td></tr>
     </tbody>
   </table></div>
 </section>
@@ -842,6 +843,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C072_2026-11-09_本提交.md">C072</a></td><td class="nowrap">11-09</td><td>P18</td><td>P18 收尾：阶段报告 + 计划文档 v10</td><td class="small">记录规则（阶段结束）</td></tr>
 <tr><td class="id"><a href="changes/C073_2026-11-10_本提交.md">C073</a></td><td class="nowrap">11-10</td><td>P19</td><td>技术债（后端一）：公用工具合成一份（app/util）、NotFound、时间与 id 一种写法</td><td class="small">你的要求（修技术债）</td></tr>
 <tr><td class="id"><a href="changes/C074_2026-11-10_本提交.md">C074</a></td><td class="nowrap">11-10</td><td>P19</td><td>技术债（后端二）：业务逻辑搬出路由、流式响应共用、批处理线程不碰库、上限、任务中断钩子、QFLS 分数由参数表驱动</td><td class="small">你的要求（修技术债）</td></tr>
+<tr><td class="id"><a href="changes/C075_2026-11-10_本提交.md">C075</a></td><td class="nowrap">11-10</td><td>P19</td><td>技术债（后端三）：请求体都有模型 —— /api/docs 看得出参数，拼错的键回 400</td><td class="small">你的要求（修技术债）</td></tr>
     </tbody>
   </table></div>
 </section>

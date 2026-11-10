@@ -487,3 +487,25 @@ def test_not_found_is_404_but_a_plain_key_error_is_a_bug(workspace):
     assert e.value.status_code == 404 and e.value.detail["message"] == "没有这个样品：smp_x"
     with pytest.raises(KeyError):
         guard(bug)
+
+
+# ---------------------------------------------------------------- 请求体模型（C075）
+def test_request_bodies_reject_unknown_keys_in_plain_chinese(client):
+    """拼错的键原来静悄悄地被当成没给（`fitler` → 全部样品）；现在回 400，说是哪个键。"""
+    r = client.post("/api/selection/count", json={"fitler": {"q": "x"}})
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["message"] == "不认识的参数：fitler"
+    r = client.post("/api/relation/pairs", json={"x": ["a"], "y": "b"})
+    assert r.status_code == 400 and "x 要是文本" in r.json()["error"]["message"], r.text
+    # 可选的请求体照样可以不给
+    assert client.post("/api/selection/count").status_code == 200
+
+
+def test_every_json_body_has_a_model():
+    """除了设置（任意键，路由自己核对）和上传（multipart），请求体都要有模型 —— /api/docs 里才看得出参数。"""
+    import re
+    from pathlib import Path
+
+    left = {f.name: n for f in (Path(__file__).resolve().parents[1] / "app" / "api").glob("*.py")
+            if (n := len(re.findall(r"payload: dict = Body", f.read_text(encoding="utf-8"))))}
+    assert left == {"settings.py": 1}, left

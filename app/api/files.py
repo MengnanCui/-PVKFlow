@@ -9,9 +9,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Body, File, Query, UploadFile
+from fastapi import APIRouter, File, Query, UploadFile
 
 from app import config
+from app.api import bodies as B
 from app.api.common import ApiError, guard
 from app.storage import artifacts, catalog, db, ingest, naming
 
@@ -79,12 +80,13 @@ def browse(path: str = Query(...), show_hidden: bool = False) -> dict:
 
 
 @router.post("/scan")
-def scan(payload: dict = Body(...)) -> dict:
+def scan(body: B.ScanBody) -> dict:
     """扫描 + 分类 + 样品匹配预览。不写任何东西，给人确认用。
 
     mode="folders"：主文件夹 → 每个含 Data.csv 的子文件夹算一次测量。
     mode="files"（默认）：按文件名走命名规则，老流程不变。
     """
+    payload = B.dump(body)
     path = payload.get("path")
     if not path:
         raise ApiError("缺少 path", 400)
@@ -98,8 +100,9 @@ def scan(payload: dict = Body(...)) -> dict:
 
 
 @router.post("/import")
-def import_files(payload: dict = Body(...)) -> dict:
+def import_files(body: B.ImportBody) -> dict:
     """把（可能被用户改过的）预览行写进库。"""
+    payload = B.dump(body)
     entries = payload.get("files") or []
     if not entries:
         raise ApiError("没有要导入的文件", 400)
@@ -161,8 +164,9 @@ def verify() -> dict:
 
 
 @router.post("/naming/preview")
-def naming_preview(payload: dict = Body(...)) -> dict:
+def naming_preview(body: B.NamingPreviewBody) -> dict:
     """试一条命名规则，看它能不能正确解析出样品名。"""
+    payload = B.dump(body)
     paths = payload.get("paths") or []
     rules = payload.get("rules") or db.get_setting("naming_rules", list(config.DEFAULTS.naming_rules))
     return {"rules": rules, "rows": naming.preview(paths, rules)}

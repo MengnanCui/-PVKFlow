@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -55,6 +56,57 @@ def pages() -> list[str]:
     return head + sorted(body, key=lambda r: order.get(r[2], 9))
 
 
+def _body_name(op: dict) -> str:
+    """请求体是哪个模型（app/api/bodies.py）；上传文件的是 multipart，设置是任意键。"""
+    rb = op.get("requestBody")
+    if not rb:
+        return ""
+    for media, c in rb.get("content", {}).items():
+        sch = c.get("schema", {})
+        refs = [sch.get("$ref")] + [x.get("$ref") for x in sch.get("anyOf", [])]
+        name = next((r.rsplit("/", 1)[1] for r in refs if r), "")
+        if media.startswith("multipart"):
+            return "文件（multipart）"
+        if name:
+            return f"[`{name}`](#{name.lower()})"
+    return "任意键（见说明）"
+
+
+def _type(sch: dict) -> str:
+    if "anyOf" in sch:
+        return " \\| ".join(_type(x) for x in sch["anyOf"])
+    t = sch.get("type")
+    if t == "array":
+        return f"list[{_type(sch.get('items', {}))}]" if sch.get("items") else "list"
+    if t == "object":
+        return "object"
+    return {"string": "str", "integer": "int", "number": "float", "boolean": "bool", "null": "null"}.get(t, "any")
+
+
+def bodies(app) -> list[str]:
+    """每个请求体模型的字段。**只收这里列的键**，别的键回 400（app/api/bodies.py）。"""
+    spec = app.openapi()
+    used = set()
+    for ops in spec["paths"].values():
+        for op in ops.values():
+            for c in (op.get("requestBody") or {}).get("content", {}).values():
+                sch = c.get("schema", {})
+                for r in [sch.get("$ref")] + [x.get("$ref") for x in sch.get("anyOf", [])]:
+                    if r:
+                        used.add(r.rsplit("/", 1)[1])
+    comps = spec.get("components", {}).get("schemas", {})
+    out = ["定义在 `app/api/bodies.py`。**只收列出来的键**，拼错的键回 400「不认识的参数」；默认值 = 不给时的行为。", ""]
+    for name in sorted(n for n in used if n in comps and not n.startswith("Body_")):
+        sch = comps[name]
+        out += [f"#### {name}", "", "| 字段 | 类型 | 默认 | 说明 |", "|---|---|---|---|"]
+        req = set(sch.get("required", []))
+        for f, fs in sch.get("properties", {}).items():
+            dflt = "必填" if f in req else ("" if "default" not in fs else f"`{json.dumps(fs['default'], ensure_ascii=False)}`")
+            out.append(f"| `{f}` | {_type(fs)} | {dflt} | {cell(fs.get('description', ''))} |")
+        out.append("")
+    return out
+
+
 def routes(app) -> list[str]:
     spec = app.openapi()
     src_of = {}                       # tag → 定义它的文件（看 APIRouter(..., tags=[...])）
@@ -70,7 +122,7 @@ def routes(app) -> list[str]:
             params = ", ".join(p["name"] for p in op.get("parameters", []) if p.get("in") == "query")
             src = src_of.get(tag, "app/main.py")
             by_tag.setdefault(tag, []).append(
-                (path, method.upper(), params, "有" if "requestBody" in op else "", first_sentence(op.get("description", "")), src))
+                (path, method.upper(), params, _body_name(op), first_sentence(op.get("description", "")), src))
     out = []
     for tag in sorted(by_tag):
         rows = sorted(by_tag[tag])
@@ -158,6 +210,7 @@ def build() -> str:
         "",
         "## 1. 菜单与页面", "", *pages(), "",
         "## 2. 接口", "", *routes(app),
+        "### 请求体", "", *bodies(app),
         "## 3. 后台任务种类", "", "一次只跑一个（`app/tasks.py`），状态存在 `task` 表里，前端轮询 `/api/tasks/{id}`。", "", *task_kinds(), "",
         "## 4. 智能体工具", "", *agent_tools(), "",
         "## 5. 数据表", "", "定义在 `app/storage/schema.sql`；改表结构要加一步迁移（`app/storage/migrations.py`）。", "", *tables(), "",

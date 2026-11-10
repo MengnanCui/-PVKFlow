@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Query
 from app import config
 from app.ai import gateway, openai_compat
 from app.ai.provider import ProviderUnavailable
+from app.api import bodies as B
 from app.api.common import ApiError
 from app.storage import db
 
@@ -33,6 +34,7 @@ def get_settings() -> dict:
 
 @router.post("")
 def update_settings(payload: dict = Body(...)) -> dict:
+    """改几项设置：{键: 值}。键只能是 GET /api/settings 返回的 editable 里的（唯一收任意键的请求体，app/api/bodies.py）。"""
     unknown = set(payload) - _EDITABLE
     if unknown:
         raise ApiError(f"不可修改的设置项：{', '.join(sorted(unknown))}", 400)
@@ -72,12 +74,13 @@ def models() -> dict:
 
 
 @router.post("/models/presets")
-def add_preset(payload: dict = Body(...)) -> dict:
+def add_preset(body: B.PresetBody) -> dict:
     """把当前这个地址存成候选。
 
     原来候选清单是写死在代码里的六条，你没有任何办法把自己的网关加进去 ——
     每次配都得重新贴一遍地址。现在填一次，以后下拉里就有。
     """
+    payload = B.dump(body)
     try:
         openai_compat.save_preset(payload.get("name") or "",
                                   payload.get("base_url") or "",
@@ -106,7 +109,7 @@ def _saved_key(base_url: str) -> str:
 
 
 @router.post("/models/discover")
-def discover_models(payload: dict = Body(...)) -> dict:
+def discover_models(body: B.DiscoverBody) -> dict:
     """按地址拉一份可用模型列表，省得手打模型名。
 
     **密钥留空 = 沿用已经存着的那个**（和 /models/simple 同一条规则）：
@@ -116,6 +119,7 @@ def discover_models(payload: dict = Body(...)) -> dict:
     拉不到不是故障 —— 有的网关根本没实现 /models。界面上要保留手填那条路。
     另给一份「同一家族只留最新版本」的测速候选（照 IFlow：K2.5 / K2.6 → 测 K2.6；flash / pro 各自留）。
     """
+    payload = B.dump(body)
     base_url = (payload.get("base_url") or "").strip().rstrip("/")
     api_key = (payload.get("api_key") or "").strip()
     api = payload.get("api") or "openai-completions"
@@ -143,9 +147,10 @@ PROBE_MAX = 40
 
 
 @router.post("/models/test-one")
-def test_one_model(payload: dict = Body(...)) -> dict:
+def test_one_model(body: B.TestOneModelBody) -> dict:
     """给一个模型打一句「回复 ok」，回延迟（照 IFlow 的 test-one）。界面上并发 3 个逐个测、边测边显示。
     测不通也是 200 + ok:false —— 列表要把它沉底，而不是整体失败。"""
+    payload = B.dump(body)
     base_url = (payload.get("base_url") or "").strip().rstrip("/")
     model = (payload.get("model") or "").strip()
     if not base_url or not model:
@@ -161,12 +166,13 @@ def test_one_model(payload: dict = Body(...)) -> dict:
 
 
 @router.post("/models")
-def save_models(payload: dict = Body(...)) -> dict:
+def save_models(body: B.SaveModelsBody) -> dict:
     """保存 providers 配置。
 
     写到 workspace/config/providers.json —— 这个路径在 .gitignore 里，
     密钥不会被提交进仓库。
     """
+    payload = B.dump(body)
     raw = payload.get("config")
     if isinstance(raw, str):
         try:
@@ -186,7 +192,7 @@ def save_models(payload: dict = Body(...)) -> dict:
 
 
 @router.post("/models/simple")
-def save_simple_model(payload: dict = Body(...)) -> dict:
+def save_simple_model(body: B.SimpleModelBody) -> dict:
     """三个框存一个 provider：地址 + 密钥 + 模型名。
 
     绝大多数人只有一个网关一个模型，让他们为了填一个地址先去读一段 JSON
@@ -196,6 +202,7 @@ def save_simple_model(payload: dict = Body(...)) -> dict:
     **密钥留空 = 不改。** 改地址、换模型名的时候不该被迫把密钥再贴一遍 ——
     界面上只显示打码后的密钥，用户手里也未必还有原文。
     """
+    payload = B.dump(body)
     name = (payload.get("name") or "我的模型").strip()[:60]
     base_url = (payload.get("base_url") or "").strip().rstrip("/")
     api_key = (payload.get("api_key") or "").strip()
@@ -267,7 +274,8 @@ def save_simple_model(payload: dict = Body(...)) -> dict:
 
 
 @router.post("/models/test")
-def test_models(payload: dict = Body(default={})) -> dict:
+def test_models(body: B.TestModelsBody | None = None) -> dict:
+    payload = B.dump(body)
     return openai_compat.test_connection(payload.get("provider"), payload.get("model"))
 
 

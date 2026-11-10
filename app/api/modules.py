@@ -6,10 +6,11 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, File, UploadFile
+from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import Response
 
 from app import config
+from app.api import bodies as B
 from app.api.common import ApiError, guard
 from app.modules import install, ops, validate
 from app.modules.base import ModuleContext
@@ -35,8 +36,9 @@ def reload_modules() -> dict:
 
 
 @router.post("/validate")
-def validate_module(payload: dict = Body(default={})) -> dict:
+def validate_module(body: B.ModuleValidateBody | None = None) -> dict:
     """验证一个已装的模块。装之前的验证走 /import。"""
+    payload = B.dump(body)
     mid = (payload.get("module_id") or "").strip()
     mod = guard(registry.get, mid)
     others = {m.spec.id for m in registry.all()} - {mid}
@@ -44,12 +46,13 @@ def validate_module(payload: dict = Body(default={})) -> dict:
 
 
 @router.post("/{module_id}/compute")
-def compute(module_id: str, payload: dict = Body(...)) -> dict:
+def compute(module_id: str, body: B.ModuleComputeBody) -> dict:
     """拿全分辨率矩阵算一遍这个模块的所有面板。
 
     A 档面板在浏览器里已经用抽样谱算过一次了（那是预览）；这里是精确值。
     B 档面板只有这一条路。
     """
+    payload = B.dump(body)
     mod = guard(registry.get, module_id)
 
     artifact_id = (payload.get("artifact_id") or "").strip()

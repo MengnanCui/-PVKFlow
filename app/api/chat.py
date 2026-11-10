@@ -20,12 +20,13 @@ import logging
 import re
 from typing import Iterator
 
-from fastapi import APIRouter, Body, Query
+from fastapi import APIRouter, Query
 
 from app import config
 from app.ai import assistant
 from app.ai import context as ai_context
 from app.ai.provider import ChatMessage, ProviderUnavailable
+from app.api import bodies as B
 from app.api.common import ApiError, guard
 from app.api.streaming import ClosingStream, resolve_or_501, sse_frame
 from app.storage import conversations
@@ -52,7 +53,8 @@ def list_conversations(limit: int = Query(50, ge=1, le=200),
 
 
 @router.post("/conversations")
-def create_conversation(payload: dict = Body(default={})) -> dict:
+def create_conversation(body: B.NewConversationBody | None = None) -> dict:
+    payload = B.dump(body)
     cid = conversations.create(
         title=(payload.get("title") or "新对话").strip()[:120],
         scope=_clean_scope(payload.get("scope")))
@@ -68,7 +70,8 @@ def get_conversation(conversation_id: str) -> dict:
 
 
 @router.patch("/conversations/{conversation_id}")
-def patch_conversation(conversation_id: str, payload: dict = Body(...)) -> dict:
+def patch_conversation(conversation_id: str, body: B.PatchConversationBody) -> dict:
+    payload = B.dump(body)
     if not conversations.get(conversation_id):
         raise ApiError("没有这个对话", 404, "not_found")
     if "title" in payload:
@@ -87,11 +90,12 @@ def delete_conversation(conversation_id: str) -> dict:
 
 # ---------------------------------------------------------------- 范围预览
 @router.post("/scope/preview")
-def scope_preview(payload: dict = Body(default={})) -> dict:
+def scope_preview(body: B.ScopePreviewBody | None = None) -> dict:
     """抽屉里那个范围选择器的数字从这儿来。
 
     不调模型，纯查库 —— 切换「选中的 / 全部的」不该等模型。
     """
+    payload = B.dump(body)
     scope = _clean_scope(payload.get("scope"))
     built = guard(ai_context.build, scope)
     return {
@@ -104,7 +108,8 @@ def scope_preview(payload: dict = Body(default={})) -> dict:
 
 # ---------------------------------------------------------------- 发消息（流式）
 @router.post("/conversations/{conversation_id}/messages")
-def post_message(conversation_id: str, payload: dict = Body(...)):
+def post_message(conversation_id: str, body: B.MessageBody):
+    payload = B.dump(body)
     conv = conversations.get(conversation_id)
     if not conv:
         raise ApiError("没有这个对话", 404, "not_found")
@@ -227,7 +232,8 @@ def _stream(provider, model, messages, conversation_id, assistant_id,
 
 # ---------------------------------------------------------------- 钉住
 @router.post("/pins")
-def create_pin(payload: dict = Body(...)) -> dict:
+def create_pin(body: B.PinBody) -> dict:
+    payload = B.dump(body)
     run_id = (payload.get("analysis_run_id") or "").strip()
     note = (payload.get("note") or "").strip()
     if not run_id:

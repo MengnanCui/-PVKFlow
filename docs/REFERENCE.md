@@ -28,16 +28,16 @@
 | 方法 | 路径 | 查询参数 | 请求体 | 说明 |
 |---|---|---|---|---|
 | GET | `/api/agent/file-changes` | session_id |  |  |
-| POST | `/api/agent/file-changes/{change_id}/rollback` |  | 有 | 界面上「撤销这次改动」—— 是你点的，不经过模型、也不用再批。 |
-| POST | `/api/agent/run` |  | 有 | 说一句话。没有 session_id 就新建一个 —— 等第一句话才建，不攒空会话（L-1 的教训）。 |
+| POST | `/api/agent/file-changes/{change_id}/rollback` |  | [`RollbackBody`](#rollbackbody) | 界面上「撤销这次改动」—— 是你点的，不经过模型、也不用再批。 |
+| POST | `/api/agent/run` |  | [`AgentRunBody`](#agentrunbody) | 说一句话。没有 session_id 就新建一个 —— 等第一句话才建，不攒空会话（L-1 的教训）。 |
 | GET | `/api/agent/sessions` |  |  |  |
 | DELETE | `/api/agent/sessions/{session_id}` |  |  |  |
 | GET | `/api/agent/sessions/{session_id}` |  |  |  |
-| POST | `/api/agent/sessions/{session_id}/resume` |  | 有 | 批完接着跑：{decisions: {调用id: approve\|reject}, remember: [工具名]}。没提到的调用当作拒绝。 |
+| POST | `/api/agent/sessions/{session_id}/resume` |  | [`AgentResumeBody`](#agentresumebody) | 批完接着跑：{decisions: {调用id: approve\|reject}, remember: [工具名]}。没提到的调用当作拒绝。 |
 | POST | `/api/agent/sessions/{session_id}/stop` |  |  | 「停止」：回路在下一步之间、等任务的下一秒就停。前端点停止时先调它再断开连接。 |
 | POST | `/api/agent/sessions/{session_id}/undo-files` |  |  | 「/undo」：撤销这个会话里智能体改过的全部文件（从新到旧）。是你点的，不经过模型。 |
 | GET | `/api/agent/settings` |  |  |  |
-| POST | `/api/agent/settings` |  | 有 |  |
+| POST | `/api/agent/settings` |  | [`AgentSettingsBody`](#agentsettingsbody) |  |
 | GET | `/api/agent/tools` |  |  |  |
 
 ### artifacts（`app/api/artifacts.py`）
@@ -59,8 +59,8 @@
 
 | 方法 | 路径 | 查询参数 | 请求体 | 说明 |
 |---|---|---|---|---|
-| POST | `/api/batch/preview` |  | 有 | 跑之前先看会处理多少个、有多少个没有矩阵。 |
-| POST | `/api/batch/run` |  | 有 | 提交一次批处理。 |
+| POST | `/api/batch/preview` |  | [`FilterBody`](#filterbody) | 跑之前先看会处理多少个、有多少个没有矩阵。 |
+| POST | `/api/batch/run` |  | [`BatchRunBody`](#batchrunbody) | 提交一次批处理。 |
 | GET | `/api/batch/runs` | limit |  |  |
 | GET | `/api/batch/runs/{parent_run_id}` |  |  |  |
 | GET | `/api/batch/runs/{parent_run_id}/axes` |  |  | 这批数据的波长轴和时间轴范围（读不到返回 available=false，不报错）。 |
@@ -74,15 +74,15 @@
 | 方法 | 路径 | 查询参数 | 请求体 | 说明 |
 |---|---|---|---|---|
 | GET | `/api/chat/conversations` | limit, topic |  | 带 `topic` 就只列这个术语下的对话（术语 ⓘ 弹窗用），不带就是全部。 |
-| POST | `/api/chat/conversations` |  | 有 |  |
+| POST | `/api/chat/conversations` |  | [`NewConversationBody`](#newconversationbody) |  |
 | DELETE | `/api/chat/conversations/{conversation_id}` |  |  |  |
 | GET | `/api/chat/conversations/{conversation_id}` |  |  |  |
-| PATCH | `/api/chat/conversations/{conversation_id}` |  | 有 |  |
-| POST | `/api/chat/conversations/{conversation_id}/messages` |  | 有 |  |
+| PATCH | `/api/chat/conversations/{conversation_id}` |  | [`PatchConversationBody`](#patchconversationbody) |  |
+| POST | `/api/chat/conversations/{conversation_id}/messages` |  | [`MessageBody`](#messagebody) |  |
 | GET | `/api/chat/pins` | run |  |  |
-| POST | `/api/chat/pins` |  | 有 |  |
+| POST | `/api/chat/pins` |  | [`PinBody`](#pinbody) |  |
 | DELETE | `/api/chat/pins/{pin_id}` |  |  |  |
-| POST | `/api/chat/scope/preview` |  | 有 | 抽屉里那个范围选择器的数字从这儿来。 |
+| POST | `/api/chat/scope/preview` |  | [`ScopePreviewBody`](#scopepreviewbody) | 抽屉里那个范围选择器的数字从这儿来。 |
 
 ### files（`app/api/files.py`）
 
@@ -91,11 +91,11 @@
 | GET | `/api/files` | q, sample_id, batch_id, ext, status, limit, offset |  |  |
 | GET | `/api/files/browse` | path, show_hidden |  | 列一个目录。只读，不改任何东西。 |
 | GET | `/api/files/facets` |  |  |  |
-| POST | `/api/files/import` |  | 有 | 把（可能被用户改过的）预览行写进库。 |
-| POST | `/api/files/naming/preview` |  | 有 | 试一条命名规则，看它能不能正确解析出样品名。 |
+| POST | `/api/files/import` |  | [`ImportBody`](#importbody) | 把（可能被用户改过的）预览行写进库。 |
+| POST | `/api/files/naming/preview` |  | [`NamingPreviewBody`](#namingpreviewbody) | 试一条命名规则，看它能不能正确解析出样品名。 |
 | GET | `/api/files/roots` |  |  | 给目录浏览器一个起点：盘符（Windows）或常用目录。 |
-| POST | `/api/files/scan` |  | 有 | 扫描 + 分类 + 样品匹配预览。不写任何东西，给人确认用。 |
-| POST | `/api/files/upload` |  | 有 | 拖拽上传通道。 |
+| POST | `/api/files/scan` |  | [`ScanBody`](#scanbody) | 扫描 + 分类 + 样品匹配预览。不写任何东西，给人确认用。 |
+| POST | `/api/files/upload` |  | 文件（multipart） | 拖拽上传通道。 |
 | POST | `/api/files/verify` |  |  | 巡检原始文件（引用型 + 复制型）还在不在；找不到的列出来（最多 200 条，总数照实给）。 |
 | GET | `/api/files/{artifact_id}` |  |  |  |
 
@@ -104,11 +104,11 @@
 | 方法 | 路径 | 查询参数 | 请求体 | 说明 |
 |---|---|---|---|---|
 | GET | `/api/modules` |  |  |  |
-| POST | `/api/modules/import` |  | 有 | 装一个模块的 zip。**先验证，通过了才落地**；同 id 是升级，平台自带的不让覆盖。 |
+| POST | `/api/modules/import` |  | 文件（multipart） | 装一个模块的 zip。**先验证，通过了才落地**；同 id 是升级，平台自带的不让覆盖。 |
 | POST | `/api/modules/reload` |  |  |  |
-| POST | `/api/modules/validate` |  | 有 | 验证一个已装的模块。装之前的验证走 /import。 |
+| POST | `/api/modules/validate` |  | [`ModuleValidateBody`](#modulevalidatebody) | 验证一个已装的模块。装之前的验证走 /import。 |
 | DELETE | `/api/modules/{module_id}` |  |  | 卸载（删它的目录、重载）。平台自带的不让卸。 |
-| POST | `/api/modules/{module_id}/compute` |  | 有 | 拿全分辨率矩阵算一遍这个模块的所有面板。 |
+| POST | `/api/modules/{module_id}/compute` |  | [`ModuleComputeBody`](#modulecomputebody) | 拿全分辨率矩阵算一遍这个模块的所有面板。 |
 | GET | `/api/modules/{module_id}/export` |  |  | 打包成 zip 发给别人。这就是「分发」的全部 —— 不需要 Git。 |
 
 ### qfls（`app/api/qfls.py`）
@@ -117,20 +117,20 @@
 |---|---|---|---|---|
 | GET | `/api/qfls/method` |  |  | 方法说明页要的：阈值、指标定义。和处理时用的是同一份 PARAMS。 |
 | GET | `/api/qfls/runs` |  |  |  |
-| POST | `/api/qfls/runs` |  | 有 |  |
+| POST | `/api/qfls/runs` |  | [`QflsStartBody`](#qflsstartbody) |  |
 | DELETE | `/api/qfls/runs/{run_id}` |  |  |  |
 | GET | `/api/qfls/runs/{run_id}` |  |  |  |
 | GET | `/api/qfls/runs/{run_id}/files/{path}` |  |  |  |
 | GET | `/api/qfls/runs/{run_id}/points` |  |  |  |
 | GET | `/api/qfls/runs/{run_id}/points/{key}` |  |  |  |
-| POST | `/api/qfls/scan` |  | 有 | 只扫描不处理：认出了哪些实验、多少帧、跳过了什么。 |
+| POST | `/api/qfls/scan` |  | [`QflsScanBody`](#qflsscanbody) | 只扫描不处理：认出了哪些实验、多少帧、跳过了什么。 |
 
 ### relation（`app/api/relation.py`）
 
 | 方法 | 路径 | 查询参数 | 请求体 | 说明 |
 |---|---|---|---|---|
-| POST | `/api/relation/groups` |  | 有 | {y, by?, filter?} → 每组的箱线图统计，离群点带样品。 |
-| POST | `/api/relation/pairs` |  | 有 | {x, y, filter?} → 每个样品一个点 + 皮尔逊 / 斯皮尔曼（带 p 值）。 |
+| POST | `/api/relation/groups` |  | [`RelationGroupsBody`](#relationgroupsbody) | {y, by?, filter?} → 每组的箱线图统计，离群点带样品。 |
+| POST | `/api/relation/pairs` |  | [`RelationPairsBody`](#relationpairsbody) | {x, y, filter?} → 每个样品一个点 + 皮尔逊 / 斯皮尔曼（带 p 值）。 |
 
 ### results（`app/api/results.py`）
 
@@ -140,8 +140,8 @@
 | GET | `/api/results` | field, sample_id, quality, limit, offset, history |  | 默认每个 (样品, 字段) 只给当前值；`?history=true` 给全部历史。 |
 | GET | `/api/results/by-sample/{sample_id}` |  |  | 一个样品的全部关键结果：每个字段的当前值 + 历史。 |
 | GET | `/api/results/fields` |  |  | 有哪些字段可选 —— 构效关系页选 X/Y 的候选来源。 |
-| POST | `/api/results/quality` |  | 有 | 一次审核几条：{ids: [...], quality, note?}。一条不存在就一条都不改。 |
-| POST | `/api/results/{result_id}/quality` |  | 有 | 审核一条：{quality: validated\|review\|reject, note?}。返回这条和审核之后的当前值。 |
+| POST | `/api/results/quality` |  | [`QualityManyBody`](#qualitymanybody) | 一次审核几条：{ids: [...], quality, note?}。一条不存在就一条都不改。 |
+| POST | `/api/results/{result_id}/quality` |  | [`QualityBody`](#qualitybody) | 审核一条：{quality: validated\|review\|reject, note?}。返回这条和审核之后的当前值。 |
 | GET | `/api/runs/{run_id}` |  |  |  |
 | GET | `/api/samples` | limit |  |  |
 | GET | `/api/storage/stats` |  |  | 数据存储页要展示的真实分布。 |
@@ -151,35 +151,35 @@
 
 | 方法 | 路径 | 查询参数 | 请求体 | 说明 |
 |---|---|---|---|---|
-| POST | `/api/selection/count` |  | 有 |  |
-| POST | `/api/selection/facets` |  | 有 | 分面与计数。 |
-| POST | `/api/selection/ids` |  | 有 | 展开成 ID 列表。只在真的要执行时用。 |
-| POST | `/api/selection/query` |  | 有 | 按筛选式取一页样品。服务端分页 —— 千级列表不能整个推给前端。 |
+| POST | `/api/selection/count` |  | [`FilterBody`](#filterbody) |  |
+| POST | `/api/selection/facets` |  | [`FilterBody`](#filterbody) | 分面与计数。 |
+| POST | `/api/selection/ids` |  | [`IdsBody`](#idsbody) | 展开成 ID 列表。只在真的要执行时用。 |
+| POST | `/api/selection/query` |  | [`SelectionQueryBody`](#selectionquerybody) | 按筛选式取一页样品。服务端分页 —— 千级列表不能整个推给前端。 |
 | GET | `/api/selection/sets` |  |  |  |
-| POST | `/api/selection/sets` |  | 有 |  |
+| POST | `/api/selection/sets` |  | [`CreateSetBody`](#createsetbody) |  |
 | DELETE | `/api/selection/sets/{set_id}` |  |  | 只删样品集本身（名字 + 筛选式 / 快照），样品和结果不动。 |
 | GET | `/api/selection/sets/{set_id}` |  |  |  |
 | POST | `/api/selection/sets/{set_id}/freeze` |  |  | 把动态集在此刻钉死。要发论文了就用这个。 |
-| POST | `/api/selection/sets/{set_id}/rename` |  | 有 |  |
-| POST | `/api/selection/suggest` |  | 有 | 手选几个之后，提议扩展成一条规则。返回的是筛选式，不是 ID 列表。 |
+| POST | `/api/selection/sets/{set_id}/rename` |  | [`RenameBody`](#renamebody) |  |
+| POST | `/api/selection/suggest` |  | [`SuggestBody`](#suggestbody) | 手选几个之后，提议扩展成一条规则。返回的是筛选式，不是 ID 列表。 |
 
 ### settings（`app/api/settings.py`）
 
 | 方法 | 路径 | 查询参数 | 请求体 | 说明 |
 |---|---|---|---|---|
 | GET | `/api/settings` |  |  |  |
-| POST | `/api/settings` |  | 有 |  |
+| POST | `/api/settings` |  | 任意键（见说明） | 改几项设置：{键: 值}。键只能是 GET /api/settings 返回的 editable 里的（唯一收任意键的请求体，app/api/bodies.py）。 |
 | GET | `/api/settings/cache` |  |  | 解析缓存占了多少。上千个样品能到几个 GB，得让人看得见、能清掉。 |
 | POST | `/api/settings/cache/clear` |  |  |  |
 | GET | `/api/settings/models` |  |  | 模型配置概览。密钥在这里被打码，绝不原样回传前端。 |
-| POST | `/api/settings/models` |  | 有 | 保存 providers 配置。 |
-| POST | `/api/settings/models/discover` |  | 有 | 按地址拉一份可用模型列表，省得手打模型名。 |
+| POST | `/api/settings/models` |  | [`SaveModelsBody`](#savemodelsbody) | 保存 providers 配置。 |
+| POST | `/api/settings/models/discover` |  | [`DiscoverBody`](#discoverbody) | 按地址拉一份可用模型列表，省得手打模型名。 |
 | GET | `/api/settings/models/example` |  |  |  |
 | DELETE | `/api/settings/models/presets` | base_url |  | 从本机名单里去掉一个地址。内置的那几条去不掉 —— 它们不在这个文件里。 |
-| POST | `/api/settings/models/presets` |  | 有 | 把当前这个地址存成候选。 |
-| POST | `/api/settings/models/simple` |  | 有 | 三个框存一个 provider：地址 + 密钥 + 模型名。 |
-| POST | `/api/settings/models/test` |  | 有 |  |
-| POST | `/api/settings/models/test-one` |  | 有 | 给一个模型打一句「回复 ok」，回延迟（照 IFlow 的 test-one）。界面上并发 3 个逐个测、边测边显示。 测不通也是 200 + ok:false —— 列表要把它沉底，而不是整体失败。 |
+| POST | `/api/settings/models/presets` |  | [`PresetBody`](#presetbody) | 把当前这个地址存成候选。 |
+| POST | `/api/settings/models/simple` |  | [`SimpleModelBody`](#simplemodelbody) | 三个框存一个 provider：地址 + 密钥 + 模型名。 |
+| POST | `/api/settings/models/test` |  | [`TestModelsBody`](#testmodelsbody) |  |
+| POST | `/api/settings/models/test-one` |  | [`TestOneModelBody`](#testonemodelbody) | 给一个模型打一句「回复 ok」，回延迟（照 IFlow 的 test-one）。界面上并发 3 个逐个测、边测边显示。 测不通也是 200 + ok:false —— 列表要把它沉底，而不是整体失败。 |
 
 ### spectra（`app/api/spectra.py`）
 
@@ -206,6 +206,273 @@
 | 方法 | 路径 | 查询参数 | 请求体 | 说明 |
 |---|---|---|---|---|
 | GET | `/api/health` |  |  |  |
+
+### 请求体
+
+定义在 `app/api/bodies.py`。**只收列出来的键**，拼错的键回 400「不认识的参数」；默认值 = 不给时的行为。
+
+#### AgentResumeBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `provider` | str \| null |  | 用哪个模型网关；不给 = 设置里的默认 |
+| `model` | str \| null |  | 用哪个模型；不给 = 设置里的默认 |
+| `decisions` | object |  | 对每个待批工具调用的决定 {调用 id: "approve" \| 别的 = 拒绝} |
+| `remember` | list |  | 以后不用再问的工具名 |
+
+#### AgentRunBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `provider` | str \| null |  | 用哪个模型网关；不给 = 设置里的默认 |
+| `model` | str \| null |  | 用哪个模型；不给 = 设置里的默认 |
+| `prompt` | str | `""` | 要做的事（必填，最多 4000 字） |
+| `session_id` | str \| null |  | 接着哪个会话说；不给 = 新建 |
+| `run_mode` | str | `"exec"` | exec = 直接执行；plan = 先出计划 |
+| `plan` | any |  | 批准的计划 {goal, steps, risks, questions}：给了就按它执行 |
+
+#### AgentSettingsBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `permission` | str \| null |  | 权限档位；给了才改 |
+| `commands` | bool \| null |  | 能不能跑命令；给了才改 |
+| `driver` | str \| null |  | 驱动方式；给了才改 |
+| `roots` | list \| null |  | 工作区之外能碰的文件夹 [{path, write}]，最多 20 个；给了就整张换掉 |
+
+#### BatchRunBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `filter` | object \| null |  | 筛选式，见 docs/REFERENCE.md「筛选式」；不给 = 全部样品 |
+| `set_id` | str \| null |  | 按样品集跑：给了就用它的筛选式 / 名单，filter 不再看 |
+| `recipe` | object \| null |  | 配方（控件取值）；空 = 已装模块声明的默认配方，见 /api/batch/preview |
+| `title` | str | `""` | 这次运行的名字 |
+
+#### CreateSetBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `name` | str | `""` | 样品集名字 |
+| `kind` | str | `"dynamic"` | dynamic = 存筛选式（样品会变）；pinned = 存名单（钉死） |
+| `filter` | object \| null |  | 筛选式，见 docs/REFERENCE.md「筛选式」；不给 = 全部样品 |
+| `sample_ids` | list[str] \| null |  | pinned 时的名单；不给就按 filter 当场展开 |
+| `note` | str | `""` | 备注 |
+
+#### DiscoverBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `base_url` | str | `""` | 接口地址 |
+| `api_key` | str | `""` | 密钥；留空 = 用这个地址已经存着的 |
+| `api` | str | `"openai-completions"` | 协议 |
+
+#### FilterBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `filter` | object \| null |  | 筛选式，见 docs/REFERENCE.md「筛选式」；不给 = 全部样品 |
+
+#### IdsBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `filter` | object \| null |  | 筛选式，见 docs/REFERENCE.md「筛选式」；不给 = 全部样品 |
+| `limit` | int | `5000` | 最多展开多少个（上限 50000） |
+
+#### ImportBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `files` | list[object] |  | 扫描预览的行（可能被人改过），原样传回 |
+| `source_hint` | str | `""` | 来源备注，记进导入批次 |
+
+#### MessageBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `provider` | str \| null |  | 用哪个模型网关；不给 = 设置里的默认 |
+| `model` | str \| null |  | 用哪个模型；不给 = 设置里的默认 |
+| `content` | str | `""` | 问题（必填） |
+| `scope` | object \| null |  | 这次的范围；不给 = 沿用会话上存的 |
+| `spot` | str \| null |  | 术语 ⓘ：眼前这处读数的摘要，存进这条消息 |
+| `context_note` | str \| null |  | 术语 ⓘ：定义原文 + 附加段 + 眼前读数，只进 system、不进会话 |
+
+#### ModuleComputeBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `artifact_id` | str | `""` | 矩阵文件的 artifact_id（必填） |
+| `params` | object |  | 控件取值；没给的用模块声明的默认值 |
+| `changed` | list[str] \| null |  | 这次动过的控件 key；给了就只重算受影响的面板 |
+
+#### ModuleValidateBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `module_id` | str | `""` | 已装模块的 id |
+
+#### NamingPreviewBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `paths` | list[str] |  | 要试的文件路径 / 文件名 |
+| `rules` | list \| null |  | 命名规则；不给 = 用设置里存的那套 |
+
+#### NewConversationBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `title` | str \| null |  | 不给 = 「新对话」 |
+| `scope` | object \| null |  | 范围 {mode, filter, label, topic, run_id} |
+
+#### PatchConversationBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `title` | str \| null |  | 给了才改 |
+| `scope` | object \| null |  | 给了才改 |
+
+#### PinBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `analysis_run_id` | str | `""` | 钉到哪一次对比（必填） |
+| `note` | str | `""` | 分析正文（必填，存快照） |
+| `conversation_id` | str \| null |  | 出自哪个对话 |
+| `message_id` | str \| null |  | 出自哪条回答 |
+
+#### PresetBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `name` | str | `""` | 显示名 |
+| `base_url` | str | `""` | 接口地址 |
+| `api` | str | `"openai-completions"` | 协议 |
+
+#### QflsScanBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `root` | str | `""` | 数据根目录 |
+
+#### QflsStartBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `root` | str \| null |  | 数据根目录（demo=true 时不用给） |
+| `demo` | bool | `false` | true = 先生成演示数据（假想）再处理 |
+| `full` | bool | `false` | 演示数据：true = 按全尺寸生成（慢） |
+| `title` | str \| null |  | 这次处理的名字；不给 = 文件夹名 |
+| `figures` | bool | `true` | 是否出图（不出图快很多） |
+| `params` | object |  | 阈值覆盖，形状同 GET /api/qfls/method 的 params；嵌套的深合并 |
+
+#### QualityBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `quality` | str | `""` | validated / review / reject |
+| `note` | str | `""` | 为什么这么标 |
+
+#### QualityManyBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `quality` | str | `""` | validated / review / reject |
+| `note` | str | `""` | 为什么这么标 |
+| `ids` | list[int] |  | key_result 的 id；重复的只算一次，一次最多 500 条 |
+
+#### RelationGroupsBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `y` | str | `""` | 要看分布的字段（必填） |
+| `by` | str | `"batch"` | 按什么分组 |
+| `filter` | object \| null |  | 筛选式，见 docs/REFERENCE.md「筛选式」；不给 = 全部样品 |
+
+#### RelationPairsBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `x` | str | `""` | X 字段（GET /api/results/fields 里的 key，必填） |
+| `y` | str | `""` | Y 字段（必填） |
+| `filter` | object \| null |  | 筛选式，见 docs/REFERENCE.md「筛选式」；不给 = 全部样品 |
+
+#### RenameBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `name` | str | `""` | 新名字 |
+
+#### RollbackBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `force` | bool | `false` | 文件在那之后又被改过也照样恢复 |
+
+#### SaveModelsBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `config` | object \| str \| null |  | providers 配置：JSON 对象，或者它的文本 |
+
+#### ScanBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `path` | str \| null |  | 本机文件夹或文件的路径（必填） |
+| `mode` | str | `"files"` | files = 按文件名走命名规则；folders = 每个含 Data.csv 的子文件夹算一次测量 |
+| `recursive` | bool | `true` | files 模式下是否进子文件夹 |
+
+#### ScopePreviewBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `scope` | object \| null |  | 范围 {mode, filter, label, topic, run_id} |
+
+#### SelectionQueryBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `filter` | object \| null |  | 筛选式，见 docs/REFERENCE.md「筛选式」；不给 = 全部样品 |
+| `limit` | int | `100` | 一页多少个（最多 500） |
+| `offset` | int | `0` | 从第几个开始 |
+| `order` | str | `"name"` | 排序 |
+
+#### SimpleModelBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `name` | str | `"我的模型"` | 显示名 |
+| `base_url` | str | `""` | 接口地址（必填，http:// 或 https:// 开头） |
+| `api_key` | str | `""` | 密钥；留空 = 不改 |
+| `api` | str | `"openai-completions"` | 协议 |
+| `thinking` | str \| null |  | 思考档位 |
+| `model_ids` | list[str] \| null |  | 一次存几个模型 |
+| `model_id` | str \| null |  | 老写法：只存一个 |
+
+#### SuggestBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `filter` | object \| null |  | 筛选式，见 docs/REFERENCE.md「筛选式」；不给 = 全部样品 |
+| `sample_ids` | list[str] |  | 手选的几个样品（少于 2 个不提议） |
+
+#### TestModelsBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `provider` | str \| null |  | 用哪个模型网关；不给 = 设置里的默认 |
+| `model` | str \| null |  | 用哪个模型；不给 = 设置里的默认 |
+
+#### TestOneModelBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `base_url` | str | `""` | 接口地址 |
+| `api_key` | str | `""` | 密钥；留空 = 用这个地址已经存着的 |
+| `api` | str | `"openai-completions"` | 协议 |
+| `model` | str | `""` | 模型名 |
 
 ## 3. 后台任务种类
 
@@ -282,7 +549,7 @@
 | `HTE_LLM_RETRIES` | "3" | `app/ai/gateway.py:35` |
 | `HTE_LLM_RETRY_BASE` | "1.0" | `app/ai/gateway.py:36` |
 | `HTE_LLM_TIMEOUT` | "120" | `app/ai/gateway.py:33` |
-| `HTE_NO_BROWSER` | （无） | `app/main.py:215` |
+| `HTE_NO_BROWSER` | （无） | `app/main.py:222` |
 | `HTE_PORT` | "8765" | `app/config.py:42` |
 | `HTE_WORKSPACE` | ROOT / "workspace" | `app/config.py:19` |
 

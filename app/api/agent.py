@@ -9,9 +9,10 @@ import logging
 import threading
 from typing import Iterator
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter
 
 from app.agent import files, loop, tools
+from app.api import bodies as B
 from app.api.common import ApiError, guard
 from app.api.streaming import ClosingStream, resolve_or_501, sse_frame
 from app.storage import agent_sessions as sessions
@@ -49,7 +50,8 @@ def get_settings() -> dict:
 
 
 @router.post("/settings")
-def save_settings(payload: dict = Body(...)) -> dict:
+def save_settings(body: B.AgentSettingsBody) -> dict:
+    payload = B.dump(body)
     if "permission" in payload:
         if payload["permission"] not in PERMISSIONS:
             raise ApiError(f"permission 只能是 {' / '.join(PERMISSIONS)}", 400)
@@ -87,8 +89,9 @@ def file_changes(session_id: str = "") -> dict:
 
 
 @router.post("/file-changes/{change_id}/rollback")
-def rollback_change(change_id: str, payload: dict = Body(default={})) -> dict:
+def rollback_change(change_id: str, body: B.RollbackBody | None = None) -> dict:
     """界面上「撤销这次改动」—— 是你点的，不经过模型、也不用再批。"""
+    payload = B.dump(body)
     try:
         return files.rollback(change_id, None, bool(payload.get("force")))
     except files.FileToolError as exc:
@@ -167,8 +170,9 @@ def _sse(session_id: str, gen_kwargs: dict) -> ClosingStream:
 
 
 @router.post("/run")
-def run(payload: dict = Body(...)):
+def run(body: B.AgentRunBody):
     """说一句话。没有 session_id 就新建一个 —— 等第一句话才建，不攒空会话（L-1 的教训）。"""
+    payload = B.dump(body)
     prompt = (payload.get("prompt") or "").strip()
     if not prompt:
         raise ApiError("请输入要做的事", 400)
@@ -200,8 +204,9 @@ def run(payload: dict = Body(...)):
 
 
 @router.post("/sessions/{session_id}/resume")
-def resume(session_id: str, payload: dict = Body(...)):
+def resume(session_id: str, body: B.AgentResumeBody):
     """批完接着跑：{decisions: {调用id: approve|reject}, remember: [工具名]}。没提到的调用当作拒绝。"""
+    payload = B.dump(body)
     s = guard(sessions.get, session_id)
     if not s["pending"]:
         raise ApiError("没有在等确认的操作（可能已经批过了）", 409, "no_pending")
