@@ -16,13 +16,13 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import secrets
 import shutil
 from datetime import datetime
 from pathlib import Path
 
 from app import config
-from app.parsers.sniff import decode_bytes
+from app.util.files import atomic_write_bytes
+from app.util.text import decode_bytes
 from app.storage import db
 
 AGENT_DIR = "agent"               # 工作区里的智能体专用目录
@@ -373,7 +373,7 @@ def preview_write(path: str, content: str | None = None, find: str | None = None
 def write(path: str, content: str | None = None, find: str | None = None, replace: str | None = None,
           note: str = "", session_id: str | None = None) -> dict:
     p, old, new, enc = plan_write(path, content, find, replace)
-    change_id = datetime.now().strftime("%Y%m%d%H%M%S") + "-" + secrets.token_hex(3)
+    change_id = db.new_id("chg", sortable=True)     # 按时间排得出先后（id 规则见 app/util/ids.py）
     backup = None
     if old is not None:
         bk = config.WORKSPACE / BACKUP_DIR / change_id / p.name
@@ -384,10 +384,7 @@ def write(path: str, content: str | None = None, find: str | None = None, replac
         data = new.encode(enc)
     except (UnicodeEncodeError, LookupError):
         data = new.encode("utf-8")
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f".{p.name}.agent-tmp")
-    tmp.write_bytes(data)
-    os.replace(tmp, p)                     # 原子替换：写到一半断电也不会留下半个文件
+    atomic_write_bytes(p, data)            # 原子替换：写到一半断电也不会留下半个文件
     with db.tx() as c:
         c.execute("INSERT INTO agent_file_change(change_id, session_id, path, existed, before_sha, after_sha,"
                   " backup, note, created_at) VALUES(?,?,?,?,?,?,?,?,?)",

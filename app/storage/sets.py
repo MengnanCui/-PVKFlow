@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 
 from app.storage import db, selection
+from app.errors import NotFound
 
 
 class SetError(ValueError):
@@ -55,7 +56,7 @@ def create(name: str, kind: str, filter_: dict | None = None,
 def get(set_id: str) -> dict:
     row = db.query_one("SELECT * FROM sample_set WHERE set_id = ?", (set_id,))
     if not row:
-        raise KeyError(f"没有这个样品集：{set_id}")
+        raise NotFound(f"没有这个样品集：{set_id}")
     return _hydrate(row)
 
 

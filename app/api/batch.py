@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from app import batch as batch_mod
 from app import tasks
 from app.api.common import ApiError, guard
+from app.errors import NotFound
 from app.plotting import script_export
 from app.storage import selection, tabular
 
@@ -24,8 +25,8 @@ def run(payload: dict = Body(...)) -> dict:
     try:
         return batch_mod.submit_batch(payload.get("filter"), set_id=payload.get("set_id") or None,
                                       recipe=payload.get("recipe"), title=payload.get("title") or "")
-    except KeyError as exc:
-        raise ApiError(str(exc).strip("'\""), 404, "not_found") from exc
+    except NotFound as exc:
+        raise ApiError(str(exc), 404, "not_found") from exc
     except selection.FilterError as exc:
         raise ApiError(str(exc), 400, "bad_filter") from exc
     except batch_mod.EmptySelection as exc:

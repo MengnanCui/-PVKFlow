@@ -19,6 +19,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from app.util.text import decode_text
+
 
 class FrameError(Exception):
     """这一帧不能用。message 是给人看的原因。"""
@@ -95,12 +97,7 @@ _ALIASES = {
 
 
 def _decode(b: bytes) -> str:
-    for enc in ("utf-8-sig", "gbk"):
-        try:
-            return b.decode(enc)
-        except UnicodeDecodeError:
-            continue
-    return b.decode("utf-8", errors="replace")
+    return decode_text(b)          # 全平台一份编码判断（app/util/text.py）：UTF-16 / UTF-8 / GB18030
 
 
 def _flatten(d, prefix="") -> dict:

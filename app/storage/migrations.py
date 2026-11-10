@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Callable
 
 from app import config
+from app.util import ids
 
 
 @dataclass(frozen=True)
@@ -38,18 +39,25 @@ class Migration:
     apply: Callable[[sqlite3.Connection], None]
 
 
+# ---------------------------------------------------------------- 助手
+def add_columns(conn: sqlite3.Connection, table: str, cols: list[tuple[str, str]]) -> None:
+    """给已有的表补列（能重跑：已有的列跳过）。表还不存在就什么都不做 —— schema.sql 建表时自带这些列。
+
+    加列的迁移都用它（放在 pre 阶段：schema.sql 里的索引可能要用到新列）。
+    """
+    have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    if not have:
+        return
+    for name, decl in cols:
+        if name not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+
 # ---------------------------------------------------------------- 各步迁移
 def _m1_add_columns(conn: sqlite3.Connection) -> None:
     """2026-08 加的两列。原来在 db._add_missing_columns 里，每次启动都检查一遍。"""
-    wanted = {"analysis_run": [("parent_run_id", "TEXT")],
-              "artifact": [("is_matrix", "INTEGER")]}
-    for table, cols in wanted.items():
-        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
-        if not have:
-            continue                            # 表还没有：schema.sql 建表时自带这些列
-        for name, decl in cols:
-            if name not in have:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+    add_columns(conn, "analysis_run", [("parent_run_id", "TEXT")])
+    add_columns(conn, "artifact", [("is_matrix", "INTEGER")])
 
 
 def _m2_measured_at_local(conn: sqlite3.Connection) -> None:
@@ -92,14 +100,9 @@ def _m4_quality_note(conn: sqlite3.Connection) -> None:
     """关键结果的审核留痕：为什么标、什么时候标。
 
     界面上能把一个结果标成「作废」之后，一年后再看到「这个数被作废了」却不知道为什么，
-    和没有审核一样（DATA_MODEL.md「没有这三个字段，一年后你会分不清某个数是怎么来的」）。
+    和没有审核一样（DATA_MODEL.md「没有这几个字段，一年后你会分不清某个数是怎么来的」）。
     """
-    have = {r[1] for r in conn.execute("PRAGMA table_info(key_result)")}
-    if not have:
-        return                                  # 表还没有：schema.sql 建表时自带
-    for name in ("quality_note", "quality_at"):
-        if name not in have:
-            conn.execute(f"ALTER TABLE key_result ADD COLUMN {name} TEXT")
+    add_columns(conn, "key_result", [("quality_note", "TEXT"), ("quality_at", "TEXT")])
 
 
 MIGRATIONS: list[Migration] = [
@@ -175,7 +178,7 @@ def run(conn: sqlite3.Connection, schema_sql: str) -> dict:
                 conn.rollback()
                 raise fail(f"第 {m.version} 步：{m.description}", exc) from exc
 
-    now = datetime.now().isoformat(timespec="seconds")
+    now = ids.now()            # 时间戳一律 UTC（app/util/ids.py）
     if fresh:
         conn.execute("INSERT INTO schema_migration(version, description, applied_at)"
                      " VALUES(?,?,?)", (LATEST, f"新建工作区，直接建到第 {LATEST} 版", now))

@@ -27,6 +27,7 @@ import numpy as np
 from app import tasks
 from app.parsers import matrix, render
 from app.storage import artifacts, db, results, selection, tabular
+from app.errors import NotFound
 
 BATCH_SKILL_ID = "batch.abs_thickness"
 BATCH_VERSION = "0.2.0"
@@ -579,7 +580,7 @@ def batch_detail(parent_run_id: str) -> dict:
     run = db.query_one("SELECT * FROM analysis_run WHERE analysis_run_id=?",
                        (parent_run_id,))
     if not run:
-        raise KeyError(f"没有这次批处理：{parent_run_id}")
+        raise NotFound(f"没有这次批处理：{parent_run_id}")
     try:
         run["params"] = json.loads(run.get("params_json") or "{}")
     except json.JSONDecodeError:

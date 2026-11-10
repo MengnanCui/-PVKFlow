@@ -24,6 +24,7 @@ from typing import Iterable, Sequence
 
 from app import config
 from app.storage import db, naming
+from app.util.files import atomic_write_with
 
 _CHUNK = 1 << 20  # 1 MiB
 
@@ -145,12 +146,7 @@ def _store_copy(target: Path, expected_size: int, write) -> None:
                 return
         except OSError:
             pass
-    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    try:
-        write(tmp)
-        os.replace(tmp, target)
-    finally:
-        tmp.unlink(missing_ok=True)
+    atomic_write_with(target, write)
 
 
 def _measurement_key(display_path: str) -> str | None:

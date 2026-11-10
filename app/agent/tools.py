@@ -28,6 +28,7 @@ from typing import Any, Callable
 
 from app.agent import commands, files
 from app.storage import db
+from app.errors import NotFound
 
 READ, WRITE, IRREVERSIBLE = "read", "write", "irreversible"
 
@@ -130,7 +131,7 @@ def t_sample_results(sample_id: str) -> dict:
 
     s = db.query_one("SELECT sample_id, name, batch FROM sample WHERE sample_id = ?", (sample_id,))
     if not s:
-        raise KeyError(f"没有这个样品：{sample_id}（先用 find_samples 找到它的 sample_id）")
+        raise NotFound(f"没有这个样品：{sample_id}（先用 find_samples 找到它的 sample_id）")
     fields = []
     for f in results.sample_results(sample_id):
         cur = f["current"]

@@ -31,6 +31,7 @@ from typing import Iterable, Iterator
 from app import config
 from app.ai import gateway
 from app.ai.provider import ChatMessage, ChatResult, ProviderUnavailable
+from app.util.files import atomic_write_json
 
 DEFAULT_TIMEOUT = 120.0
 THINKING = ("off", "on", "default")
@@ -71,9 +72,8 @@ def load_config(path: Path | None = None) -> dict:
 
 
 def save_config(data: dict, path: Path | None = None) -> None:
-    p = path or config.PROVIDERS_PATH
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 原子写：存到一半断电 / 磁盘满，不能把密钥文件写成半截 —— 那样所有模型配置一起没了（C073）
+    atomic_write_json(path or config.PROVIDERS_PATH, data, indent=2)
 
 
 def list_models(path: Path | None = None) -> list[ModelInfo]:

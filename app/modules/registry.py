@@ -19,6 +19,7 @@ from pathlib import Path
 
 from app import config
 from app.modules.base import Module, ModuleSpec
+from app.errors import NotFound
 
 
 @dataclass
@@ -79,7 +80,7 @@ class ModuleRegistry:
 
     def get(self, module_id: str) -> Module:
         if module_id not in self._modules:
-            raise KeyError(f"没有这个模块：{module_id}。"
+            raise NotFound(f"没有这个模块：{module_id}。"
                            f"已装的：{', '.join(sorted(self._modules)) or '（一个都没有）'}")
         return self._modules[module_id]
 

@@ -15,6 +15,7 @@ from fastapi.responses import Response
 
 from app import config
 from app.api.common import ApiError
+from app.errors import NotFound
 from app.modules import ops, validate
 from app.modules.base import ModuleContext
 from app.modules.registry import registry
@@ -52,7 +53,7 @@ def validate_module(payload: dict = Body(default={})) -> dict:
     mid = (payload.get("module_id") or "").strip()
     try:
         mod = registry.get(mid)
-    except KeyError as exc:
+    except NotFound as exc:
         raise ApiError(str(exc), 404, "not_found") from exc
     others = {m.spec.id for m in registry.all()} - {mid}
     return validate.validate(mod, known_ids=others).as_dict()
@@ -69,7 +70,7 @@ def compute(module_id: str, payload: dict = Body(...)) -> dict:
 
     try:
         mod = registry.get(module_id)
-    except KeyError as exc:
+    except NotFound as exc:
         raise ApiError(str(exc), 404, "not_found") from exc
 
     artifact_id = (payload.get("artifact_id") or "").strip()

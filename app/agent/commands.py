@@ -12,7 +12,6 @@
 """
 from __future__ import annotations
 
-import locale
 import os
 import re
 import signal
@@ -25,6 +24,7 @@ from typing import Callable
 
 from app import config
 from app.agent import files
+from app.util.text import decode_text
 
 DEFAULT_TIMEOUT = 60
 MAX_TIMEOUT = 600
@@ -86,10 +86,8 @@ def core_diff(before: dict, after: dict) -> list[str]:
 
 # ------------------------------------------------------------------ 跑
 def _decode(b: bytes) -> str:
-    try:
-        return b.decode("utf-8")
-    except UnicodeDecodeError:
-        return b.decode(locale.getpreferredencoding(False) or "utf-8", errors="replace")
+    # 中文 Windows 的 cmd 输出是 GBK —— 共用的判断先试 UTF-8 再试 GB18030（GBK 的超集）
+    return decode_text(b)
 
 
 def _clip(text: str) -> str:

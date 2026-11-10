@@ -8,25 +8,20 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
 from app import config
+from app.util import ids
 
 _local = threading.local()
 _SCHEMA = Path(__file__).with_name("schema.sql")
 
 
-def now() -> str:
-    """统一用 UTC ISO8601，避免跨时区/夏令时的坑。"""
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def new_id(prefix: str) -> str:
-    return f"{prefix}_{uuid.uuid4().hex[:12]}"
+# 时间戳和 id 的规则在 app/util/ids.py（全平台一份）；这里转出去，老代码照旧用 db.now() / db.new_id()
+now = ids.now
+new_id = ids.new_id
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:

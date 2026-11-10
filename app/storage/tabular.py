@@ -12,6 +12,7 @@ from typing import Any
 
 from app import config
 from app.storage import db
+from app.errors import NotFound
 
 
 def _safe(name: str) -> str:
@@ -74,7 +75,7 @@ def read_frame(path: Path):
 def read_table(table_id: str, limit: int | None = None) -> dict:
     row = db.query_one("SELECT * FROM data_table WHERE table_id = ?", (table_id,))
     if not row:
-        raise KeyError(f"数值表不存在：{table_id}")
+        raise NotFound(f"数值表不存在：{table_id}")
 
 
     path = config.WORKSPACE / row["path"]

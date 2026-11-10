@@ -26,6 +26,7 @@ from typing import Iterator
 
 from app.agent import driver, files, tools
 from app.storage import agent_sessions as sessions
+from app.util.ids import now as db_now
 
 MAX_TURNS = 12
 # 10 分钟（IFlow 是 5 分钟）：要等批处理跑完，5 分钟常常不够；等的时候每秒看一眼「停止」
@@ -230,7 +231,7 @@ def run(session_id: str, *, provider, model: str, prompt: str | None = None,
 
     def emit(e: dict) -> dict:
         if e["type"] != "delta":
-            events.append({**e, "at": datetime.now().isoformat(timespec="seconds")})
+            events.append({**e, "at": db_now()})
         return e
 
     _stop.discard(session_id)
@@ -394,6 +395,6 @@ def run(session_id: str, *, provider, model: str, prompt: str | None = None,
         if not finished:
             # 你点了停止 / 关了页面：生成器在某个 yield 那儿被关掉。这里不能再 yield，只把状态存好
             events.append({"type": "done", "reason": "canceled", "turns": turns, "model": model,
-                           "at": datetime.now().isoformat(timespec="seconds")})
+                           "at": db_now()})
         sessions.save(session_id, messages=repair(messages, pending), events=events[-EVENTS_KEEP:],
                       pending=pending, remembered=sorted(remembered), model=model, title=title)

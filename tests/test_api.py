@@ -467,3 +467,23 @@ def test_wrong_method_and_bad_paging_use_the_platform_error_shape(workspace):
         for url in ("/api/batch/runs?limit=-1", "/api/tasks?limit=0", "/api/files?offset=-5"):
             r = c.get(url)
             assert r.status_code == 400 and r.json()["error"]["message"], url
+
+
+def test_not_found_is_404_but_a_plain_key_error_is_a_bug(workspace):
+    """领域层的 NotFound → 404（消息不带引号）；普通 KeyError 多半是程序 bug，不许伪装成「没有这个」（C073）。"""
+    import pytest
+
+    from app.api.common import ApiError, guard
+    from app.errors import NotFound
+
+    def missing():
+        raise NotFound("没有这个样品：smp_x")
+
+    def bug():
+        return {}["oops"]
+
+    with pytest.raises(ApiError) as e:
+        guard(missing)
+    assert e.value.status_code == 404 and e.value.detail["message"] == "没有这个样品：smp_x"
+    with pytest.raises(KeyError):
+        guard(bug)

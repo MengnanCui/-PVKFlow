@@ -176,3 +176,20 @@ def test_step_3_clears_the_pile_of_empty_conversations(ws):
     assert 3 in report["applied"] and report["backup"]          # 之后的步骤也会接着跑
     left = {r["conversation_id"] for r in db.query("SELECT conversation_id FROM conversation")}
     assert left == {"conv_used", "conv_term"}
+
+
+def test_shared_helpers_ids_time_and_atomic_write(tmp_path):
+    """id / 时间戳 / 原子写全平台一份（C073）。"""
+    import re
+
+    from app.util import files as ufiles
+    from app.util import ids
+    from app.util.text import decode_bytes
+    assert ids.now().endswith("+00:00")
+    assert re.fullmatch(r"qr_\d{8}T\d{6}Z_[0-9a-f]{6}", ids.new_id("qr", sortable=True))
+    assert re.fullmatch(r"smp_[0-9a-f]{12}", ids.new_id("smp"))
+    target = tmp_path / "a" / "b.json"
+    ufiles.atomic_write_json(target, {"中文": 1})
+    assert target.read_text(encoding="utf-8") == '{\n "中文": 1\n}' and not list(target.parent.glob(".*tmp"))
+    assert decode_bytes("钝化".encode("gbk"))[0] == "钝化"
+    assert decode_bytes("x".encode("utf-16"))[0] == "x"

@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 
 from app import config
+from app.util.files import atomic_write_with
 
 # 波长的合理范围（nm）。用来判断矩阵是哪个方向摆的。
 LAMBDA_MIN, LAMBDA_MAX = 180.0, 3000.0
@@ -331,12 +332,12 @@ def load_cached(path: str | Path, sha256: str | None = None) -> SpectralMatrix:
 
     sm = parse(p)
     cache.parent.mkdir(parents=True, exist_ok=True)
-    tmp = cache.with_name(cache.name + ".tmp")
-    # 注意：np.savez 会给不以 .npz 结尾的路径自动补后缀，所以必须传文件对象
-    with open(tmp, "wb") as fh:
-        np.savez(fh, lam=sm.lam, t=sm.t, M=sm.M,
-                 meta=np.array(sm.meta, dtype=object), orientation=sm.orientation)
-    tmp.replace(cache)                          # 原子替换，避免半截缓存
+    def write(tmp: Path) -> None:
+        # 注意：np.savez 会给不以 .npz 结尾的路径自动补后缀，所以必须传文件对象
+        with open(tmp, "wb") as fh:
+            np.savez(fh, lam=sm.lam, t=sm.t, M=sm.M,
+                     meta=np.array(sm.meta, dtype=object), orientation=sm.orientation)
+    atomic_write_with(cache, write)             # 原子替换，避免半截缓存
 
     # 写完顺手看一眼总量。超了就淘汰最久没用的 —— 上千个样品能堆到几个 GB。
     _maybe_evict()

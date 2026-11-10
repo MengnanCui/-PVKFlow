@@ -10,8 +10,9 @@ Mengnan 的 matplotlib 规范，不是"差不多"的版本。
 from __future__ import annotations
 
 import io
-import math
 import zipfile
+
+from app.util.csvsafe import guard_formula  # noqa: F401  —— 批处理导出、测试都从这里拿
 
 # ---- 以下四块逐字对应 matplotlib-mengnan-style skill，改动前先看那份规范 ----
 RCPARAMS = """plt.rcParams.update({
@@ -94,23 +95,8 @@ def _title_line(title: str, title_en: str) -> str:
 
 
 # ---------------------------------------------------------------- data.csv 的公式防护
-# 样品名、批次来自文件夹名 —— 是别人给的数据。Excel / WPS 打开 CSV 时，以这些字符开头的
-# 文字格子会被当成公式执行（`=HYPERLINK(...)` 一类）。这种格子前面加一个 `'`，Excel 就当纯文字；
-# 导出的 plot.py 读回时再去掉。规则和前端「下载数据（CSV）」那份（web/js/csv.js）一样。
-FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+# 规则在 app/util/csvsafe.py（全平台一份）。这里只记哪几列是文字列；导出的 plot.py 读回时再去掉那个 '。
 TEXT_COLUMNS = ("sample_id", "sample_name", "batch", "label")
-
-
-def guard_formula(value):
-    """文字格子防公式。数（包括 -0.5 这种负数）原样 —— 不然一列数就全变成文字了。"""
-    if not isinstance(value, str) or not value.startswith(FORMULA_START):
-        return value
-    try:
-        if math.isfinite(float(value)):
-            return value
-    except ValueError:
-        pass
-    return "'" + value
 
 
 def build_script(*, column: str, y_label: str, y_label_en: str, mode: str,

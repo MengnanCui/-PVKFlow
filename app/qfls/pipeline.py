@@ -16,11 +16,9 @@ from __future__ import annotations
 import csv
 import json
 import math
-import secrets
 import shutil
 import time
 from collections import Counter, defaultdict
-from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -31,6 +29,10 @@ from app.qfls import frame as F
 from app.qfls import metrics as M
 from app.qfls import render as R
 from app.qfls import scan as S
+from app.util.csvsafe import guard_formula
+from app.util.files import atomic_write_json
+from app.util.ids import new_id, now
+from app.errors import NotFound
 
 RUN_FILES = ("run.json", "scan.json", "points.json", "points.csv", "summary.json", "README.md")
 
@@ -44,9 +46,7 @@ def demo_dir() -> Path:
 
 
 def _dump(path: Path, obj) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=1, default=_jsonable), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write_json(path, obj, default=_jsonable)
 
 
 def _jsonable(o):
@@ -66,8 +66,8 @@ def _clean(v):
 
 
 def new_run_id() -> str:
-    """qr_日期_时间_6 位随机 hex：按时间排得出先后，同一秒提交两次也撞不上（原来只有 3 位，C069）。"""
-    return "qr_" + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + secrets.token_hex(3)
+    """qr_UTC时间_6 位随机 hex：按时间排得出先后，同一秒提交两次也撞不上（id 规则见 app/util/ids.py）。"""
+    return new_id("qr", sortable=True)
 
 
 def merge_params(overrides: dict | None) -> dict:
@@ -111,7 +111,7 @@ def reap_interrupted() -> int:
         r = _read(p / "run.json") if p.is_dir() else None
         if r and r.get("status") == "running":
             r.update(status="failed", error="服务重启，这次处理被中断；已经做完的部分留在目录里，要完整结果请重新处理",
-                     finished_at=datetime.now().isoformat(timespec="seconds"))
+                     finished_at=now())
             _dump(p / "run.json", r)
             n += 1
     return n
@@ -294,7 +294,6 @@ CSV_COLS = (["rank", "code", "experiment", "batch", "slot", "point", "objective"
 
 
 def _csv_cell(v):
-    from app.plotting.script_export import guard_formula
     if isinstance(v, list):
         v = ";".join(map(str, v))
     if isinstance(v, float):
@@ -328,7 +327,7 @@ def process(root: str | Path, *, run_id: str | None = None, params: dict | None 
         except ImportError:   # 出图要 matplotlib；没装的话照样算指标，只是不出图，并说出来
             figures, note = False, "这台电脑没装 matplotlib，这次只算了指标、没出图（装上后重新处理即可）"
     run = {"run_id": run_id, "title": title or root.name, "root": str(root), "status": "running",
-           "created_at": datetime.now().isoformat(timespec="seconds"), "figures": figures, "params": P}
+           "created_at": now(), "figures": figures, "params": P}
     if note:
         run["note"] = note
     _dump(out / "run.json", run)
@@ -397,13 +396,13 @@ def process(root: str | Path, *, run_id: str | None = None, params: dict | None 
         (out / "README.md").write_text(readme(summary, P), encoding="utf-8")
         run.update(status="ok", n_frames=len(rows), n_valid=summary["n_valid"], n_anomaly=summary["n_anomaly"],
                    n_experiments=len(sc["experiments"]), seconds=round(time.monotonic() - t0, 1),
-                   finished_at=datetime.now().isoformat(timespec="seconds"))
+                   finished_at=now())
         if progress:
             progress(n, n, "完成")
         return run
     except BaseException as exc:
         run.update(status="cancelled" if isinstance(exc, tasks.Cancelled) else "failed", error=str(exc)[:2000],
-                   finished_at=datetime.now().isoformat(timespec="seconds"))
+                   finished_at=now())
         raise
     finally:
         _dump(out / "run.json", run)
@@ -471,10 +470,10 @@ def list_runs() -> list[dict]:
 
 def run_path(run_id: str) -> Path:
     if not run_id.startswith("qr_") or "/" in run_id or "\\" in run_id or ".." in run_id:
-        raise KeyError(run_id)
+        raise NotFound(run_id)
     p = runs_dir() / run_id
     if not (p / "run.json").is_file():
-        raise KeyError(run_id)
+        raise NotFound(run_id)
     return p
 
 

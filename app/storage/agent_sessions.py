@@ -10,6 +10,7 @@ import json
 from typing import Any
 
 from app.storage import db
+from app.errors import NotFound
 
 DEFAULT_TITLE = "新任务"
 
@@ -38,7 +39,7 @@ def create(title: str = DEFAULT_TITLE) -> str:
 def get(session_id: str) -> dict:
     s = _load(db.query_one("SELECT * FROM agent_session WHERE session_id = ?", (session_id,)))
     if not s:
-        raise KeyError(f"没有这个会话：{session_id}")
+        raise NotFound(f"没有这个会话：{session_id}")
     return s
 
 

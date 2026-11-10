@@ -9,6 +9,7 @@ import json
 from typing import Any, Iterable
 
 from app.storage import db
+from app.errors import NotFound
 
 
 def start_run(
@@ -112,7 +113,7 @@ def set_quality(result_id: int, quality: str, note: str = "") -> dict:
         raise ValueError(f"未知的质量状态：{quality}（只能是 {' / '.join(QUALITY)}）")
     row = db.query_one("SELECT id, sample_id, field_name FROM key_result WHERE id = ?", (result_id,))
     if not row:
-        raise KeyError(f"没有这条结果：{result_id}")
+        raise NotFound(f"没有这条结果：{result_id}")
     with db.tx() as c:
         c.execute("UPDATE key_result SET quality = ?, quality_note = ?, quality_at = ? WHERE id = ?",
                   (quality, (note or "").strip()[:500] or None, db.now(), result_id))
@@ -130,7 +131,7 @@ def set_quality_many(ids: list[int], quality: str, note: str = "") -> dict:
     found = {r["id"] for r in db.query(
         f"SELECT id FROM key_result WHERE id IN ({','.join('?' * len(ids))})", tuple(ids))}
     if missing := [i for i in ids if i not in found]:
-        raise KeyError(f"没有这些结果：{missing[:10]}")
+        raise NotFound(f"没有这些结果：{missing[:10]}")
     with db.tx() as c:
         c.executemany("UPDATE key_result SET quality = ?, quality_note = ?, quality_at = ? WHERE id = ?",
                       [(quality, (note or "").strip()[:500] or None, db.now(), i) for i in ids])
@@ -276,7 +277,7 @@ def run_detail(run_id: str) -> dict:
 
     run = db.query_one("SELECT * FROM analysis_run WHERE analysis_run_id = ?", (run_id,))
     if not run:
-        raise KeyError(f"没有这次运行记录：{run_id}")
+        raise NotFound(f"没有这次运行记录：{run_id}")
     return {
         "run": run,
         "results": results_for_run(run_id),

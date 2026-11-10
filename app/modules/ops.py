@@ -33,6 +33,7 @@ from typing import Any, Callable, Literal
 import numpy as np
 
 from app.parsers import render
+from app.errors import NotFound
 
 # 算子参数从哪种控件取值。校验器用它来检查模块的绑定对不对。
 ArgKind = Literal["band", "number"]
@@ -104,7 +105,7 @@ OPS: dict[str, OpDef] = {
 
 def get(name: str) -> OpDef:
     if name not in OPS:
-        raise KeyError(
+        raise NotFound(
             f"没有这个算子：{name}。现有的：{', '.join(sorted(OPS))}。"
             "算子集是平台维护的封闭集合 —— 需要新算子请找平台维护者，"
             "或者把这个面板改成自定义 Python（去掉 live=，写 compute()）。")

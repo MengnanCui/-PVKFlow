@@ -11,6 +11,8 @@ from typing import Any
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
+from app.errors import NotFound
+
 
 class ApiError(HTTPException):
     def __init__(self, message: str, status: int = 400, kind: str = "bad_request",
@@ -33,12 +35,14 @@ def guard(fn, *args, **kwargs) -> Any:
     """把领域层的异常翻译成带人话的 API 错误。"""
     try:
         return fn(*args, **kwargs)
-    except KeyError as exc:
-        raise ApiError(str(exc).strip("'\""), 404, "not_found") from exc
+    except NotFound as exc:
+        raise ApiError(str(exc), 404, "not_found") from exc
     except FileNotFoundError as exc:
         raise ApiError(str(exc), 404, "file_missing") from exc
-    except (ValueError, TypeError) as exc:
+    except ValueError as exc:
         raise ApiError(str(exc), 400, "invalid") from exc
+    # 普通的 KeyError / TypeError 不在这里翻：那多半是程序的 bug，让它走全局处理器报 500 并记日志，
+    # 不要伪装成「没有这个」「参数不合法」（C073）
     except NotImplementedError as exc:
         raise ApiError(str(exc), 501, "not_ready") from exc
     except RuntimeError as exc:

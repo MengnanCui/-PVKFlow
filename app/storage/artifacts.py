@@ -11,6 +11,7 @@ from typing import Any
 
 from app import config
 from app.storage import db
+from app.errors import NotFound
 
 
 def get(artifact_id: str) -> dict | None:
@@ -27,7 +28,7 @@ def local_path(artifact_id: str) -> Path:
     """拿到可以直接打开的绝对路径。文件不在了就明确报错。"""
     row = get(artifact_id)
     if not row:
-        raise KeyError(f"文件不存在于索引：{artifact_id}")
+        raise NotFound(f"文件不存在于索引：{artifact_id}")
 
     if row["storage_mode"] == "copied" and row["stored_path"]:
         p = config.WORKSPACE / row["stored_path"]

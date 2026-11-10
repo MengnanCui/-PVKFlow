@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable
 
+from app.errors import NotFound
 from app.storage import db
 
 # 任务种类 → 执行函数。函数签名：fn(ctx) -> dict
@@ -129,7 +130,7 @@ def cancel(task_id: str) -> dict:
     """
     row = db.query_one("SELECT status FROM task WHERE task_id=?", (task_id,))
     if not row:
-        raise KeyError(f"没有这个任务：{task_id}")
+        raise NotFound(f"没有这个任务：{task_id}")
     if row["status"] in ("ok", "failed", "cancelled"):
         return get(task_id)
     _cancelled.add(task_id)
@@ -141,7 +142,7 @@ def cancel(task_id: str) -> dict:
 def get(task_id: str) -> dict:
     row = db.query_one("SELECT * FROM task WHERE task_id=?", (task_id,))
     if not row:
-        raise KeyError(f"没有这个任务：{task_id}")
+        raise NotFound(f"没有这个任务：{task_id}")
     return _hydrate(row)
 
 
