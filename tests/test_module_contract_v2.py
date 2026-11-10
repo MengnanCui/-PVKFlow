@@ -63,7 +63,7 @@ def test_extending_the_contract_did_not_break_the_shipped_modules(workspace):
         dest = f"{tmp}/t"
         shutil.copytree(TEMPLATE_DIR, dest)
         probe = ModuleRegistry()
-        probe._load_one(__import__("pathlib").Path(dest) / "module.py", "user",
+        probe.load_file(__import__("pathlib").Path(dest) / "module.py", "user",
                         __import__("pathlib").Path(dest))
         assert validate.validate(probe.all()[0]).ok
 
@@ -263,7 +263,7 @@ def test_a_module_using_every_new_capability_installs_and_runs(workspace, tmp_pa
     (src / "module.py").write_text(_FULL_STRENGTH, encoding="utf-8")
 
     reg = ModuleRegistry()
-    reg._load_one(src / "module.py", "user", src)
+    reg.load_file(src / "module.py", "user", src)
     assert reg.all(), "装不上"
     mod = reg.all()[0]
 

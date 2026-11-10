@@ -121,13 +121,19 @@ def set_quality(result_id: int, quality: str, note: str = "") -> dict:
             "current": _current(row["sample_id"], row["field_name"])}
 
 
+QUALITY_MANY_MAX = 500
+
+
 def set_quality_many(ids: list[int], quality: str, note: str = "") -> dict:
     """一次审核几条（比如「这一次测量的结果全部作废」）。全部存在才动手，一条不存在就一条都不改。"""
     if quality not in QUALITY:
         raise ValueError(f"未知的质量状态：{quality}（只能是 {' / '.join(QUALITY)}）")
-    ids = [int(i) for i in ids]
+    ids = list(dict.fromkeys(int(i) for i in ids))      # 去重：同一条给两遍只改一遍、只算一条
     if not ids:
         raise ValueError("没有指定要审核的结果")
+    if len(ids) > QUALITY_MANY_MAX:
+        # SQLite 一条语句的参数有上限（老版本 999）；也没有人会一口气审几千条 —— 多半是选错了范围（C074）
+        raise ValueError(f"一次最多审核 {QUALITY_MANY_MAX} 条，给了 {len(ids)} 条。分几次，或者先缩小范围")
     found = {r["id"] for r in db.query(
         f"SELECT id FROM key_result WHERE id IN ({','.join('?' * len(ids))})", tuple(ids))}
     if missing := [i for i in ids if i not in found]:
@@ -296,3 +302,11 @@ def recent_runs(limit: int = 50) -> list[dict]:
         " FROM analysis_run r LEFT JOIN sample s ON s.sample_id = r.sample_id"
         " ORDER BY r.started_at DESC, r.rowid DESC LIMIT ?", (limit,),
     )
+
+
+def reap_running_runs(reason: str) -> int:
+    """把还挂着「运行中」的分析运行标成失败（服务重启后由批处理的中断收尾调用）。"""
+    with db.tx() as c:
+        cur = c.execute("UPDATE analysis_run SET status='failed', finished_at=?,"
+                        " error=COALESCE(error, ?) WHERE status='running'", (db.now(), reason))
+        return cur.rowcount

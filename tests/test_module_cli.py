@@ -43,7 +43,7 @@ def test_the_cli_and_the_import_path_say_exactly_the_same_thing(workspace, tmp_p
     cli_errors = [ln[2:] for ln in lines if ln.startswith("✗ ")]
 
     # 界面导入那条路（同一个函数，导入接口内部就调它）
-    from app.api.modules import _validate_folder
+    from app.modules.install import validate_folder as _validate_folder
     report = _validate_folder(folder)
 
     assert not ok_cli and not report["ok"]

@@ -287,7 +287,7 @@ def test_the_template_installs_cleanly(workspace, tmp_path):
     shutil.copytree(TEMPLATE_DIR, dest)
 
     reg = ModuleRegistry()
-    reg._load_one(dest / "module.py", "user", dest)
+    reg.load_file(dest / "module.py", "user", dest)
     assert reg.all(), "模板里没找到模块"
 
     r = validate.validate(reg.all()[0])

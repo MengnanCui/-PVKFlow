@@ -13,9 +13,12 @@ from fastapi import APIRouter, Body, File, Query, UploadFile
 
 from app import config
 from app.api.common import ApiError, guard
-from app.storage import artifacts, db, ingest, naming
+from app.storage import artifacts, catalog, db, ingest, naming
 
 router = APIRouter(prefix="/api/files", tags=["files"])
+
+# 拖拽上传一次最多多大（全部文件加起来）。大批量走「浏览本机目录」导入
+UPLOAD_MAX_BYTES = 512 * 2**20
 
 
 @router.get("/roots")
@@ -114,9 +117,16 @@ def upload(files: list[UploadFile] = File(...)) -> dict:
     写成同步函数：FastAPI 会放到线程池里跑。解析、写库、生成缩略图都是阻塞的活，
     原来写成 async 直接在事件循环里做，上传大文件期间整个界面（包括进度条）都卡住（自查 §6 #26）。
     """
-    payloads = []
+    payloads, total = [], 0
     for f in files:
-        payloads.append((f.filename or "unnamed", f.file.read()))
+        # 一次上传的总大小有上限：拖拽这条路要把文件读进内存，拖进一整个数据盘会把这台电脑的内存吃光。
+        # 大批量请走「浏览本机目录」导入（只读文件头、按需复制，C074）
+        data = f.file.read(UPLOAD_MAX_BYTES - total + 1)
+        total += len(data)
+        if total > UPLOAD_MAX_BYTES:
+            raise ApiError(f"一次拖进来的文件超过 {UPLOAD_MAX_BYTES // 2**20} MB。"
+                           "大批量请用「导入 → 浏览本机目录」，不走浏览器。", 413, "too_big")
+        payloads.append((f.filename or "unnamed", data))
     report = ingest.ingest_uploads(payloads, source_hint="浏览器上传")
     return report.as_dict()
 
@@ -133,18 +143,7 @@ def list_files(
 
 @router.get("/facets")
 def facets() -> dict:
-    return {
-        "extensions": artifacts.extension_facets(),
-        "batches": db.query(
-            "SELECT batch_id, source_hint, file_count, created_at FROM import_batch"
-            " ORDER BY created_at DESC LIMIT 30"
-        ),
-        "samples": db.query(
-            "SELECT s.sample_id, s.name, s.batch,"
-            " (SELECT COUNT(*) FROM artifact a WHERE a.sample_id = s.sample_id) AS n_files"
-            " FROM sample s ORDER BY s.name LIMIT 500"
-        ),
-    }
+    return catalog.file_facets()
 
 
 @router.get("/{artifact_id}")

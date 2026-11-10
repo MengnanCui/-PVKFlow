@@ -28,8 +28,32 @@ function sec(title, ...kids) {
 const p = (...kids) => h('p', ...kids);
 const li = (...kids) => h('li', ...kids);
 
+// 早期的 run.json 里扣分表只有数字（没有 metric / label / unit），按当时写死的七项补上
+const LEGACY = {
+  spread: ['p90_p10', '离散 P90 − P10', 'eV'], low_frac: ['low_2s_frac', '低于中位数 − 2σ 占比', 'frac'],
+  low_area: ['low_cc_max_frac', '最大低值连通域占画面', 'frac'], scratch: ['scratch_count', '划痕候选', '条'],
+  edge: ['edge_minus_center', '|边缘 − 中心|', 'eV', true], moran: ['morans_i', "Moran's I", ''],
+  bright: ['bright_density', '亮点密度', '个/百万像素'],
+};
+
+function fmtBy(unit, v) {
+  if (unit === 'eV') return mev(v);
+  if (unit === 'frac') return pct(v);
+  return unit ? `${v} ${unit}` : String(v);
+}
+
+// 扣分表一行：完全照 run.json 里的 params.score 来（后端 app/qfls/metrics.py 的 PARAMS["score"]）
+function scoreRow(code, t) {
+  const [metric, label, unit, abs] = LEGACY[code] || [];
+  const m = t.metric || metric || code;
+  const u = t.unit ?? unit ?? '';
+  const name = (t.abs ?? abs) ? `|${m}|` : m;
+  const per = 'per' in t;
+  return h('tr', h('td', t.label || label || code), h('td', h('code', name)),
+    h('td', per ? '每个' : fmtBy(u, t.from)), h('td', per ? `${t.per} 分` : fmtBy(u, t.to)), h('td.num', String(t.max)));
+}
+
 function body(P, source) {
-  const S2 = P.score;
   const grid = P.moran_grid;
   return h('div',
     limits(),
@@ -69,15 +93,9 @@ function body(P, source) {
         ].map(([a, b]) => h('tr', h('td.strong.nowrap', a), h('td.small', b)))))),
 
     sec('4 · 综合质量分与等级',
-      p('综合分 = 100 − 七项扣分（每项封顶，线性插值）。', h('strong', '绝对 QFLS 水平不进分数'), '（不同物镜不可比）—— 分数只看「均不均匀、有没有缺陷」。'),
-      h('table.data', h('thead', h('tr', h('th', '扣分项'), h('th', '从…开始扣'), h('th', '到…扣满'), h('th.num', '最多扣'))), h('tbody',
-        h('tr', h('td', '离散 P90 − P10'), h('td', mev(S2.spread.from)), h('td', mev(S2.spread.to)), h('td.num', String(S2.spread.max))),
-        h('tr', h('td', '低于中位数 − 2σ 占比'), h('td', pct(S2.low_frac.from)), h('td', pct(S2.low_frac.to)), h('td.num', String(S2.low_frac.max))),
-        h('tr', h('td', '最大低值连通域占画面'), h('td', pct(S2.low_area.from)), h('td', pct(S2.low_area.to)), h('td.num', String(S2.low_area.max))),
-        h('tr', h('td', '划痕候选'), h('td', '每条'), h('td', `${S2.scratch.per} 分`), h('td.num', String(S2.scratch.max))),
-        h('tr', h('td', '|边缘 − 中心|'), h('td', mev(S2.edge.from)), h('td', mev(S2.edge.to)), h('td.num', String(S2.edge.max))),
-        h('tr', h('td', "Moran's I"), h('td', String(S2.moran.from)), h('td', String(S2.moran.to)), h('td.num', String(S2.moran.max))),
-        h('tr', h('td', '亮点密度'), h('td', String(S2.bright.from)), h('td', `${S2.bright.to} 个/百万像素`), h('td.num', String(S2.bright.max))))),
+      p(`综合分 = 100 − ${Object.keys(P.score).length} 项扣分（每项封顶，线性插值）。`, h('strong', '绝对 QFLS 水平不进分数'), '（不同物镜不可比）—— 分数只看「均不均匀、有没有缺陷」。'),
+      h('table.data', h('thead', h('tr', h('th', '扣分项'), h('th', '看哪个指标'), h('th', '从…开始扣'), h('th', '到…扣满'), h('th.num', '最多扣'))),
+        h('tbody', ...Object.entries(P.score).map(([code, t]) => scoreRow(code, t)))),
       p(`等级：≥ ${P.grades.A} 为 A、≥ ${P.grades.B} 为 B、≥ ${P.grades.C} 为 C、其余 D；无效帧没有等级。`)),
 
     sec('5 · 异常标记',

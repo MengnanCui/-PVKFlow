@@ -44,15 +44,26 @@ PARAMS: dict = {
     "flag_edge_ev": 0.02,                  # |边缘 − 中心| > 20 meV
     "flag_group_robust_z": 3.5,            # 同一 slot、同一物镜的平行点里，中位数的稳健 z（按 MAD）|z| > 3.5 算离群
     "flag_group_min_n": 4,                 # 至少 4 个平行点才做这个判断
-    # 综合质量分：100 减各项扣分（每项封顶）
+    # 综合质量分：100 减各项扣分（每项封顶）。**这张表就是打分规则的全部** —— score() 逐项照着算，
+    # 方法说明页逐项照着列；加一项扣分 = 在这里加一行（metric 必须是 METRICS 里的键）。
+    #   metric：看哪个指标；abs：先取绝对值；unit：方法说明页怎么显示阈值（eV 显示成 meV、frac 显示成百分比）
+    #   from / to：从 from 开始扣、到 to 扣满 max（线性）；per：按个数扣，每个扣 per、封顶 max
+    # metric / label / unit / abs 是口径，处理时不能覆盖；数字可以（merge_params）
     "score": {
-        "spread":    {"max": 25, "from": 0.015, "to": 0.075},   # P90 − P10（eV）
-        "low_frac":  {"max": 15, "from": 0.03, "to": 0.10},     # 低于中位数 − 2σ 的占比
-        "low_area":  {"max": 15, "from": 0.0, "to": 0.01},      # 最大低值连通域占画面比例
-        "scratch":   {"max": 20, "per": 10},                    # 每条划痕候选扣 10
-        "edge":      {"max": 10, "from": 0.005, "to": 0.030},   # |边缘 − 中心|（eV）
-        "moran":     {"max": 10, "from": 0.15, "to": 0.50},     # Moran's I
-        "bright":    {"max": 5, "from": 0.0, "to": 100.0},      # 亮点密度（个 / 百万像素）
+        "spread":    {"metric": "p90_p10", "label": "离散（P90 − P10）", "unit": "eV",
+                      "max": 25, "from": 0.015, "to": 0.075},
+        "low_frac":  {"metric": "low_2s_frac", "label": "低值占比（< 中位数 − 2σ）", "unit": "frac",
+                      "max": 15, "from": 0.03, "to": 0.10},
+        "low_area":  {"metric": "low_cc_max_frac", "label": "最大低值连通域", "unit": "frac",
+                      "max": 15, "from": 0.0, "to": 0.01},
+        "scratch":   {"metric": "scratch_count", "label": "划痕候选", "unit": "条",
+                      "max": 20, "per": 10},
+        "edge":      {"metric": "edge_minus_center", "abs": True, "label": "边缘 − 中心", "unit": "eV",
+                      "max": 10, "from": 0.005, "to": 0.030},
+        "moran":     {"metric": "morans_i", "label": "结构不均（Moran's I）", "unit": "",
+                      "max": 10, "from": 0.15, "to": 0.50},
+        "bright":    {"metric": "bright_density", "label": "亮点密度", "unit": "个/百万像素",
+                      "max": 5, "from": 0.0, "to": 100.0},
     },
     "grades": {"A": 85, "B": 70, "C": 55},                      # ≥85 A、≥70 B、≥55 C、其余 D
 }
@@ -75,6 +86,16 @@ METRICS = [
     ("morans_i", "Moran's I", "", True),
     ("variogram_range_px", "变异函数变程", "像素", False),
     ("score", "综合质量分", "分", True),
+]
+
+# 全局箱线图画哪几个指标（render.global_figures）：键、纵轴名（图上用英文，和其它图一致）、参考线（没有就 None）
+BOX_FIGURE = [
+    ("median", "Median QFLS (eV)", None),
+    ("p90_p10", "P90 − P10 (eV)", None),
+    ("low_2s_frac", "Low < med−2σ (frac)", None),
+    ("morans_i", "Moran's I", "moran_threshold"),
+    ("variogram_range_px", "Variogram range (px)", None),
+    ("score", "Quality score", None),
 ]
 
 
@@ -315,20 +336,17 @@ def _ramp(v: float, a: float, b: float) -> float:
 
 
 def score(m: dict, P: dict) -> tuple[float, list[dict]]:
-    S = P["score"]
-    items = [
-        ("spread", "离散（P90 − P10）", _ramp(m["p90_p10"], S["spread"]["from"], S["spread"]["to"]) * S["spread"]["max"]),
-        ("low_frac", "低值占比（< 中位数 − 2σ）",
-         _ramp(m["low_2s_frac"], S["low_frac"]["from"], S["low_frac"]["to"]) * S["low_frac"]["max"]),
-        ("low_area", "最大低值连通域",
-         _ramp(m["low_cc_max_frac"], S["low_area"]["from"], S["low_area"]["to"]) * S["low_area"]["max"]),
-        ("scratch", "划痕候选", min(S["scratch"]["max"], S["scratch"]["per"] * m["scratch_count"])),
-        ("edge", "边缘 − 中心", _ramp(abs(m["edge_minus_center"]), S["edge"]["from"], S["edge"]["to"]) * S["edge"]["max"]),
-        ("moran", "结构不均（Moran's I）",
-         _ramp(m["morans_i"], S["moran"]["from"], S["moran"]["to"]) * S["moran"]["max"]),
-        ("bright", "亮点密度", _ramp(m["bright_density"], S["bright"]["from"], S["bright"]["to"]) * S["bright"]["max"]),
-    ]
-    pens = [{"code": c, "label": lab, "points": round(p, 1), "max": S[c]["max"]} for c, lab, p in items]
+    """100 − Σ 扣分。逐项照 P["score"] 算（见 PARAMS 里那张表的说明）；指标是空的（比如没算出来）不扣。"""
+    pens = []
+    for code, t in P["score"].items():
+        v = m.get(t["metric"])
+        if v is not None and t.get("abs"):
+            v = abs(v)
+        if "per" in t:
+            pts = min(t["max"], t["per"] * (v or 0))
+        else:
+            pts = _ramp(v, t["from"], t["to"]) * t["max"]
+        pens.append({"code": code, "label": t["label"], "points": round(pts, 1), "max": t["max"]})
     return round(max(0.0, 100 - sum(p["points"] for p in pens)), 1), pens
 
 

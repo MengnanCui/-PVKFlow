@@ -14,7 +14,7 @@ from fastapi import APIRouter, Query, Response
 
 from app.api.common import ApiError, guard
 from app.parsers import matrix, render
-from app.storage import artifacts, db
+from app.storage import artifacts, catalog
 
 router = APIRouter(prefix="/api/spectra", tags=["spectra"])
 
@@ -26,42 +26,11 @@ MIN_LAMBDA_STEP_NM = 2.0
 
 
 def _resolve(artifact_id: str) -> str:
-    """允许直接用**样品 id**。
-
-    页面地址长这样：`#sample/art_xxx`。可从界面上能复制到的 id 常常是
-    `smp_xxx`（样品列表、失败样品表里显示的都是它）—— 一个叫 `sample/` 的地址
-    收不了样品 id，只回一句「文件不存在：smp_xxx」，那句话根本没说到点子上。
-    这里把它翻成那个样品的光谱矩阵。
-    """
-    if not artifact_id.startswith("smp_"):
-        return artifact_id
-    row = db.query_one(
-        "SELECT artifact_id FROM artifact WHERE sample_id=? AND is_matrix=1"
-        " ORDER BY size DESC LIMIT 1", (artifact_id,))
-    if row:
-        return row["artifact_id"]
-    exists = db.query_one("SELECT 1 FROM sample WHERE sample_id=?", (artifact_id,))
-    raise ApiError(
-        f"这个样品没有光谱矩阵：{artifact_id}" if exists
-        else f"没有这个样品：{artifact_id}", 404, "not_found")
+    return guard(artifacts.resolve_matrix_id, artifact_id)
 
 
 def _load(artifact_id: str) -> matrix.SpectralMatrix:
-    artifact_id = _resolve(artifact_id)
-    row = artifacts.get(artifact_id)
-    if not row:
-        raise ApiError(f"文件不存在：{artifact_id}", 404, "not_found")
-    path = guard(artifacts.local_path, artifact_id)
-    # 只有复制进工作区的（只读副本，内容不会变）才信库里记的 sha；原地引用的文件可能被仪器软件改过，
-    # 得现算 —— 不然样品页拿到旧缓存、批处理算的是新内容，两边对不上（体检发现，C069）。
-    # 批处理那边（app/batch.py）一律现算，口径和这里的引用型一致。
-    known = row.get("sha256") if row.get("storage_mode") == "copied" else None
-    try:
-        return matrix.load_cached(path, known)
-    except ValueError as exc:
-        raise ApiError(str(exc), 400, "not_a_matrix") from exc
-    except Exception as exc:
-        raise ApiError(f"解析光谱矩阵失败：{exc}", 400, "parse_failed") from exc
+    return guard(artifacts.load_matrix, artifact_id)
 
 
 @router.get("/{artifact_id}/meta")
@@ -79,9 +48,7 @@ def meta(artifact_id: str) -> dict:
     d["filename"] = row.get("filename")
     d["display_path"] = row.get("display_path")
     d["file_size"] = row.get("size")
-    d["sample"] = db.query_one(
-        "SELECT sample_id, name, batch FROM sample WHERE sample_id = ?",
-        (row.get("sample_id"),)) if row.get("sample_id") else None
+    d["sample"] = catalog.sample_brief(row.get("sample_id"))
     step = _lambda_step_for_budget(sm)
     d["frames_lambda_step"] = step
     d["frames_bytes_estimate"] = int(
@@ -346,66 +313,5 @@ def thickness(
 # ------------------------------------------------------------------ 样品清单
 @router.get("/samples")
 def samples() -> dict:
-    """带光谱矩阵的样品清单 —— 「吸收光谱 & 膜厚」的入口列表。
-
-    判断一个文件是不是光谱矩阵只读文件头（列数 ≥ 8），不整个解析。
-    判断结果存在 artifact.is_matrix 列里（导入时判一次，老数据第一次列出时惰性补判），第二次就不用再看文件了。
-    """
-    import json as _json
-
-    from app.storage import db
-
-    rows = db.query(
-        "SELECT a.artifact_id, a.filename, a.display_path, a.ext, a.size, a.status,"
-        "       a.meta_json, a.is_matrix, a.sample_id, s.name AS sample_name, s.batch"
-        " FROM artifact a JOIN sample s ON s.sample_id = a.sample_id"
-        " WHERE a.kind='raw' AND a.ext IN ('.csv','.txt','.dat','.tsv','.asc',"
-        "                                  '.xlsx','.xls','.xlsm')"
-        " ORDER BY s.name, a.size DESC"
-    )
-
-    by_sample: dict[str, dict] = {}
-    for r in rows:
-        try:
-            meta = _json.loads(r.get("meta_json") or "{}")
-        except ValueError:
-            meta = {}
-
-        flag = r.get("is_matrix")
-        if flag is None:
-            flag = meta.get("matrix_like")
-        if flag is None and r["status"] == "ok":
-            # 导入时还没判过的老数据：现在补判。和导入时是同一份判断（ingest.mark_matrix）
-            flag, meta["columns_hint"] = _probe_lazily(r["artifact_id"])
-
-        entry = by_sample.setdefault(r["sample_id"], {
-            "sample_id": r["sample_id"], "name": r["sample_name"],
-            "batch": r["batch"], "matrices": [], "other_files": 0,
-        })
-        if flag:
-            entry["matrices"].append({
-                "artifact_id": r["artifact_id"], "filename": r["filename"],
-                "display_path": r["display_path"], "size": r["size"],
-                "status": r["status"], "columns_hint": meta.get("columns_hint"),
-            })
-        else:
-            entry["other_files"] += 1
-
-    out = [v for v in by_sample.values()]
-    out.sort(key=lambda v: (not v["matrices"], v["name"]))
-    return {
-        "samples": out,
-        "with_matrix": sum(1 for v in out if v["matrices"]),
-        "total": len(out),
-    }
-
-
-def _probe_lazily(artifact_id: str) -> tuple[bool, int | None]:
-    from app.storage import ingest
-
-    try:
-        path = artifacts.local_path(artifact_id)
-    except (KeyError, FileNotFoundError):
-        return False, None
-    pr = ingest.mark_matrix(artifact_id, path, if_unknown=False)
-    return bool(pr.is_matrix), pr.columns
+    """带光谱矩阵的样品清单 —— 「吸收光谱 & 膜厚」的入口列表（查询在 app/storage/catalog.py）。"""
+    return catalog.matrix_samples()

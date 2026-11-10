@@ -278,7 +278,12 @@ def test_restart_also_closes_runs_left_running(workspace):
     from app.storage import results
 
     rid = results.start_run("batch.abs_thickness", "0.2.0")
-    tasks.reap_interrupted()
+    # 上次进程死时队列里那条批处理任务还标着 running —— 收尾是它注册的 on_interrupted 做的
+    with db.tx() as c:
+        c.execute("INSERT INTO task(task_id, kind, title, params_json, status, created_at)"
+                  " VALUES('task_dead', ?, '', '{}', 'running', ?)",
+                  (batch.BATCH_SKILL_ID, db.now()))
+    assert tasks.reap_interrupted() == 1
     run = db.query_one("SELECT status, error, finished_at FROM analysis_run"
                        " WHERE analysis_run_id=?", (rid,))
     assert run["status"] == "failed" and "重启" in run["error"] and run["finished_at"]
@@ -797,9 +802,9 @@ def test_thickness_long_table_carries_the_per_frame_verdict(batch_client, import
     })["task_id"])
     run_id = t["result"]["parent_run_id"]
 
-    from app.api import batch as batch_api
+    from app import batch_views
 
-    _detail, tbl, df = batch_api._load_curves(run_id, "ot")
+    _detail, tbl, df = batch_views.load_curves(run_id, "ot")
     assert {"ot", "ot_ok"} <= set(df.columns)
     assert "status" not in df.columns, "判级现在是模块给的 0/1 列，不是字符串"
 

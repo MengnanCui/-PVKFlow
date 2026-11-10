@@ -43,9 +43,7 @@ async def lifespan(app: FastAPI):
     reaped = task_queue.reap_interrupted()
     if reaped:
         log.warning("有 %d 个任务因为上次重启被中断，已标记", reaped)
-    from app.qfls import pipeline as qfls_pipeline
-    if n := qfls_pipeline.reap_interrupted():
-        log.warning("有 %d 次 QFLS 处理因为上次重启被中断，已标记", n)
+    # 每种任务被打断后的收尾（批处理的分析运行、QFLS 的 run.json）由它们注册时给的 on_interrupted 做
     # 旧的 Skill 机制已经退役（2026-11）。工作区里还留着同事写的 skill 时要说出来，
     # 不能让它们悄悄不生效 —— 设置页上也有同一条提示。
     legacy = legacy_skills()

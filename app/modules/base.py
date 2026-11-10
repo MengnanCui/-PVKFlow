@@ -449,6 +449,11 @@ class ModuleContext:
         """
         return self._needed is None or panel_id in self._needed
 
+    def only(self, panel_ids) -> "ModuleContext":
+        """平台用：这一次只需要重算这几个面板（其余的 needs() 返回 False）。返回自己，方便链式写。"""
+        self._needed = set(panel_ids)
+        return self
+
     def image_url(self, endpoint: str, **query) -> str:
         """拼一个服务端渲染接口的地址，给 kind="heatmap" 的面板用。
 

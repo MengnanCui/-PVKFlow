@@ -93,6 +93,9 @@ def merge_params(overrides: dict | None) -> dict:
                 raise ValueError(f"参数 {path} 应该是 {len(base)} 个数的列表，比如 {base}")
             return new
         if isinstance(base, bool) or not isinstance(base, (int, float)):
+            # 字符串 / 真假值是口径（比如扣分项看哪个指标），不是阈值：不让在这里改，改了就是另一套方法
+            if new != base:
+                raise ValueError(f"参数 {path} 是口径，不能在处理时改（现在是 {base!r}）")
             return new
         if isinstance(new, bool) or not isinstance(new, (int, float)) or not math.isfinite(new):
             raise ValueError(f"参数 {path} 应该是数字，给的是 {new!r}")
@@ -101,13 +104,18 @@ def merge_params(overrides: dict | None) -> dict:
     return merge(P, overrides or {}, "")
 
 
-def reap_interrupted() -> int:
-    """服务重启时把上次没跑完的处理标成失败（原来 run.json 永远停在「处理中」、也删不掉，C069）。"""
+def reap_interrupted(run_id: str | None = None) -> int:
+    """把没跑完的处理标成失败（原来 run.json 永远停在「处理中」、也删不掉，C069）。
+
+    给 run_id：只收这一次（任务队列重启时调的就是这个，见 app/qfls/task.py）；不给：扫整个输出目录。
+    """
     n = 0
     d = runs_dir()
     if not d.is_dir():
         return 0
-    for p in d.iterdir():
+    if run_id and (not run_id.startswith("qr_") or any(ch in run_id for ch in "/\\.")):
+        return 0
+    for p in ([d / run_id] if run_id else d.iterdir()):
         r = _read(p / "run.json") if p.is_dir() else None
         if r and r.get("status") == "running":
             r.update(status="failed", error="服务重启，这次处理被中断；已经做完的部分留在目录里，要完整结果请重新处理",
@@ -371,7 +379,7 @@ def process(root: str | Path, *, run_id: str | None = None, params: dict | None 
                 if r["key"] in smalls:
                     lo, hi = scales[r["objective"] or "?"]
                     R.heatmap_fixed(out / "points" / r["key"] / "heatmap_group.png", smalls[r["key"]], lo, hi)
-            R.global_figures(out / "global", [r for r in rows if r["valid"]], exp_code)
+            R.global_figures(out / "global", [r for r in rows if r["valid"]], exp_code, P)
         for r in rows:
             r = {k: _clean(v) for k, v in r.items()}
             _dump(out / "points" / r["key"] / "metrics.json", r)
@@ -470,15 +478,24 @@ def list_runs() -> list[dict]:
 
 def run_path(run_id: str) -> Path:
     if not run_id.startswith("qr_") or "/" in run_id or "\\" in run_id or ".." in run_id:
-        raise NotFound(run_id)
+        raise NotFound(f"没有这次处理：{run_id}")
     p = runs_dir() / run_id
     if not (p / "run.json").is_file():
-        raise NotFound(run_id)
+        raise NotFound(f"没有这次处理：{run_id}")
     return p
 
 
 def load(run_id: str, name: str):
     return _read(run_path(run_id) / name)
+
+
+def load_point(run_id: str, key: str) -> dict:
+    """一个样点：metrics.json + extra.json（直方图、剖面、变异函数的数据）+ 有哪些图。"""
+    d = run_path(run_id) / "points" / key
+    m = _read(d / "metrics.json") if key.isalnum() else None
+    if m is None:
+        raise NotFound(f"没有这个样点：{key}")
+    return {"point": m, "extra": _read(d / "extra.json") or {}, "images": sorted(p.name for p in d.glob("*.png"))}
 
 
 def delete_run(run_id: str) -> None:

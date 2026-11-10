@@ -82,15 +82,7 @@ def points(run_id: str) -> dict:
 
 @router.get("/runs/{run_id}/points/{key}")
 def point(run_id: str, key: str) -> dict:
-    base = guard(pipeline.run_path, run_id)
-    if not key.isalnum():
-        raise ApiError(f"没有这个样点：{key}", 404, "not_found")
-    d = base / "points" / key
-    m = pipeline._read(d / "metrics.json")
-    if m is None:
-        raise ApiError(f"没有这个样点：{key}", 404, "not_found")
-    return {"point": m, "extra": pipeline._read(d / "extra.json") or {},
-            "images": sorted(p.name for p in d.glob("*.png"))}
+    return guard(pipeline.load_point, run_id, key)
 
 
 @router.get("/runs/{run_id}/files/{path:path}")

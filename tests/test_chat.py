@@ -104,6 +104,10 @@ def test_pinned_note_survives_the_conversation_being_deleted(workspace):
 
     用户钉它就是因为它值得留下 —— 清理对话历史不该顺手把对比页上的分析抹掉。
     """
+    from app.storage import db
+    with db.tx() as c:
+        c.execute("INSERT INTO analysis_run(analysis_run_id, skill_id, skill_version, status, started_at)"
+                  " VALUES('run_abc', 'batch.abs_thickness', '1', 'ok', ?)", (db.now(),))
     cid = conversations.create()
     mid = conversations.add_message(cid, "assistant", "这批的积分比偏低。")
     conversations.pin("run_abc", cid, mid, "这批的积分比偏低。")
@@ -305,7 +309,7 @@ class _FakeProvider:
 
 def _use(monkeypatch, provider):
     from app.api import chat as chat_api
-    monkeypatch.setattr(chat_api, "_resolve_or_501",
+    monkeypatch.setattr(chat_api, "resolve_or_501",
                         lambda *a, **k: (provider, "fake-model"))
     return provider
 

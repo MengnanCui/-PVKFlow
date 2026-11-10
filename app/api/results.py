@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Query
 
 from app.api.common import guard
-from app.storage import db, results, tabular
+from app.storage import catalog, results, tabular
 
 router = APIRouter(prefix="/api", tags=["results"])
 
@@ -20,10 +20,7 @@ def overview() -> dict:
         # 总览只摆最常见的 12 个；总数一起给，界面上要说「共 N 个」，别让人以为看全了
         "fields": fields[:12],
         "n_fields": len(fields),
-        "recent_files": db.query(
-            "SELECT artifact_id, filename, ext, size, storage_mode, created_at"
-            " FROM artifact WHERE kind='raw' ORDER BY created_at DESC, rowid DESC LIMIT 8"
-        ),
+        "recent_files": catalog.recent_files(8),
     }
 
 
@@ -74,32 +71,10 @@ def table(table_id: str, limit: int = Query(2000, ge=1, le=50000)) -> dict:
 
 @router.get("/samples")
 def samples(limit: int = Query(500, ge=1, le=5000)) -> dict:
-    return {"samples": db.query(
-        "SELECT s.*,"
-        " (SELECT COUNT(*) FROM artifact a WHERE a.sample_id = s.sample_id) AS n_files,"
-        " (SELECT COUNT(*) FROM key_result_current k WHERE k.sample_id = s.sample_id) AS n_results"
-        " FROM sample s ORDER BY s.created_at DESC LIMIT ?", (limit,)
-    )}
+    return {"samples": catalog.list_samples(limit)}
 
 
 @router.get("/storage/stats")
 def storage_stats() -> dict:
     """数据存储页要展示的真实分布。"""
-    return {
-        "by_mode": db.query(
-            "SELECT storage_mode, COUNT(*) AS n, COALESCE(SUM(size),0) AS bytes"
-            " FROM artifact WHERE kind='raw' GROUP BY storage_mode"
-        ),
-        "by_ext": db.query(
-            "SELECT ext, COUNT(*) AS n, COALESCE(SUM(size),0) AS bytes"
-            " FROM artifact WHERE kind='raw' GROUP BY ext ORDER BY n DESC LIMIT 12"
-        ),
-        "tables": db.query(
-            "SELECT t.table_id, t.name, t.n_rows, t.path, r.skill_id"
-            " FROM data_table t LEFT JOIN analysis_run r"
-            "   ON r.analysis_run_id = t.analysis_run_id"
-            " ORDER BY t.created_at DESC LIMIT 20"
-        ),
-        "fields": results.list_fields(),
-        "counts": results.overview_counts(),
-    }
+    return catalog.storage_stats()

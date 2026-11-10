@@ -63,11 +63,11 @@
 | POST | `/api/batch/run` |  | 有 | 提交一次批处理。 |
 | GET | `/api/batch/runs` | limit |  |  |
 | GET | `/api/batch/runs/{parent_run_id}` |  |  |  |
-| GET | `/api/batch/runs/{parent_run_id}/axes` |  |  | 这批数据的波长轴和时间轴范围。 |
-| GET | `/api/batch/runs/{parent_run_id}/curves` | column, max_series |  | 批处理的曲线，按样品分组返回。 |
-| GET | `/api/batch/runs/{parent_run_id}/export` | column, mode, group_by, max_series |  | 打包 plot.py + data.csv + README.md 下载。 |
+| GET | `/api/batch/runs/{parent_run_id}/axes` |  |  | 这批数据的波长轴和时间轴范围（读不到返回 available=false，不报错）。 |
+| GET | `/api/batch/runs/{parent_run_id}/curves` | column, max_series |  | 批处理的曲线，按样品分组返回（最多 max_series 条，并说明截断了多少）。 |
+| GET | `/api/batch/runs/{parent_run_id}/export` | column, mode, group_by, max_series |  | 打包 plot.py + data.csv + README.md 下载 —— 平台内置图型不够用时，拿脚本走人随便改。 |
 | GET | `/api/batch/runs/{parent_run_id}/export/preview` | column, mode, group_by |  | 先读脚本，再决定要不要下载。 |
-| GET | `/api/batch/runs/{parent_run_id}/slices` | windows |  | 不同样品在若干个时间窗内的平均膜厚。 |
+| GET | `/api/batch/runs/{parent_run_id}/slices` | windows |  | 不同样品在若干个时间窗内的平均膜厚（口径见 app/batch_views.slices）。 |
 
 ### chat（`app/api/chat.py`）
 
@@ -104,10 +104,10 @@
 | 方法 | 路径 | 查询参数 | 请求体 | 说明 |
 |---|---|---|---|---|
 | GET | `/api/modules` |  |  |  |
-| POST | `/api/modules/import` |  | 有 | 装一个模块的 zip。**先验证，通过了才落地。** |
+| POST | `/api/modules/import` |  | 有 | 装一个模块的 zip。**先验证，通过了才落地**；同 id 是升级，平台自带的不让覆盖。 |
 | POST | `/api/modules/reload` |  |  |  |
 | POST | `/api/modules/validate` |  | 有 | 验证一个已装的模块。装之前的验证走 /import。 |
-| DELETE | `/api/modules/{module_id}` |  |  |  |
+| DELETE | `/api/modules/{module_id}` |  |  | 卸载（删它的目录、重载）。平台自带的不让卸。 |
 | POST | `/api/modules/{module_id}/compute` |  | 有 | 拿全分辨率矩阵算一遍这个模块的所有面板。 |
 | GET | `/api/modules/{module_id}/export` |  |  | 打包成 zip 发给别人。这就是「分发」的全部 —— 不需要 Git。 |
 
@@ -185,7 +185,7 @@
 
 | 方法 | 路径 | 查询参数 | 请求体 | 说明 |
 |---|---|---|---|---|
-| GET | `/api/spectra/samples` |  |  | 带光谱矩阵的样品清单 —— 「吸收光谱 & 膜厚」的入口列表。 |
+| GET | `/api/spectra/samples` |  |  | 带光谱矩阵的样品清单 —— 「吸收光谱 & 膜厚」的入口列表（查询在 app/storage/catalog.py）。 |
 | GET | `/api/spectra/{artifact_id}/curve` | kind, lam_min, lam_max, center, half_width |  | 服务端版本的积分/斜率曲线。 |
 | GET | `/api/spectra/{artifact_id}/frames` | lam_min, lam_max, max_time_points |  | 抽样光谱的**坐标轴与形状**，数值走 data_url 指向的二进制端点。 |
 | GET | `/api/spectra/{artifact_id}/frames.bin` | lam_min, lam_max, max_time_points |  | 抽样谱的数值，float32 小端、行主序（行=波长）。配合 /frames 使用。 |
@@ -282,7 +282,7 @@
 | `HTE_LLM_RETRIES` | "3" | `app/ai/gateway.py:35` |
 | `HTE_LLM_RETRY_BASE` | "1.0" | `app/ai/gateway.py:36` |
 | `HTE_LLM_TIMEOUT` | "120" | `app/ai/gateway.py:33` |
-| `HTE_NO_BROWSER` | （无） | `app/main.py:217` |
+| `HTE_NO_BROWSER` | （无） | `app/main.py:215` |
 | `HTE_PORT` | "8765" | `app/config.py:42` |
 | `HTE_WORKSPACE` | ROOT / "workspace" | `app/config.py:19` |
 
@@ -317,13 +317,13 @@
 | `flag_edge_ev` | 0.02 |
 | `flag_group_robust_z` | 3.5 |
 | `flag_group_min_n` | 4 |
-| `score.spread` | {'max': 25, 'from': 0.015, 'to': 0.075} |
-| `score.low_frac` | {'max': 15, 'from': 0.03, 'to': 0.1} |
-| `score.low_area` | {'max': 15, 'from': 0.0, 'to': 0.01} |
-| `score.scratch` | {'max': 20, 'per': 10} |
-| `score.edge` | {'max': 10, 'from': 0.005, 'to': 0.03} |
-| `score.moran` | {'max': 10, 'from': 0.15, 'to': 0.5} |
-| `score.bright` | {'max': 5, 'from': 0.0, 'to': 100.0} |
+| `score.spread` | {'metric': 'p90_p10', 'label': '离散（P90 − P10）', 'unit': 'eV', 'max': 25, 'from': 0.015, 'to': 0.075} |
+| `score.low_frac` | {'metric': 'low_2s_frac', 'label': '低值占比（< 中位数 − 2σ）', 'unit': 'frac', 'max': 15, 'from': 0.03, 'to': 0.1} |
+| `score.low_area` | {'metric': 'low_cc_max_frac', 'label': '最大低值连通域', 'unit': 'frac', 'max': 15, 'from': 0.0, 'to': 0.01} |
+| `score.scratch` | {'metric': 'scratch_count', 'label': '划痕候选', 'unit': '条', 'max': 20, 'per': 10} |
+| `score.edge` | {'metric': 'edge_minus_center', 'abs': True, 'label': '边缘 − 中心', 'unit': 'eV', 'max': 10, 'from': 0.005, 'to': 0.03} |
+| `score.moran` | {'metric': 'morans_i', 'label': "结构不均（Moran's I）", 'unit': '', 'max': 10, 'from': 0.15, 'to': 0.5} |
+| `score.bright` | {'metric': 'bright_density', 'label': '亮点密度', 'unit': '个/百万像素', 'max': 5, 'from': 0.0, 'to': 100.0} |
 | `grades` | {'A': 85, 'B': 70, 'C': 55} |
 
 指标（进分数 / 进全局比较；「跨物镜」= 不同物镜之间能不能直接比）：

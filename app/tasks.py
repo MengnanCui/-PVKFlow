@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +21,8 @@ from app.errors import NotFound
 from app.storage import db
 
 # 任务种类 → 执行函数。函数签名：fn(ctx) -> dict
+log = logging.getLogger("hte.tasks")
+
 _HANDLERS: dict[str, Callable[["TaskContext"], dict]] = {}
 
 _executor: ThreadPoolExecutor | None = None
@@ -66,10 +69,21 @@ class TaskContext:
         return self.task_id in _cancelled
 
 
-def register(kind: str) -> Callable:
-    """装饰器：把一个函数注册成某种任务的执行体。"""
+# 任务种类 → 服务重启时这种任务被打断后的收尾（参数是这个任务提交时的 params）
+_ON_INTERRUPTED: dict[str, Callable[[dict], None]] = {}
+
+
+def register(kind: str, *, on_interrupted: Callable[[dict], None] | None = None) -> Callable:
+    """装饰器：把一个函数注册成某种任务的执行体。
+
+    on_interrupted：服务重启时，这种任务上次没跑完，除了把任务标成失败，还要收拾什么
+    （批处理：把它的分析运行标成失败；QFLS：把输出目录的 run.json 标成失败）。
+    每种任务自己管自己的收尾，任务队列不需要知道任何一种任务的细节（C074）。
+    """
     def deco(fn: Callable[[TaskContext], dict]) -> Callable:
         _HANDLERS[kind] = fn
+        if on_interrupted:
+            _ON_INTERRUPTED[kind] = on_interrupted
         return fn
     return deco
 
@@ -169,21 +183,23 @@ def reap_interrupted() -> int:
     不这么做的话，重启后会有任务永远显示 running —— 用户会一直等一个
     早就死了的东西。
     """
-    rows = db.query("SELECT task_id FROM task WHERE status IN ('queued','running')")
-    now = db.now()
-    with db.tx() as c:
-        if rows:
+    rows = db.query("SELECT task_id, kind, params_json FROM task WHERE status IN ('queued','running')")
+    if rows:
+        with db.tx() as c:
             # 原来这句话还说「重新提交会跳过它们」—— 代码里从来没有跳过的逻辑，
-            # 重新提交会把整批重算一遍。说了做不到的事比不说更糟。
+            # 重新提交会把整批重新算一遍。说了做不到的事比不说更糟。
             c.execute("UPDATE task SET status='failed', error=?, finished_at=?"
                       " WHERE status IN ('queued','running')",
-                      ("服务重启，任务被中断。已经跑完的样品结果保留；"
-                       "重新提交会把整批重新算一遍。", now))
-        # 任务表之外，分析运行（批处理的父运行和每个样品的子运行）也得收尾 ——
-        # 不然对比历史里永远挂着一条「运行中」（自查 §6 #11）。
-        c.execute("UPDATE analysis_run SET status='failed', finished_at=?,"
-                  " error=COALESCE(error, '服务重启，这次运行被中断')"
-                  " WHERE status='running'", (now,))
+                      ("服务重启，任务被中断。已经做完的部分保留；重新提交会从头再做一遍。", db.now()))
+    # 每种任务自己的收尾（注册时给的 on_interrupted）。一种任务收尾出错不能挡住别的
+    for r in rows:
+        hook = _ON_INTERRUPTED.get(r["kind"])
+        if not hook:
+            continue
+        try:
+            hook(json.loads(r.get("params_json") or "{}"))
+        except Exception:                       # noqa: BLE001
+            log.exception("任务 %s（%s）的中断收尾出错", r["task_id"], r["kind"])
     return len(rows)
 
 

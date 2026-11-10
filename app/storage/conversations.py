@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.errors import NotFound
 from app.storage import db
 
 # 一次对话最多回溯多少轮喂给模型。再多的话本地 27B 的上下文窗口先撑不住。
@@ -156,6 +157,9 @@ def pin(analysis_run_id: str, conversation_id: str | None,
     `note` 存的是**正文快照**，不是外键取回来的。会话被删掉之后，钉在对比页上
     的那段分析还应该在 —— 用户钉它就是因为它值得留下。
     """
+    if not db.query_one("SELECT 1 FROM analysis_run WHERE analysis_run_id=?", (analysis_run_id,)):
+        # ai_pin 没有外键：原来能钉到一次不存在的对比上，留下一条永远显示不出来的孤儿（C069）
+        raise NotFound(f"没有这次对比：{analysis_run_id}")
     pid = db.new_id("pin")
     with db.tx() as conn:
         conn.execute(

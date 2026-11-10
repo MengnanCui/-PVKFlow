@@ -7,7 +7,7 @@
 
 1. **501 必须在开流之前发。** FastAPI 的 StreamingResponse 一旦开始产出，
    状态码就已经在路上了，`main.py` 里那个全局异常处理器再也插不上手。
-   所以「没配模型」这类错在 `_resolve_or_501` 里同步抛，
+   所以「没配模型」这类错在 `resolve_or_501`（app/api/streaming.py）里同步抛，
    流中途才出的错走 `event: error` 帧。
 2. **用户那条消息先落库再开流。** 流断了、浏览器关了、模型崩了，
    问过的话都还在。答到一半的也存半截 + `aborted` 标记。
@@ -16,93 +16,31 @@
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import Iterator
 
-import anyio
 from fastapi import APIRouter, Body, Query
-from fastapi.responses import StreamingResponse
 
 from app import config
+from app.ai import assistant
 from app.ai import context as ai_context
-from app.ai import openai_compat
-from app.ai.provider import ChatMessage, ProviderUnavailable, extract_json
+from app.ai.provider import ChatMessage, ProviderUnavailable
 from app.api.common import ApiError, guard
+from app.api.streaming import ClosingStream, resolve_or_501, sse_frame
 from app.storage import conversations
 
 log = logging.getLogger("hte.chat")
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
-# 模型可以吐的动作。写死成白名单 —— 模型编一个 "delete_everything" 出来时，
-# 界面应该当它没说，而不是照着渲染一个按钮。
-ACTIONS = ("none", "narrow", "select", "process")
-
-# 对比 run 的 id 形状（`db.new_id("run")`）。scope 里放 id 而不是快照，
-# 就得确认它真是个 id。
-_RUN_ID_RE = re.compile(r"run_[0-9a-f]{6,32}")
-
 # 界面带上来的那段说明能有多长。定义原文只有两三百字，
 # 加上「眼前这一处」的读数（最多 12 行）之后要留出余量。
 CONTEXT_NOTE_MAX = 4000
 
-SYSTEM_PROMPT = """\
-你是高通量实验数据平台 HTE Studio 里的分析助手。用户是钙钛矿/TCO 方向的研究者，\
-正在处理原位吸收光谱与膜厚数据。
-
-下面会给你「已知事实」——平台从数据库里查出来的真实数字。规则：
-
-- 只根据已知事实回答。事实里没有的数字**不要编**，就说数据里没有。
-- 事实里如果写了「已截断」或「没有逐个样品的明细」，就说明你看到的不是全部，
-  不要下全局结论。
-- 回答用中文，简洁，不要客套话，不要复述问题。
-- 膜厚相关的判断要记住：光学厚度 OT = f/2，窗口越窄频率分辨率越差；
-  条纹数不足时平台会打 LOW_CYCLES / DEGRADED 标志，那些数值不能当准确值用。
-- 事实里的「曲线摘要」是批处理算出的曲线按时间等分、每段取平均后的结果（一行一条曲线，
-  和「时间 (s)」那一行一一对应）。读膜厚时一定要对照「OT 可信比例」：比例低的那几段，
-  膜厚数值不能当准确值用。摘要只够看趋势和形状，不要从里面读精确到个位的数。
-
-如果用户的意图是**操作平台**而不是提问，在回答的最后附一个 json 代码块：
-
-```json
-{"action": "select", "filter": {...}, "why": "一句话说明"}
-```
-
-可用的 action：
-- `narrow`：命中样品太多，你需要先缩小范围。filter 里给收窄条件。
-- `select`：用户想挑一批样品。**只给筛选式，绝对不要给样品 ID 列表。**
-  可用的键：batch（样品号数组）、folder（文件夹数组）、time（{from,to} ISO 时间）、
-  name_prefix、q（模糊搜索）、has_matrix（布尔）。
-- `process`：用户想跑批处理。给 filter 和 recipe（band_min/band_max 等）。
-
-没有操作意图就不要附 json。附了也不会自动执行 —— 界面会渲染成一张卡片，
-用户改过、点过才算数。所以宁可给一个明显偏保守的筛选式，也不要猜。
-"""
-
-
-GLOSSARY_PROMPT = """\
-你是 HTE Studio 里的术语解释助手。用户在界面上点开了某个术语旁边的 ⓘ，\
-想把这个概念弄明白。
-
-下面会给你三样东西：
-
-1. **平台里这条术语的权威定义** —— 这是界面上正在显示给用户看的原文。\
-   你的回答必须和它一致。它没说的你可以补，它说了的不要改口，\
-   更不要另编一套定义出来（用户会同时看到两份，对不上就没法用了）。
-2. **用户眼前这一处的读数** —— 他点的那个 ⓘ 旁边正显示着的那几个数\
-   （哪个时间窗、哪几个样品、各是多少、多少帧可信…）。\
-   **他问的多半就是这几个数**，先看它再答，别只把定义换个说法重讲一遍。\
-   这一段没给的时候，就说明他点的是个纯概念的 ⓘ，旁边本来就没有数据。
-3. **用户当前库里的汇总统计** —— 用来把抽象定义落到他自己的数据上。
-
-这三样里没有的数字，一个都不要编。要是这几样都答不上他的问题，\
-就直说需要看什么才能答。
-
-回答用中文，直接，不要客套话。用户问的是概念，不是要你操作平台 ——\
-**不要输出 json 动作块。**
-"""
+# 对比 run 的 id 形状（`db.new_id("run")`）。scope 里放 id 而不是快照，
+# 就得确认它真是个 id。
+_RUN_ID_RE = re.compile(r"run_[0-9a-f]{6,32}")
 
 
 # ---------------------------------------------------------------- 会话 CRUD
@@ -181,7 +119,7 @@ def post_message(conversation_id: str, payload: dict = Body(...)):
         conversations.set_scope(conversation_id, scope)
 
     # ★ 没配模型要在**开流之前**炸。开了流就再也改不了状态码了。
-    provider, model = _resolve_or_501(payload.get("provider"), payload.get("model"))
+    provider, model = resolve_or_501(payload.get("provider"), payload.get("model"))
 
     # 术语对话默认不给逐样品明细：用户问的是「DEGRADED 是什么意思」，
     # 塞 40 行样品表既挤掉定义本身，又会诱着模型去提议收窄筛选式。
@@ -206,12 +144,12 @@ def post_message(conversation_id: str, payload: dict = Body(...)):
     if conv["title"] == "新对话":
         conversations.rename(conversation_id, question[:40])
 
-    system = SYSTEM_PROMPT
+    system = assistant.SYSTEM_PROMPT
     if topic:
         # 定义原文由前端带上来 —— 术语表是界面文案，跟界面放在一起才不会漂。
         # 两份定义各自维护迟早对不上，那时候用户看到的和模型说的就不是一回事了。
         note = str(payload.get("context_note") or "").strip()[:CONTEXT_NOTE_MAX]
-        system = GLOSSARY_PROMPT
+        system = assistant.GLOSSARY_PROMPT
         if note:
             system += f"\n\n界面上这条术语的定义原文：\n{note}\n"
 
@@ -223,39 +161,11 @@ def post_message(conversation_id: str, payload: dict = Body(...)):
         conversation_id, "assistant", "",
         meta={"model": model, "provider": provider.name, "pending": True})
 
-    return _ClosingStream(
+    return ClosingStream(
         _stream(provider, model, messages, conversation_id, assistant_id, built),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-class _ClosingStream(StreamingResponse):
-    """流结束（不管是说完了、还是你点了停止 / 关了页面）时**亲手**把生成器关掉。
-
-    Starlette 发现客户端断开后只是不再往下取，并不关生成器 —— 生成器停在 yield 上，
-    它的 finally（存下已经说出来的字）要等垃圾回收哪天碰巧跑到才执行。实测断开 4 秒后
-    消息仍是空白的「生成中」（自查 §6 #16）。
-    """
-
-    def __init__(self, gen, **kw):
-        self._gen = gen
-        super().__init__(gen, **kw)
-
-    async def stream_response(self, send) -> None:
-        try:
-            await super().stream_response(send)
-        finally:
-            # 关生成器会写库、关模型那头的连接：放到线程里做；并且不许被这次请求的取消打断，
-            # 不然断开时恰恰最需要跑的这一步会被跳过
-            with anyio.CancelScope(shield=True):
-                await anyio.to_thread.run_sync(self._close)
-
-    def _close(self) -> None:
-        try:
-            self._gen.close()
-        except ValueError:          # 极少数情况下它正在别的线程里跑着；那就让它自己跑完
-            pass
 
 
 def _stream(provider, model, messages, conversation_id, assistant_id,
@@ -265,7 +175,7 @@ def _stream(provider, model, messages, conversation_id, assistant_id,
     这个生成器里**不能抛异常给框架** —— 响应头早就发出去了，抛上去用户看到的是
     连接莫名其妙断掉。所有错都转成 `event: error` 帧，界面能照实显示。
     """
-    yield _frame("meta", {"message_id": assistant_id, "model": model,
+    yield sse_frame("meta", {"message_id": assistant_id, "model": model,
                           "provider": provider.name,
                           "n_samples": built["n_samples"],
                           "needs_narrowing": built["needs_narrowing"]})
@@ -278,7 +188,7 @@ def _stream(provider, model, messages, conversation_id, assistant_id,
         try:
             for piece in stream:
                 chunks.append(piece)
-                yield _frame("delta", {"text": piece})
+                yield sse_frame("delta", {"text": piece})
         except ProviderUnavailable as exc:
             error = str(exc)
         except Exception as exc:                   # noqa: BLE001 — 见上面的说明
@@ -297,7 +207,7 @@ def _stream(provider, model, messages, conversation_id, assistant_id,
                 "scope_n_samples": built["n_samples"], "aborted": True})
 
     text = "".join(chunks)
-    card = _card_from(text) if text else None
+    card = assistant.card_from(text) if text else None
     meta = {"model": model, "provider": provider.name,
             "scope_n_samples": built["n_samples"]}
     if card:
@@ -307,49 +217,12 @@ def _stream(provider, model, messages, conversation_id, assistant_id,
     conversations.update_message(assistant_id, text, meta=meta)
 
     if error:
-        yield _frame("error", {"message": error, "kind": "model_failed",
+        yield sse_frame("error", {"message": error, "kind": "model_failed",
                                "partial": bool(text)})
         return
     if card:
-        yield _frame("card", card)
-    yield _frame("done", {"message_id": assistant_id, "chars": len(text)})
-
-
-def _frame(event: str, data: dict) -> bytes:
-    return (f"event: {event}\n"
-            f"data: {json.dumps(data, ensure_ascii=False)}\n\n").encode("utf-8")
-
-
-def _card_from(text: str) -> dict | None:
-    """从回答里抠出动作卡片。抠不出来就没有卡片 —— 这是正常情况，不是错误。"""
-    if "{" not in text:
-        return None                       # 绝大多数回答是纯文字，别白跑一趟解析
-    try:
-        obj = extract_json(text)
-    except ValueError:
-        return None
-    if not isinstance(obj, dict):
-        return None
-    action = obj.get("action")
-    if action not in ACTIONS or action == "none":
-        return None
-    card = {"action": action, "why": str(obj.get("why") or "")[:300]}
-
-    flt = obj.get("filter")
-    if isinstance(flt, dict):
-        # 模型给了 ID 列表就丢掉那一部分。系统提示里已经说了不要给，
-        # 但白名单要在代码里，不能只在提示词里 —— 提示词是建议，代码才是保证。
-        flt = {k: v for k, v in flt.items() if k != "ids"}
-        try:
-            from app.storage import selection
-            card["filter"] = selection.normalize(flt)
-            card["count"] = selection.count(card["filter"])
-        except (ValueError, TypeError) as exc:
-            card["filter_error"] = f"模型给的筛选式不合法：{exc}"
-            card["filter"] = flt
-    if isinstance(obj.get("recipe"), dict):
-        card["recipe"] = obj["recipe"]
-    return card
+        yield sse_frame("card", card)
+    yield sse_frame("done", {"message_id": assistant_id, "chars": len(text)})
 
 
 # ---------------------------------------------------------------- 钉住
@@ -361,12 +234,7 @@ def create_pin(payload: dict = Body(...)) -> dict:
         raise ApiError("请选择要钉到哪一次对比", 400)
     if not note:
         raise ApiError("空的分析没什么好钉的", 400)
-    from app.storage import db
-    if not db.query_one("SELECT 1 FROM analysis_run WHERE analysis_run_id=?", (run_id,)):
-        # ai_pin 没有外键：原来能钉到一次不存在的对比上，留下一条永远显示不出来的孤儿（体检发现，C069）
-        raise ApiError(f"没有这次对比：{run_id}", 404, "not_found")
-    pid = conversations.pin(run_id, payload.get("conversation_id"),
-                            payload.get("message_id"), note)
+    pid = guard(conversations.pin, run_id, payload.get("conversation_id"), payload.get("message_id"), note)
     return {"pin_id": pid, "pins": conversations.pins_for(run_id)}
 
 
@@ -385,13 +253,6 @@ def delete_pin(pin_id: str) -> dict:
 
 
 # ---------------------------------------------------------------- 内部
-def _resolve_or_501(provider_name: str | None, model: str | None):
-    try:
-        return openai_compat.resolve(provider_name, model)
-    except ProviderUnavailable as exc:
-        raise ApiError(str(exc), 501, "no_model") from exc
-
-
 def _clean_scope(raw) -> dict:
     """范围只留认识的几个键（mode、filter、label、topic、run_id），filter 走 selection 自己的校验。
 

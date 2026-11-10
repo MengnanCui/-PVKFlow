@@ -21,13 +21,14 @@ import json
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
 from app import tasks
+from app.errors import NotFound
 from app.parsers import matrix, render
 from app.storage import artifacts, db, results, selection, tabular
-from app.errors import NotFound
 
 BATCH_SKILL_ID = "batch.abs_thickness"
 BATCH_VERSION = "0.2.0"
@@ -286,12 +287,27 @@ def _run_modules(lam, M, t, recipe: "Recipe", warnings: list[str], *,
 
 
 # ------------------------------------------------------------------ 单样品
-def _process_one(row: dict, recipe: Recipe, modules: list | None = None) -> SampleOutcome:
-    """一个样品的计算。不碰数据库 —— 写入统一由主线程做。"""
+def _resolve_path(row: dict) -> tuple[Path | None, str | None]:
+    """主线程里先把文件位置找好（要读库；找不到时 local_path 还会把文件标成 missing —— 那是写库）。
+
+    原来在 4 个计算线程里各自去找，计算线程碰了数据库（C074）。返回 (路径, 找不到时的原因)。
+    """
+    try:
+        return artifacts.local_path(row["matrix_id"]), None
+    except (NotFound, FileNotFoundError) as exc:
+        return None, str(exc)
+
+
+def _process_one(row: dict, recipe: Recipe, modules: list | None = None,
+                 path: Path | None = None) -> SampleOutcome:
+    """一个样品的计算。**不碰数据库** —— 文件位置在主线程里找好传进来（_resolve_path），写入统一由主线程做。"""
     out = SampleOutcome(sample_id=row["sample_id"], sample_name=row["name"],
                         batch=row.get("batch"), artifact_id=row["matrix_id"])
     try:
-        path = artifacts.local_path(row["matrix_id"])
+        if path is None:                    # 单独调用（测试、工具）时自己找；批处理里一律由主线程给
+            path, why = _resolve_path(row)
+            if path is None:
+                raise FileNotFoundError(why)
         sm = matrix.load_cached(path)
 
         lam, M, t = sm.lam, sm.M, sm.t
@@ -379,7 +395,13 @@ def _process_one(row: dict, recipe: Recipe, modules: list | None = None) -> Samp
 
 
 # ------------------------------------------------------------------ 批处理
-@tasks.register(BATCH_SKILL_ID)
+def _on_interrupted(_params: dict) -> None:
+    """服务重启时批处理被打断：分析运行（父运行和每个样品的子运行）也得收尾 ——
+    不然对比历史里永远挂着一条「运行中」（自查 §6 #11）。只有批处理会建分析运行，所以这一刀可以整表扫。"""
+    results.reap_running_runs("服务重启，这次运行被中断")
+
+
+@tasks.register(BATCH_SKILL_ID, on_interrupted=_on_interrupted)
 def run_batch(ctx: tasks.TaskContext) -> dict:
     """任务执行体。参数：{filter, recipe, title}"""
     flt = selection.normalize(ctx.params.get("filter") or {})
@@ -421,10 +443,20 @@ def run_batch(ctx: tasks.TaskContext) -> dict:
     try:
         ctx.progress(0, total, f"准备处理 {total} 个样品")
         # numpy 会放开 GIL，所以计算并行有效；数据库写入留在这个线程里做
+        # 文件位置先在这个线程里找好：计算线程不碰数据库（C074）。找不到的直接记失败，不进线程池
+        located = [(r, *_resolve_path(r)) for r in rows]
         with ThreadPoolExecutor(max_workers=COMPUTE_WORKERS) as pool:
-            futures = {pool.submit(_process_one, r, recipe, modules): r for r in rows}
+            futures = {pool.submit(_process_one, r, recipe, modules, path): r
+                       for r, path, _why in located if path is not None}
+            for r, path, why in located:
+                if path is None:
+                    miss = SampleOutcome(sample_id=r["sample_id"], sample_name=r["name"],
+                                         batch=r.get("batch"), artifact_id=r["matrix_id"], error=why)
+                    outcomes.append(miss)
+                    n_failed += 1
+                    _write_child(parent_id, miss, recipe, version_tag)
             try:
-                for i, fut in enumerate(as_completed(futures), start=1):
+                for i, fut in enumerate(as_completed(futures), start=len(outcomes) + 1):
                     out = fut.result()
                     outcomes.append(out)
                     if out.ok:
@@ -443,6 +475,12 @@ def run_batch(ctx: tasks.TaskContext) -> dict:
                 # 但结果不再落库 —— 用户按的是「停」
                 for f in futures:
                     f.cancel()
+            except BaseException:
+                # 落库出错（磁盘满、库被锁……）：剩下没开始的也撤掉 —— 原来线程池退出时要等它们全部算完
+                # 才把错误报出来，白算几十个样品（C074）
+                for f in futures:
+                    f.cancel()
+                raise
     except tasks.Cancelled:
         cancelled = True
     except Exception as exc:

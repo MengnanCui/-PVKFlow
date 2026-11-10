@@ -5,6 +5,7 @@
 import codecs
 import csv
 import hashlib
+import json
 import os
 import sys
 import time
@@ -185,6 +186,23 @@ def test_metrics_find_scratches_but_not_edges():
     assert clean["low_abs_frac"] == 0 and metrics.compute(a - 0.2)[0]["low_abs_frac"] == 1
 
 
+def test_the_score_is_driven_entirely_by_the_params_table():
+    """扣分项全写在 PARAMS["score"] 里：看哪个指标、怎么换算。加一项不用改 score()（技术债 C074）。"""
+    keys = {k for k, *_ in metrics.METRICS}
+    for code, t in metrics.PARAMS["score"].items():
+        assert t["metric"] in keys and t["label"], code
+        assert ("per" in t) != ("from" in t and "to" in t), code
+    P = json.loads(json.dumps(metrics.PARAMS))
+    P["score"]["wide"] = {"metric": "std", "label": "整帧标准差", "unit": "eV", "max": 7, "from": 0.0, "to": 0.01}
+    m = {"p90_p10": 0, "low_2s_frac": 0, "low_cc_max_frac": 0, "scratch_count": 0, "edge_minus_center": -0.03,
+         "morans_i": None, "bright_density": 0, "std": 0.02}
+    s, pens = metrics.score(m, P)
+    assert {p["code"]: p["points"] for p in pens} == {"spread": 0, "low_frac": 0, "low_area": 0, "scratch": 0,
+                                                       "edge": 10, "moran": 0, "bright": 0, "wide": 7}
+    assert s == 83                                     # |边缘 − 中心| 取了绝对值；没算出来的 Moran's I 不扣
+    assert {k for k, *_ in metrics.BOX_FIGURE} <= keys
+
+
 def test_score_and_grade_cutoffs():
     P = metrics.PARAMS
     assert [metrics.grade(s, P) for s in (100, 85, 84.9, 70, 55, 54.9, None)] == ["A", "A", "B", "B", "C", "D", None]
@@ -322,11 +340,12 @@ def test_demo_known_answers_are_all_found(workspace, tmp_path):
 # ------------------------------------------------------------------ 体检修的（C069）
 def test_param_overrides_are_validated_and_deep_merged():
     P = pipeline.merge_params({"score": {"scratch": {"per": 5}}, "low_abs_ev": 1.12})
-    assert P["score"]["scratch"] == {"max": 20, "per": 5}            # 只改一项，其余照旧
+    assert P["score"]["scratch"]["per"] == 5 and P["score"]["scratch"]["max"] == 20   # 只改一项，其余照旧
     assert P["score"]["spread"]["max"] == 25 and P["low_abs_ev"] == 1.12
     for bad, msg in (({"valid_range_ev": 5}, "2 个数的列表"), ({"nope": 1}, "没有这个参数"),
                      ({"score": {"spread": {"oops": 1}}}, "score.spread.oops"), ({"sigma_k": "2"}, "应该是数字"),
-                     ({"score": 3}, "一组键值")):
+                     ({"score": 3}, "一组键值"),
+                     ({"score": {"edge": {"metric": "median"}}}, "是口径")):
         with pytest.raises(ValueError, match=msg):
             pipeline.merge_params(bad)
 
@@ -349,3 +368,22 @@ def test_api_rejects_bad_params_and_reads_string_flags(workspace, monkeypatch):
     with TestClient(app) as c:
         r = c.post("/api/qfls/runs", json={"demo": True, "params": {"valid_range_ev": 5}})
         assert r.status_code == 400 and "列表" in r.json()["error"]["message"]
+
+
+def test_restart_reaps_the_run_of_an_interrupted_qfls_task(workspace):
+    """服务重启：任务队列把没跑完的任务标失败，并调这种任务自己的收尾 —— QFLS 的 run.json 也标失败（C074）。"""
+    import json as _json
+
+    from app import tasks
+    from app.qfls import task as qtask  # noqa: F401  —— 注册 qfls_process 和它的收尾
+    from app.storage import db
+    rid = "qr_20261110T000000Z_abcdef"
+    d = pipeline.runs_dir() / rid
+    d.mkdir(parents=True)
+    (d / "run.json").write_text('{"run_id": "%s", "status": "running"}' % rid, encoding="utf-8")
+    with db.tx() as c:
+        c.execute("INSERT INTO task(task_id, kind, title, params_json, status, created_at) VALUES(?,?,?,?,?,?)",
+                  ("task_x", "qfls_process", "x", _json.dumps({"run_id": rid}), "running", db.now()))
+    assert tasks.reap_interrupted() == 1
+    assert tasks.get("task_x")["status"] == "failed"
+    assert pipeline.load(rid, "run.json")["status"] == "failed"

@@ -36,11 +36,11 @@ def guard(fn, *args, **kwargs) -> Any:
     try:
         return fn(*args, **kwargs)
     except NotFound as exc:
-        raise ApiError(str(exc), 404, "not_found") from exc
+        raise ApiError(str(exc), 404, exc.kind) from exc
     except FileNotFoundError as exc:
         raise ApiError(str(exc), 404, "file_missing") from exc
-    except ValueError as exc:
-        raise ApiError(str(exc), 400, "invalid") from exc
+    except ValueError as exc:                       # Invalid 和其它 ValueError
+        raise ApiError(str(exc), 400, getattr(exc, "kind", "invalid")) from exc
     # 普通的 KeyError / TypeError 不在这里翻：那多半是程序的 bug，让它走全局处理器报 500 并记日志，
     # 不要伪装成「没有这个」「参数不合法」（C073）
     except NotImplementedError as exc:

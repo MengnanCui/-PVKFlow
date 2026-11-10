@@ -45,7 +45,7 @@ def check(target: Path) -> tuple[bool, list[str]]:
     folder = mod_py.parent
     probe = ModuleRegistry()
     try:
-        probe._load_one(mod_py, "user", folder)
+        probe.load_file(mod_py, "user", folder)
     except Exception as exc:                        # noqa: BLE001
         return False, [f"✗ 加载失败：{type(exc).__name__}: {exc}"]
 

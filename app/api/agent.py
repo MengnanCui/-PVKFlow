@@ -1,7 +1,7 @@
 """智能体的接口：发一句话 / 批完接着跑（都是 SSE 流）、会话列表、工具清单、两项设置。
 
 流式的那一套（没配模型要在开流之前 501、断开时亲手关生成器）沿用 AI 抽屉的
-（app/api/chat.py 的 _ClosingStream / _frame / _resolve_or_501）。
+（app/api/streaming.py 的 ClosingStream / sse_frame / resolve_or_501，和 AI 抽屉共用）。
 """
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from typing import Iterator
 from fastapi import APIRouter, Body
 
 from app.agent import files, loop, tools
-from app.api.chat import _ClosingStream, _frame, _resolve_or_501
 from app.api.common import ApiError, guard
+from app.api.streaming import ClosingStream, resolve_or_501, sse_frame
 from app.storage import agent_sessions as sessions
 from app.storage import db
 
@@ -141,19 +141,19 @@ def _stream(session_id: str, gen_kwargs: dict) -> Iterator[bytes]:
     """把回路的事件转成 SSE 帧。这里不能把异常抛给框架（响应头早就发了），一律转成 error 帧。"""
     with _busy_lock:
         if session_id in _busy:
-            yield _frame("error", {"message": "这个会话正在跑，等它停下来再说"})
+            yield sse_frame("error", {"message": "这个会话正在跑，等它停下来再说"})
             return
         _busy.add(session_id)
     try:
         s = sessions.get(session_id)
-        yield _frame("session", {"session_id": session_id, "title": s["title"]})
+        yield sse_frame("session", {"session_id": session_id, "title": s["title"]})
         gen = loop.run(session_id, **gen_kwargs)
         try:
             for e in gen:
-                yield _frame(e["type"], e)
+                yield sse_frame(e["type"], e)
         except Exception as exc:                # noqa: BLE001
             log.exception("智能体出错")
-            yield _frame("error", {"message": f"智能体出错：{exc}"})
+            yield sse_frame("error", {"message": f"智能体出错：{exc}"})
         finally:
             gen.close()
     finally:
@@ -161,8 +161,8 @@ def _stream(session_id: str, gen_kwargs: dict) -> Iterator[bytes]:
             _busy.discard(session_id)
 
 
-def _sse(session_id: str, gen_kwargs: dict) -> _ClosingStream:
-    return _ClosingStream(_stream(session_id, gen_kwargs), media_type="text/event-stream",
+def _sse(session_id: str, gen_kwargs: dict) -> ClosingStream:
+    return ClosingStream(_stream(session_id, gen_kwargs), media_type="text/event-stream",
                           headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
@@ -180,7 +180,7 @@ def run(payload: dict = Body(...)):
         if sid in _busy:
             raise ApiError("这个会话正在跑，等它停下来再说", 409, "busy")
     # ★ 没配模型要在开流之前报
-    provider, model = _resolve_or_501(payload.get("provider"), payload.get("model"))
+    provider, model = resolve_or_501(payload.get("provider"), payload.get("model"))
     if not sid:
         sid = sessions.create()
     st = _settings()
@@ -210,7 +210,7 @@ def resume(session_id: str, payload: dict = Body(...)):
     decisions = payload.get("decisions") or {}
     if not isinstance(decisions, dict):
         raise ApiError("decisions 必须是 {调用id: approve|reject}", 400)
-    provider, model = _resolve_or_501(payload.get("provider"), payload.get("model"))
+    provider, model = resolve_or_501(payload.get("provider"), payload.get("model"))
     st = _settings()
     return _sse(session_id, {"provider": provider, "model": model,
                              "resume": {"decisions": decisions, "remember": payload.get("remember") or []},

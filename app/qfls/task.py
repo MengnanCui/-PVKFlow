@@ -13,7 +13,13 @@ from app.qfls import demo, pipeline
 KIND = "qfls_process"
 
 
-@tasks.register(KIND)
+def _on_interrupted(params: dict) -> None:
+    """服务重启时这次处理被打断：输出目录的 run.json 也标成失败（不然永远「处理中」、删不掉）。"""
+    if params.get("run_id"):
+        pipeline.reap_interrupted(params["run_id"])
+
+
+@tasks.register(KIND, on_interrupted=_on_interrupted)
 def run_qfls(ctx: tasks.TaskContext) -> dict:
     """一次 QFLS 处理（演示数据时先生成）。参数：{root | demo, full, run_id, title, figures, params}"""
     p = ctx.params

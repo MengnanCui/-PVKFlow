@@ -130,14 +130,14 @@ class ModuleRegistry:
                     "照着 workspace/modules/_template/ 改最省事。"))
                 continue
             try:
-                self._load_one(f, origin, entry, into)
+                self.load_file(f, origin, entry, into)
             except Exception as exc:
                 # 这里必须吞掉 —— 一个坏模块不能让整个平台起不来
                 errors.append(LoadError(
                     str(entry), f"{type(exc).__name__}: {exc}",
                     traceback.format_exc()[-2000:]))
 
-    def _load_one(self, path: Path, origin: str, folder: Path,
+    def load_file(self, path: Path, origin: str, folder: Path,
                   into: tuple[dict, dict] | None = None) -> None:
         mod_py = load_module_from_path(path, f"hte_module_{folder.name}")
 

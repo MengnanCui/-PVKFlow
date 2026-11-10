@@ -115,9 +115,9 @@ def test_malformed_zips_say_what_is_wrong(client, blob, kind):
 
 
 def test_an_oversized_zip_is_refused_before_unpacking(client, monkeypatch):
-    from app.api import modules as api_modules
+    from app.modules import install
 
-    monkeypatch.setattr(api_modules, "MAX_ZIP_BYTES", 100)
+    monkeypatch.setattr(install, "MAX_ZIP_BYTES", 100)
     r = _install(client, _zip({"red_band/module.py": GOOD}))
     assert r.status_code == 400 and r.json()["error"]["kind"] == "too_big"
 
@@ -187,9 +187,9 @@ def test_reimporting_fixes_a_broken_module_in_the_same_folder(client, workspace)
 
 def test_the_unpacked_size_is_limited_too(client, monkeypatch, workspace):
     """压缩后很小、解开很大（zip 炸弹）：按 zip 里声明的解压后大小先拦住，一个字节都不写。"""
-    from app.api import modules as api_modules
+    from app.modules import install
 
-    monkeypatch.setattr(api_modules, "MAX_UNZIPPED_BYTES", 10_000)
+    monkeypatch.setattr(install, "MAX_UNZIPPED_BYTES", 10_000)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("red_band/module.py", GOOD)

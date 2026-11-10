@@ -14,6 +14,8 @@ from pathlib import Path
 
 import numpy as np
 
+from app.qfls import metrics as M
+
 COLORS = ["#2470a0", "#ca3e47", "#f29c2b", "#1f640a", "#2ca02c", "#9467bd",
           "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#005555"]
 LINESTYLES = ["-", "--", "-.", ":", (0, (3, 5, 1, 5, 1, 5)), (0, (5, 5))]
@@ -213,21 +215,22 @@ def colormap_stops(n: int = 9) -> list[str]:
 
 
 # ------------------------------------------------------------------ 全局
-def global_figures(out: Path, rows: list[dict], codes: dict[str, str]) -> list[str]:
+def global_figures(out: Path, rows: list[dict], codes: dict[str, str], params: dict | None = None) -> list[str]:
     """箱线图（按 实验 × 物镜 分组）、分数排名、等级分布。rows 只含有效样点。"""
     matplotlib, Figure, _ = _mpl()
+    params = params or M.PARAMS
     out.mkdir(parents=True, exist_ok=True)
     made = []
     if not rows:
         return made
     groups = sorted({(r["experiment"], r["objective"] or "?") for r in rows}, key=lambda g: (g[1], codes[g[0]]))
     lab = [f"{codes[e]}·{o}" for e, o in groups]
-    keys = [("median", "Median QFLS (eV)"), ("p90_p10", "P90 − P10 (eV)"), ("low_2s_frac", "Low < med−2σ (frac)"),
-            ("morans_i", "Moran's I"), ("variogram_range_px", "Variogram range (px)"), ("score", "Quality score")]
     with _RC_LOCK, matplotlib.rc_context(RC):
-        fig = Figure(figsize=(14, 8))
-        for i, (k, yl) in enumerate(keys):
-            ax = fig.add_subplot(2, 3, i + 1)
+        ncol = 3
+        nrow = -(-len(M.BOX_FIGURE) // ncol)
+        fig = Figure(figsize=(14, 4 * nrow))
+        for i, (k, yl, ref) in enumerate(M.BOX_FIGURE):
+            ax = fig.add_subplot(nrow, ncol, i + 1)
             data = [[r[k] for r in rows if (r["experiment"], r["objective"] or "?") == g and r.get(k) is not None]
                     for g in groups]
             bp = ax.boxplot([d or [np.nan] for d in data], patch_artist=True, widths=0.6)
@@ -237,8 +240,8 @@ def global_figures(out: Path, rows: list[dict], codes: dict[str, str]) -> list[s
                 med.set(color="black", linewidth=2)
             ax.set_xticks(range(1, len(lab) + 1), lab, rotation=40, ha="right", fontsize=10)
             ax.set_ylabel(yl, fontsize=12)
-            if k == "morans_i":
-                ax.axhline(0.15, color=COLORS[1], linestyle=LINESTYLES[1], linewidth=1.5)
+            if ref:
+                ax.axhline(params[ref], color=COLORS[1], linestyle=LINESTYLES[1], linewidth=1.5)
             _ticks(ax)
             ax.tick_params(axis="x", labelsize=10)
         _save(fig, out / "boxplots.png")

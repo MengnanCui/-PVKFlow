@@ -108,6 +108,15 @@ const rec = (name, ok, detail) => { out.push({ name, ok }); console.log(`${ok ? 
   const m = await p.textContent('#page-qfls');
   rec('方法说明', m.includes('> 0.15 提示结构不均') && m.includes('低于 1.1 eV') && m.includes('不做伪 JV') && m.includes('不代表任何真实材料'),
       '阈值、限制、演示数据声明都在');
+  // 扣分表照 params.score 逐项列（C074：不再写死七行）—— 每行都有「看哪个指标」，数字和后端默认一致
+  const pen = await p.$$eval('#page-qfls .qfls-method table.data', (ts) => {
+    const t = ts.find((x) => x.textContent.includes('扣分项'));
+    return t ? [...t.querySelectorAll('tbody tr')].map((r) => [...r.cells].map((c) => c.textContent)) : [];
+  });
+  const byMetric = Object.fromEntries(pen.map((r) => [r[1], r]));
+  rec('扣分表跟着参数走', pen.length === 7 && byMetric.p90_p10?.[2] === '15 meV' && byMetric['|edge_minus_center|']?.[4] === '10'
+      && byMetric.scratch_count?.[3] === '10 分' && m.includes('100 − 7 项扣分'),
+      `${pen.length} 行：${pen.map((r) => r[1]).join(' ')}`);
 
   // 8. 处理新数据：粘贴路径 → 扫描预览
   await p.click('#page-qfls button:has-text("处理新数据")'); await sleep(500);
