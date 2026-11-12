@@ -3,8 +3,6 @@
 // S 是模块级的：离开页面再回来还是同一个对象，所以每次进入页面时 view() 先把它清空。
 // 异步请求回来之后改 S 之前，要先问 refs.alive() —— 这一次进入页面还算不算数。
 
-import { h } from '../ui.js';
-
 export const S = {
   runId: null, taskId: null, detail: null, error: null,
   pins: [],          // 钉在这次对比上的 AI 分析
@@ -38,9 +36,3 @@ export function yLabel(col) {
   return Y_LABEL[col] || (S.extra || []).find((c) => c.column === col)?.y_label || col;
 }
 
-export function select(label, value, options, onChange) {
-  return h('label.inline-field',
-    h('span.small.muted', label),
-    h('select.select.select-sm', { onchange: (e) => onChange(e.target.value) },
-      ...options.map(([v, t]) => h('option', { value: v, selected: v === value }, t))));
-}

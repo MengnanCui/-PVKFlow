@@ -1153,10 +1153,11 @@ tr.is-rejected td .quality-ctl, tr.is-rejected td .xsmall { text-decoration: non
   background: var(--surface); padding: 6px 0; border-bottom: 1px solid var(--line); }
 .agent-bar-gap { flex: 1; }
 .agent-session-sel { max-width: 260px; }
-.agent-seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
-.agent-seg button { background: none; border: 0; padding: 3px 9px; font: inherit; font-size: var(--t-xs); color: var(--ink-3); cursor: pointer; }
-.agent-seg button + button { border-left: 1px solid var(--line); }
-.agent-seg button[aria-checked="true"] { background: var(--accent-wash); color: var(--accent-ink); font-weight: 600; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+.seg button { background: none; border: 0; padding: 3px 9px; font: inherit; font-size: var(--t-xs); color: var(--ink-3); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.seg button[aria-checked="true"] { background: var(--accent-wash); color: var(--accent-ink); font-weight: 600; }
 .agent-drawer { border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 12px; background: var(--surface-2); }
 .agent-drawer-grid { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 16px; }
 @media (max-width: 1000px) { .agent-drawer-grid { grid-template-columns: 1fr; } }

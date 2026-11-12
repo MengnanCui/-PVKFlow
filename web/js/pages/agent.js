@@ -10,13 +10,14 @@
 // 页面是常驻的：跑着的时候切去别的页再回来，回答还在接着出。
 
 import { api } from '../api.js';
-import { h, mount, toast, fmtTime, richText, confirmDialog } from '../ui.js';
+import { h, mount, toast, fmtTime, richText, confirmDialog, segmented, errorBox } from '../ui.js';
 import { modelSelect, pickedModel, onModelPicked, syncSelect } from '../components/chat-client.js';
 
 export const meta = {
   id: 'agent',
   title: '智能体',
-  desc: '查数据、读写文件、跑命令和批处理 —— 写的东西都在专用目录里，会改东西的操作按你的设置先问',
+  desc: '查数据、读写文件、跑命令和批处理 —— '
+    + '写的东西都在专用目录里，会改东西的操作按你的设置先问',
 };
 
 const RISK = {
@@ -67,16 +68,6 @@ export async function view(host, ctx) {
 }
 
 // ------------------------------------------------------------------ 骨架
-function seg(name, value, options, onPick) {
-  const el = h('span.agent-seg', { role: 'radiogroup', 'aria-label': name },
-    ...options.map(([v, text, title]) => h('button', {
-      type: 'button', role: 'radio', title, dataset: { v },
-      'aria-checked': String(v === value), onclick: () => onPick(v),
-    }, text)));
-  el.set = (v) => { for (const b of el.children) b.setAttribute('aria-checked', String(b.dataset.v === v)); };
-  return el;
-}
-
 function buildShell(host) {
   refs.log = h('div.agent-log', { role: 'log', 'aria-live': 'polite' });
   refs.status = h('span.agent-status.xsmall.dim');
@@ -94,11 +85,11 @@ function buildShell(host) {
   refs.sessionSel = h('select.select.select-sm.agent-session-sel', {
     'aria-label': '会话', onchange: (e) => { if (e.target.value) openSession(e.target.value); else newSession(); },
   });
-  refs.perm = seg('权限', S.settings.permission, [
+  refs.perm = segmented('权限', S.settings.permission, [
     ['ask', '询问', '会改东西的操作（写文件、跑命令、跑批处理……）每次先问我'],
     ['auto', '自动', '会改东西的直接做；删除、危险命令仍然每次问'],
   ], (v) => setPermission(v));
-  refs.mode = seg('模式', S.runMode, [
+  refs.mode = segmented('模式', S.runMode, [
     ['exec', '直接执行', '说了就做'],
     ['plan', '先出计划', '只调研、交计划，你批准了才动手'],
   ], (v) => setRunMode(v));
@@ -141,14 +132,18 @@ function drawEmpty() {
       '现在平台里有什么数据？还有多少结果没审？',
       '写一个脚本把各批次的膜厚画成箱线图，存到 agent/ 里并运行',
       '对 ZG0013 这一批跑一次批处理，跑完告诉我膜厚的范围',
-    ].map((t) => h('button.btn.btn-sm.btn-ghost', { onclick: () => { refs.input.value = t; refs.input.focus(); } }, t))),
-    h('p.xsmall.dim', '输入 / 看命令：/plan 先出计划，/exec 直接执行，/ask 每次问，/auto 自动，/undo 撤销它改的文件。')));
+    ].map((t) => h('button.btn.btn-sm.btn-ghost', {
+      onclick: () => { refs.input.value = t; refs.input.focus(); },
+    }, t))),
+    h('p.xsmall.dim',
+      '输入 / 看命令：/plan 先出计划，/exec 直接执行，/ask 每次问，/auto 自动，/undo 撤销它改的文件。')));
 }
 
 function drawFoot() {
   const st = S.settings;
   refs.foot.textContent = [
-    `写：${st.agent_dir ? 'workspace/agent/' : '专用目录'}${(st.roots || []).some((r) => r.kind === 'user' && r.write) ? ' + 你给的文件夹' : ''}`,
+    `写：${st.agent_dir ? 'workspace/agent/' : '专用目录'}`
+      + `${(st.roots || []).some((r) => r.kind === 'user' && r.write) ? ' + 你给的文件夹' : ''}`,
     `跑命令：${st.commands ? '开' : '关'}`,
     `权限：${st.permission === 'auto' ? '自动' : '询问'}`,
     `模式：${S.runMode === 'plan' ? '先出计划' : '直接执行'}`,
@@ -213,8 +208,10 @@ function drawDrawer() {
           h('li', h('b', '写：'), '只在专用目录 ', h('span.mono', st.agent_dir || 'workspace/agent'),
             '（它的脚本、报告、中间数据），以及下面你给了「读写」的文件夹'),
           h('li', h('b', '读：'), '整个工作区 + 下面的文件夹；读出来的密钥先打码再给模型'),
-          h('li', h('b', '核心：'), '平台的安装目录（网站本身）任何时候都不能写；跑命令后还会检查核心有没有被改'),
-          h('li', h('b', '跑命令：'), '在专用目录里跑，超时 / 停止会杀掉整棵进程树；删除、装依赖这类每次都问'),
+          h('li', h('b', '核心：'),
+            '平台的安装目录（网站本身）任何时候都不能写；跑命令后还会检查核心有没有被改'),
+          h('li', h('b', '跑命令：'),
+            '在专用目录里跑，超时 / 停止会杀掉整棵进程树；删除、装依赖这类每次都问'),
           h('li', h('b', '问不问：'), '顶上「询问 / 自动」；写文件前都会备份，/undo 一键撤销')),
         h('div.row.gap-3.mt-2', { style: { alignItems: 'center' } }, cmd,
           h('span.small', '调用方式'), driver)),
@@ -232,7 +229,10 @@ function drawDrawer() {
   drawRoots();
 }
 
-/** 文件夹：专用目录（可写）、工作区（只读）总在；你加的每个单独选只读还是读写（平台核心只能只读）。 */
+/**
+ * 文件夹：专用目录（可写）、工作区（只读）总在；
+ * 你加的每个单独选只读还是读写（平台核心只能只读）。
+ */
 function drawRoots() {
   const roots = S.settings.roots || [];
   const mine = roots.filter((r) => r.kind === 'user');
@@ -318,7 +318,8 @@ async function slash(cmd) {
     case '/delete': deleteSession(); return true;
     case '/undo': {
       if (!S.sessionId) { toast('还没有会话', 'warn'); return true; }
-      if (!await confirmDialog('撤销这个会话里智能体改过的全部文件？（从备份还原，新建的删掉）', { confirmLabel: '撤销' })) return true;
+      if (!await confirmDialog('撤销这个会话里智能体改过的全部文件？（从备份还原，新建的删掉）',
+        { confirmLabel: '撤销' })) return true;
       try {
         const r = await api.agentUndoSession(S.sessionId);
         append(h('div.agent-done.xsmall', r.restored.length ? `已撤销：${r.restored.join('、')}` : '没有可撤销的文件改动',
@@ -361,7 +362,7 @@ async function resume() {
 
 async function stream(start) {
   S.ctrl = new AbortController();
-  busy(true);
+  setRunning(true);
   try {
     await start({ signal: S.ctrl.signal, onFrame: (event, data) => onEvent({ ...data, type: event }) });
   } catch (err) {
@@ -369,10 +370,10 @@ async function stream(start) {
     else if (err.kind === 'no_model' || err.status === 501) {
       append(h('div.notice.notice-warn', h('div.grow', '还没有配模型。智能体和 AI 助手用同一份模型设置。'),
         h('button.btn.btn-sm', { onclick: () => refs.nav('settings') }, '去设置')));
-    } else append(h('div.notice.notice-warn', h('div.grow', err.message)));
+    } else append(errorBox(err));   // 和别的页面同一个报错框（原来是黄色的提醒框，C076）
   } finally {
     S.ctrl = null;
-    busy(false);
+    setRunning(false);
     drawSessions();
   }
 }
@@ -384,7 +385,11 @@ async function stopRun() {
   S.ctrl?.abort();
 }
 
-function busy(on) {
+/**
+ * 正在跑：发送键不能点、显示「停止」。
+ * 原来叫 busy，和 ui.busy(按钮, 开关) 重名但意思不一样（C076）。
+ */
+function setRunning(on) {
   refs.send.disabled = on;
   refs.stop.style.display = on ? '' : 'none';
   if (!on) refs.status.textContent = '';
@@ -448,7 +453,7 @@ function onEvent(e, { replay = false, waiting = new Set() } = {}) {
       break;
     case 'error':
       S.live = null;
-      append(h('div.notice.notice-warn', h('div.grow', e.message)));
+      append(errorBox(e));
       break;
     case 'done': {
       S.live = null;
@@ -499,7 +504,9 @@ function fillCard(card, e) {
         ev.stopPropagation();
         try {
           const r = await api.agentRollback(out.change_id);
-          if (r.restored?.length) { toast(`已撤销：${r.restored.join('、')}`, 'ok'); undo.disabled = true; undo.textContent = '已撤销'; }
+          if (r.restored?.length) {
+            toast(`已撤销：${r.restored.join('、')}`, 'ok'); undo.disabled = true; undo.textContent = '已撤销';
+          }
           else toast(r.skipped?.[0] || '没有可撤销的', 'warn', 6000);
         } catch (err) { toast(err.message, 'err', 6000); }
       },
@@ -514,7 +521,10 @@ function keyArg(e) {
   return v === undefined || v === null || v === '' ? '' : String(v).replace(/\s+/g, ' ').slice(0, 120);
 }
 
-/** 计划卡：目标、步骤、风险、要你先回答的；「按计划执行」就照它做，「改一改」把它填回输入框。 */
+/**
+ * 计划卡：目标、步骤、风险、要你先回答的；
+ * 「按计划执行」就照它做，「改一改」把它填回输入框。
+ */
 function planCard(plan, active) {
   const go = h('button.btn.btn-sm.btn-primary', {
     disabled: !active,
@@ -530,10 +540,14 @@ function planCard(plan, active) {
   return h('div.agent-plan', { role: 'group', 'aria-label': '执行计划' },
     h('div.small.strong', `计划：${plan.goal}`),
     h('ol.small', ...plan.steps.map((s) => h('li', s.title,
-      s.tool || s.change ? h('span.xsmall.dim', `（${[s.tool && `用 ${label(s.tool)}`, s.change].filter(Boolean).join('；')}）`) : null))),
+      s.tool || s.change
+        ? h('span.xsmall.dim', `（${[s.tool && `用 ${label(s.tool)}`, s.change].filter(Boolean).join('；')}）`)
+        : null))),
     plan.risks?.length ? h('div.xsmall', h('b', '风险：'), plan.risks.join('；')) : null,
     plan.questions?.length ? h('div.xsmall', h('b', '要你先回答：'), plan.questions.join('；')) : null,
-    h('div.row.gap-2.mt-2', go, edit, h('span.xsmall.dim', active ? '批准后按这份计划执行；会改东西的操作照样按顶上的「询问 / 自动」' : '（这份计划已经过去了）')));
+    h('div.row.gap-2.mt-2', go, edit, h('span.xsmall.dim', active
+      ? '批准后按这份计划执行；会改东西的操作照样按顶上的「询问 / 自动」'
+      : '（这份计划已经过去了）')));
 }
 
 const pretty = (text) => {
@@ -555,7 +569,8 @@ function approvalCard(e, active) {
     const open = [...refs.log.querySelectorAll('.agent-approval.is-open')].filter((x) => !(x.dataset.id in S.decisions));
     if (!open.length) resume();
   };
-  const card = h(`div.agent-approval${active ? '.is-open' : ''}`, { dataset: { id: e.id, name: e.name }, role: 'group', 'aria-label': `要不要执行：${label(e.name)}` },
+  const card = h(`div.agent-approval${active ? '.is-open' : ''}`,
+    { dataset: { id: e.id, name: e.name }, role: 'group', 'aria-label': `要不要执行：${label(e.name)}` },
     h('div.row.gap-2', { style: { alignItems: 'center' } },
       h('span.strong.small', `要执行「${label(e.name)}」吗？`), h(`span.${r.cls}`, r.tag), h('span.grow'),
       h('span.agent-approval-state.xsmall.dim', active ? '' : '（这一轮已经过去了）')),
@@ -580,7 +595,8 @@ function previewNode(text) {
 function settleApproval(e) {
   const card = refs.log.querySelector(`.agent-approval[data-id="${CSS.escape(e.id)}"]`);
   const text = e.stale ? '没批就说了下一句，没有执行'
-    : e.decision === 'approved' ? `已批准${e.auto ? '（设置里选了直接做）' : e.remembered ? '（这个会话里不再问）' : ''}`
+    : e.decision === 'approved'
+      ? `已批准${e.auto ? '（设置里选了直接做）' : e.remembered ? '（这个会话里不再问）' : ''}`
       : '已拒绝，没有执行';
   const tc = S.cards.get(e.id);
   if (tc && e.decision !== 'approved') {

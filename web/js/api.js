@@ -8,8 +8,12 @@ class ApiError extends Error {
   }
 }
 
+// 「这一次进入页面」的 signal（见 api.with）。request() 同步读它 —— 包装函数都是同步地调到 request 的，
+// 所以 with() 设上、调完马上复原就够了，不会串到别的请求上。
+let ambientSignal = null;
+
 async function request(path, { method = 'GET', body, signal, raw = false } = {}) {
-  const init = { method, signal, headers: {} };
+  const init = { method, signal: signal ?? ambientSignal ?? undefined, headers: {} };
   if (body instanceof FormData) init.body = body;
   else if (body !== undefined) {
     init.headers['Content-Type'] = 'application/json';
@@ -56,9 +60,9 @@ async function request(path, { method = 'GET', body, signal, raw = false } = {})
   return data;
 }
 
-const get  = (p, q) => request(p + (q ? '?' + new URLSearchParams(
-  Object.entries(q).filter(([, v]) => v !== undefined && v !== null && v !== '')) : ''));
-const post = (p, body) => request(p, { method: 'POST', body });
+const get  = (p, q, opts = {}) => request(p + (q ? '?' + new URLSearchParams(
+  Object.entries(q).filter(([, v]) => v !== undefined && v !== null && v !== '')) : ''), opts);
+const post = (p, body, opts = {}) => request(p, { method: 'POST', body, ...opts });
 
 function parseFrame(block) {
   let event = null;
@@ -255,3 +259,24 @@ export const api = {
 };
 
 export { ApiError };
+
+/**
+ * 同一套接口，但这次发的请求都挂在 signal 上：离开页面时 signal 一断，还在路上的请求**真的中止**
+ * （原来只能等它回来再丢掉 —— 大批处理的曲线、几十 MB 的光谱帧照样下载完，技术债 C076）。
+ *
+ *   const A = api.with(ctx.signal);
+ *   const d = await A.batchDetail(id);     // 离开页面 → 抛 AbortError，调用方按「过期」处理
+ *
+ * 中止抛的是 AbortError（name === 'AbortError'）；ui.render 和各页的 alive() 判断都认它，不会显示成报错。
+ */
+api.with = (signal) => new Proxy(api, {
+  get(target, key) {
+    const f = target[key];
+    if (typeof f !== 'function' || key === 'with' || !signal) return f;
+    return (...args) => {
+      const prev = ambientSignal;
+      ambientSignal = signal;
+      try { return f(...args); } finally { ambientSignal = prev; }
+    };
+  },
+});

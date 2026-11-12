@@ -7,7 +7,8 @@ import { api } from '../api.js';
 import { infoDot, withInfo } from '../components/info.js';
 import { h, mount, toast, skeletonRows, errorBox, busy, fmtInt, modal } from '../ui.js';
 import { xyChart, quantileBand } from '../chart.js';
-import { S, Y_LABEL, batchCount, refs, select, yLabel } from './batch-state.js';
+import { selectControl } from '../components/figure.js';
+import { S, Y_LABEL, batchCount, refs, yLabel } from './batch-state.js';
 
 // 超过这么多条就降级成分位数带。可以手动切回去。
 const SPAGHETTI_LIMIT = 60;
@@ -52,7 +53,7 @@ export async function loadCurves() {
   await Promise.all(cols.map(async (col) => {
     let data;
     try {
-      data = await api.batchCurves(S.runId, { column: col, max_series: 1200 });
+      data = await refs.api.batchCurves(S.runId, { column: col, max_series: 1200 });
       if (!alive()) return;
       S.curves[col] = data;
     } catch (err) {
@@ -82,7 +83,7 @@ export function drawChart() {
       h('div.section-title', '特殊处理对比'),
       h('div.row.gap-3.wrap',
         h('span.row.gap-1',
-          select('显示', S.mode,
+          selectControl('显示', S.mode,
             [['auto', `自动（>${SPAGHETTI_LIMIT} 条降级）`], ['all', '全部画出'],
              ['band', '强制分位数带']],
             (v) => { S.mode = v; drawChart(); }),
@@ -101,7 +102,7 @@ export function drawChart() {
               scope: { run_id: S.runId },
             }),
           })),
-        select('着色', S.groupBy, [['batch', '按批次'], ['none', '逐条']],
+        selectControl('着色', S.groupBy, [['batch', '按批次'], ['none', '逐条']],
           (v) => { S.groupBy = v; drawChart(); }))),
     h('div.fig-grid-2',
       curveFigure('ot', '光学厚度 vs 时间'),

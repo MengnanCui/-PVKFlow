@@ -2,8 +2,8 @@
 
 import { api } from '../api.js';
 import { withInfo } from '../components/info.js';
-import { fieldNameCell, unitCell } from '../components/field-cells.js';
-import { h, render, fmtInt, fmtTime, empty, sampleLabel, statusText, statusClass } from '../ui.js';
+import { fieldTable } from '../components/field-cells.js';
+import { h, render, fmtInt, fmtTime, empty, sampleLabel, statusText, statusClass, metricRow } from '../ui.js';
 
 export const meta = {
   id: 'overview',
@@ -15,8 +15,8 @@ export function actions(nav) {
   return [h('button.btn.btn-primary', { onclick: () => nav('process') }, '开始处理数据')];
 }
 
-export function view(host, { nav }) {
-  return render(host, () => api.overview(), (data) => {
+export function view(host, { nav, signal }) {
+  return render(host, () => api.with(signal).overview(), (data) => {
     const c = data.counts;
     const empty0 = c.artifacts === 0;
 
@@ -69,14 +69,6 @@ export function view(host, { nav }) {
   });
 }
 
-function metricRow(items) {
-  return h('div.metrics.metrics-4', ...items.map(([label, value, note]) =>
-    h('div.metric',
-      h('div.metric-label', label),
-      h('div.metric-value' + (value ? '' : '.is-zero'), fmtInt(value)),
-      h('div.metric-note', note))));
-}
-
 function firstRun(nav) {
   return h('div.notice.notice-accent',
     h('div.grow',
@@ -90,7 +82,8 @@ function firstRun(nav) {
 function stageList(nav, counts) {
   const stages = [
     ['01', '数据处理', 'process',
-     '导入实验文件，用功能模块处理。模块是插件——放一个进来，控件、图和对比页上的那一格自动出现。',
+     '导入实验文件，用功能模块处理。模块是插件——放一个进来，'
+     + '控件、图和对比页上的那一格自动出现。',
      counts.runs ? `已跑 ${counts.runs} 次` : '尚未运行'],
     ['02', '数据存储', 'storage',
      '原始文件不丢失，分析结果结构化回写。图像、曲线、数字、文本各归其位，用统一 ID 串起来。',
@@ -126,15 +119,3 @@ function runTable(runs) {
       h('td.small.muted', fmtTime(r.started_at))))));
 }
 
-function fieldTable(fields) {
-  return h('table.data',
-    h('thead', h('tr',
-      h('th', '字段'), h('th', '单位'), h('th.num', '条数'),
-      h('th.num', '最小'), h('th.num', '最大'))),
-    h('tbody', ...fields.map((f) => h('tr',
-      fieldNameCell(f),
-      unitCell(f),
-      h('td.num', fmtInt(f.n)),
-      h('td.num.small', f.min_v === null ? '—' : Number(f.min_v).toPrecision(4)),
-      h('td.num.small', f.max_v === null ? '—' : Number(f.max_v).toPrecision(4))))));
-}

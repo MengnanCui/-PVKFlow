@@ -46,8 +46,9 @@ def pages() -> list[str]:
         body = m.group(1)
 
         def get(k: str, body: str = body) -> str:
-            hit = re.search(rf"{k}:\s*'([^']*)'", body)
-            return hit.group(1) if hit else ""
+            # 长的写成 '…' + '…'（前端一行不超过 140 个字符），拼回来
+            hit = re.search(rf"{k}:\s*((?:'[^']*'\s*\+?\s*)+)", body)
+            return "".join(re.findall(r"'([^']*)'", hit.group(1))) if hit else ""
         pid, parent = get("id"), get("parent")
         group = where.get(pid) or (f"下钻页（从「{parent}」进入）" if parent else "不在侧栏")
         rows.append(f"| {group} | `{pid}` | {cell(get('title'))} | {cell(get('desc'))} | `web/js/pages/{f.name}` |")

@@ -5,7 +5,8 @@
 //   筛选条（方法说明页没有）：实验、物镜、等级、异常类型、只看异常、搜编号；「导出当前筛选」
 //   单点详情是下钻页 #qfls-point/<run>/<key>
 //
-// **不同物镜的绝对 QFLS 和面积占比不可直接比较**（P-58）—— 总览按物镜分开画，对比时物镜不同会提示。
+// **不同物镜的绝对 QFLS 和面积占比不可直接比较**（P-58）—— 总览按物镜分开画，
+// 对比时物镜不同会提示。
 
 import { api } from '../api.js';
 import {
@@ -67,11 +68,13 @@ function drawBar() {
     h('label.inline-field', h('span.small.muted', '处理结果'), sel),
     h('span.grow'),
     h('button.btn.btn-sm', { onclick: openProcessDialog }, '处理新数据…'),
-    h('button.btn.btn-sm', { onclick: (e) => startDemo(e.currentTarget), title: '按你给的目录 / 文件格式造 60 帧假想数据，然后处理' },
+    h('button.btn.btn-sm',
+      { onclick: (e) => startDemo(e.currentTarget), title: '按你给的目录 / 文件格式造 60 帧假想数据，然后处理' },
       '生成演示数据'),
     S.runId ? h('a.btn.btn-sm.btn-ghost', { href: api.qflsFile(S.runId, 'points.csv'), download: '' }, '全部样点 CSV') : null,
     S.runId ? h('a.btn.btn-sm.btn-ghost', { href: api.qflsFile(S.runId, 'README.md'), download: '' }, 'README') : null,
-    S.runId ? h('button.btn.btn-sm.btn-ghost', { onclick: removeRun, title: '只删这次处理的输出目录，不碰原始数据' }, '删除') : null));
+    S.runId ? h('button.btn.btn-sm.btn-ghost', { onclick: removeRun, title: '只删这次处理的输出目录，不碰原始数据' },
+      '删除') : null));
 }
 
 
@@ -92,9 +95,11 @@ function firstUse() {
   return h('div.panel.panel-body',
     h('div.strong', '还没有处理过 QFLS 数据'),
     h('p.small.muted.mt-2.measure',
-      '选一个数据根目录（实验 / 批次哈希 / slotN / pointN / QFLS / 0-物镜X-405R-光强-时间戳-uuid.txt），平台按层级识别、逐帧校验、',
+      '选一个数据根目录（实验 / 批次哈希 / slotN / pointN / QFLS / 0-物镜X-405R-光强-时间戳-uuid.txt），'
+      + '平台按层级识别、逐帧校验、',
       '算指标和综合分，结果写进工作区里一个独立的输出目录 —— 原始数据只读，一个字节都不改。'),
-    h('p.small.muted.mt-2.measure', '手头没有数据的话，先生成一份演示数据看看：全部是程序按你描述的格式造的假想数据。'),
+    h('p.small.muted.mt-2.measure',
+      '手头没有数据的话，先生成一份演示数据看看：全部是程序按你描述的格式造的假想数据。'),
     h('div.row.gap-2.mt-3',
       h('button.btn.btn-primary.btn-sm', { onclick: (e) => startDemo(e.currentTarget) }, '生成演示数据并处理'),
       h('button.btn.btn-sm', { onclick: openProcessDialog }, '选数据根目录…')));
@@ -145,7 +150,10 @@ function drawFilter() {
     placeholder: '搜编号 / 文件名', value: f.q, 'aria-label': '搜编号或文件名',
     oninput: (e) => { f.q = e.target.value; clearTimeout(refs.qTimer); refs.qTimer = setTimeout(() => { refresh(); refocus(); }, 200); },
   });
-  const refocus = () => { const el = refs.filterHost.querySelector('input'); if (el) { el.focus(); el.setSelectionRange(f.q.length, f.q.length); } };
+  const refocus = () => {
+    const el = refs.filterHost.querySelector('input');
+    if (el) { el.focus(); el.setSelectionRange(f.q.length, f.q.length); }
+  };
   mount(refs.filterHost, h('div.qfls-filter.panel.panel-body',
     h('div.qfls-frow', h('span.qfls-flabel', '实验'),
       ...S.summary.experiments.map((e) => chip(`${e.code} ${e.name}`, f.exps.has(e.name), toggle(f.exps, e.name),
@@ -167,7 +175,8 @@ function drawFilter() {
         onclick: () => { f.exps.clear(); f.objs.clear(); f.grades.clear(); f.flag = null; f.anomalyOnly = false; f.q = ''; refresh(); },
       }, '清空筛选') : null,
       h('span.grow'),
-      h('button.btn.btn-sm', { onclick: exportFiltered, disabled: !rows.length, title: '当前筛选出来的样点，含全部指标和组内 z' },
+      h('button.btn.btn-sm',
+        { onclick: exportFiltered, disabled: !rows.length, title: '当前筛选出来的样点，含全部指标和组内 z' },
         `导出当前筛选（${rows.length}）`))));
 }
 
@@ -198,7 +207,8 @@ function exportFiltered() {
 
 // ------------------------------------------------------------------ 处理 / 演示数据 / 删除
 async function startDemo(btn) {
-  if (!await confirmDialog('生成一份假想的 QFLS 演示数据（60 帧、304 × 456，约 65 MB，放在工作区 qfls_demo/ 里，每次重新生成）并处理。大约一分钟。继续吗？',
+  if (!await confirmDialog('生成一份假想的 QFLS 演示数据（60 帧、304 × 456，约 65 MB，'
+    + '放在工作区 qfls_demo/ 里，每次重新生成）并处理。大约一分钟。继续吗？',
     { confirmLabel: '生成并处理' })) return;
   busy(btn, true);
   try {
@@ -221,7 +231,8 @@ function watch(taskId, runId) {
       t = await api.getTask(taskId);
       misses = 0;
     } catch (err) {
-      // 偶尔取不到进度（服务忙）不该让界面卡死：连着失败 3 次才停，并给一个「重试」（和数据处理页的轮询一样，C070）
+      // 偶尔取不到进度（服务忙）不该让界面卡死：连着失败 3 次才停，
+      // 并给一个「重试」（和数据处理页的轮询一样，C070）
       if (!refs.alive()) return;
       if (++misses < 3) { again(1500); return; }
       mount(refs.progress, errorBox(err, () => watch(taskId, runId), '重新查看进度'));
@@ -230,8 +241,10 @@ function watch(taskId, runId) {
     if (!refs.alive()) return;
     mount(refs.progress, h('div.progress-card.mb-4',
       h('div.row-between', h('div.strong', t.title), h('button.btn.btn-xs', {
-        // 只发「停止」，进度由正在跑的那条轮询接着看 —— 原来这里再 tick 一次，会多出一条轮询链（C070）
-        disabled: t.done, onclick: (e) => { busy(e.currentTarget, true); api.cancelTask(taskId).catch((err) => toast(err.message, 'err')); },
+        // 只发「停止」，进度由正在跑的那条轮询接着看 —— 原来这里再 tick 一次，
+        // 会多出一条轮询链（C070）
+        disabled: t.done,
+        onclick: (e) => { busy(e.currentTarget, true); api.cancelTask(taskId).catch((err) => toast(err.message, 'err')); },
       }, '停止')),
       h('div.progress-bar', h('i', { style: { width: `${t.percent ?? 0}%` } })),
       h('div.xsmall.muted.truncate', t.message || '排队中…')));
@@ -243,7 +256,8 @@ function watch(taskId, runId) {
     } catch (err) { toast(err.message, 'err'); }
     if (!refs.alive()) return;
     if (t.status === 'ok') {
-      toast(`处理完了：${t.result.n_frames} 帧，${t.result.n_valid} 帧有效，${t.result.n_anomaly} 个有异常标记`, 'ok', 6000);
+      toast(`处理完了：${t.result.n_frames} 帧，${t.result.n_valid} 帧有效，${t.result.n_anomaly} 个有异常标记`,
+        'ok', 6000);
       selectRun(runId);
     } else {
       mount(refs.progress, h('div.notice.notice-danger.mb-4', h('div.grow',
@@ -266,7 +280,8 @@ async function resume(runId) {
 }
 
 async function removeRun() {
-  if (!await confirmDialog(`删除这次处理的输出目录（${S.runId}）？原始数据不受影响。`, { confirmLabel: '删除', danger: true })) return;
+  if (!await confirmDialog(`删除这次处理的输出目录（${S.runId}）？原始数据不受影响。`,
+    { confirmLabel: '删除', danger: true })) return;
   try {
     await api.qflsDelete(S.runId);
     clearRun();
@@ -296,7 +311,8 @@ function openProcessDialog() {
       const paste = h('input.input.mono', { placeholder: 'D:\\QFLS\\数据根目录', 'aria-label': '数据根目录路径' });
       paste.addEventListener('keydown', (e) => { if (e.key === 'Enter' && paste.value.trim()) dir(paste.value.trim()); });
       mount(body,
-        h('p.small.muted', '选数据根目录（下面是一个个实验文件夹）。进到那个目录后点「扫描这个目录」，先看看认出了什么。'),
+        h('p.small.muted', '选数据根目录（下面是一个个实验文件夹）。'
+          + '进到那个目录后点「扫描这个目录」，先看看认出了什么。'),
         h('div.field.mt-3', h('label.field-label', '直接粘贴路径'),
           h('div.row.gap-2', paste, h('button.btn', { onclick: () => paste.value.trim() && dir(paste.value.trim()) }, '打开'))),
         h('div.panel.mt-3', h('div.list', ...rs.map((r) => h('button.list-row', { onclick: () => dir(r.path) },
@@ -338,16 +354,23 @@ function openProcessDialog() {
           h('div.grow.mono.small.truncate', path)),
         sc.n_frames
           ? h('div.notice.notice-accent.mt-3', h('div.grow',
-              `认出 ${sc.experiments.length} 个实验、${sc.n_frames} 帧（${sc.objectives.join('、')}，共 ${fmtBytes(sc.total_bytes)}）。`,
+              `认出 ${sc.experiments.length} 个实验、${sc.n_frames} 帧`
+              + `（${sc.objectives.join('、')}，共 ${fmtBytes(sc.total_bytes)}）。`,
               h('span.muted', ` 跳过 ${sc.skipped.length} 处、${sc.artifacts} 个历史产物。`)))
           : h('div.notice.notice-warn.mt-3', h('div.grow', '这里没认出 QFLS 数据。下面是每一处没认出的原因。')),
-        sc.experiments.length ? h('table.data.mt-3', h('thead', h('tr', h('th', '实验'), h('th', '批次'), h('th.num', '点位'), h('th.num', '帧'))),
-          h('tbody', ...sc.experiments.map((e) => h('tr', h('td', e.name, e.name !== e.raw_name ? h('span.xsmall.dim', `（磁盘上：${e.raw_name}）`) : null),
-            h('td.small', e.batches.map((b) => b.name).join('、')), h('td.num', String(e.n_points)), h('td.num', String(e.n_frames)))))) : null,
+        sc.experiments.length
+          ? h('table.data.mt-3',
+            h('thead', h('tr', h('th', '实验'), h('th', '批次'), h('th.num', '点位'), h('th.num', '帧'))),
+            h('tbody', ...sc.experiments.map((e) => h('tr',
+              h('td', e.name, e.name !== e.raw_name ? h('span.xsmall.dim', `（磁盘上：${e.raw_name}）`) : null),
+              h('td.small', e.batches.map((b) => b.name).join('、')), h('td.num', String(e.n_points)),
+              h('td.num', String(e.n_frames))))))
+          : null,
         sc.renamed.length ? h('div.small.mt-3', h('span.strong', '修过的乱码名：'),
           ...sc.renamed.map((r) => h('div.mono.xsmall', `${r.raw} → ${r.fixed}（${r.how}）`))) : null,
         sc.skipped.length ? h('details.mt-3', h('summary.small', `跳过的 ${sc.skipped.length} 处`),
-          h('table.data', h('tbody', ...sc.skipped.slice(0, 200).map((s) => h('tr', h('td.mono.xsmall', s.path), h('td.xsmall.muted', s.reason)))))) : null);
+          h('table.data', h('tbody', ...sc.skipped.slice(0, 200).map((s) => h('tr',
+            h('td.mono.xsmall', s.path), h('td.xsmall.muted', s.reason)))))) : null);
     } catch (err) { mount(body, errorBox(err, () => dir(path), '回到目录')); }
   }
 

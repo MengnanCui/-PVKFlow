@@ -67,7 +67,8 @@ function consumeAIFilter() {
 
 export async function view(host, ctx) {
   resetRefs({ host, nav: ctx.nav, ctx, alive: ctx.alive || (() => true) });
-  // 勾选不在这里清：从样品页回来还要在（原来每次进页面都清空，C070）。改筛选时 process-filter 会清，切功能时下面清
+  // 勾选不在这里清：从样品页回来还要在（原来每次进页面都清空，C070）。改筛选时 process-filter 会清，
+  // 切功能时下面清
   stopPolling();
 
   const shell = h('div');

@@ -115,7 +115,8 @@ function recipePanel() {
 function rerunTag(recipe) {
   const band = recipe.module_params?.['thickness.fringe_ot']?.band;
   if (Array.isArray(band)) return `${band[0]}–${band[1]} nm`;
-  // 老配方的写法；两样都没有（没装膜厚模块）就不带这一截 —— 原来会写成「undefined–undefined nm」（C070）
+  // 老配方的写法；两样都没有（没装膜厚模块）就不带这一截 ——
+  // 原来会写成「undefined–undefined nm」（C070）
   return recipe.band_min != null ? `${recipe.band_min}–${recipe.band_max} nm` : '改了参数';
 }
 

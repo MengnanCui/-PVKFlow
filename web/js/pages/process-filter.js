@@ -106,7 +106,10 @@ function savedSets() {
 function manageSetsDialog() {
   const list = h('div.set-manage');
   const draw = () => {
-    if (!S.sets.length) { mount(list, h('p.small.dim', '没有样品集了。在样品列表上方点「存为样品集」新建。')); return; }
+    if (!S.sets.length) {
+      mount(list, h('p.small.dim', '没有样品集了。在样品列表上方点「存为样品集」新建。'));
+      return;
+    }
     mount(list, ...S.sets.map((s) => setRow(s, async () => { await loadSets(); draw(); })));
   };
   draw();
@@ -114,7 +117,8 @@ function manageSetsDialog() {
     title: '管理样品集',
     width: '680px',
     body: h('div',
-      h('p.xsmall.dim', '这里只改样品集本身（名字、记下的筛选式或快照）。样品、文件、处理结果都不会动。'),
+      h('p.xsmall.dim',
+        '这里只改样品集本身（名字、记下的筛选式或快照）。样品、文件、处理结果都不会动。'),
       list),
     foot: [h('button.btn', { onclick: () => m.close() }, '关闭')],
   });
@@ -148,7 +152,8 @@ function setRow(s, refresh) {
               const btn = e.currentTarget;
               const yes = await confirmDialog(
                 `把「${s.name}」钉死成固定集？此刻命中的 ${fmtInt(s.count)} 个样品会被记下来，`
-                + '以后新导入的样品不会再进来。这一步不能撤回（要动态的话可以用原来的筛选式再建一个）。',
+                + '以后新导入的样品不会再进来。'
+                + '这一步不能撤回（要动态的话可以用原来的筛选式再建一个）。',
                 { confirmLabel: '钉死' });
               if (yes) act(btn, () => api.freezeSet(s.set_id), `「${s.name}」已钉死，${fmtInt(s.count)} 个样品`);
             },

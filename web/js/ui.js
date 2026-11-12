@@ -93,7 +93,8 @@ export function fmtTime(iso) {
 }
 
 // ------------------------------------------------------------------ Toast
-// 读屏软件靠 aria-live 才知道这里冒出了一条提示（自查 §6 #30）。出错的那种单独用 role=alert，会打断着念
+// 读屏软件靠 aria-live 才知道这里冒出了一条提示（自查 §6 #30）。出错的那种单独用 role=alert，
+// 会打断着念
 const toastStack = h('div.toast-stack', { role: 'status', 'aria-live': 'polite' });
 document.addEventListener('DOMContentLoaded', () => document.body.appendChild(toastStack));
 
@@ -183,7 +184,8 @@ function trapTab(e, panel) {
  *
  * 答案只在 onClose 里交出去一次。原来是「确定」按钮先 m.close() 再 resolve(true)，
  * 而 close() 会先跑 onClose → resolve(false)，Promise 只认第一次 —— 于是**点确定也返回 false**：
- * 装模块前的「我信得过，继续」、删 AI 对话、卸载模块，从界面上点都没有任何反应（D 组自查发现）。
+ * 装模块前的「我信得过，继续」、删 AI 对话、卸载模块，
+ * 从界面上点都没有任何反应（D 组自查发现）。
  */
 export function confirmDialog(message, { confirmLabel = '确定', danger = false } = {}) {
   return new Promise((resolve) => {
@@ -199,6 +201,61 @@ export function confirmDialog(message, { confirmLabel = '确定', danger = false
       onClose: () => resolve(answer),
     });
   });
+}
+
+// ------------------------------------------------------------------ 共用小组件
+/**
+ * 指标卡：标签 + 大数字 + 一行说明。数字是 0 / 空时变淡（「还没有」和「有」一眼分得开）。
+ * 原来总览、存储、批处理结果、QFLS 各抄了一份（技术债 C076）。
+ * @param fmt 数字怎么写，默认整数千分位；QFLS 里有「58 / 60」这种现成的文字就传 String
+ */
+export function metric(label, value, note, fmt = fmtInt) {
+  return h('div.metric',
+    h('div.metric-label', label),
+    h('div.metric-value' + (value ? '' : '.is-zero'), fmt(value)),
+    note ? h('div.metric-note', note) : null);
+}
+
+/** 一排指标卡。items：[[标签, 数字, 说明?, 格式化?], …] */
+export function metricRow(items, cols = 4) {
+  return h(`div.metrics.metrics-${cols}`, ...items.map(([label, value, note, fmt]) => metric(label, value, note, fmt)));
+}
+
+/**
+ * 分段控件（几个互斥的选项排成一条）。键盘：Tab 进来落在选中的那个上，左右 / 上下箭头换、
+ * Home / End 到头尾 ——
+ * 和单选按钮组的读屏约定一致（role=radiogroup）。原来智能体页一份、QFLS 抄了一份 CSS，都不认方向键。
+ *
+ * @param options [[值, 文字, 悬停说明?], …]（值按字符串比较）
+ * @returns 元素，带 `.set(值)`：外面改了状态时同步高亮，不重画
+ */
+export function segmented(name, value, options, onPick) {
+  const buttons = options.map(([v, text, title]) => h('button', {
+    type: 'button', role: 'radio', title, dataset: { v: String(v) },
+    onclick: () => { set(String(v)); onPick(v); },
+  }, text));
+  const el = h('span.seg', { role: 'radiogroup', 'aria-label': name }, ...buttons);
+  function set(v) {
+    for (const b of buttons) {
+      const on = b.dataset.v === String(v);
+      b.setAttribute('aria-checked', String(on));
+      b.tabIndex = on ? 0 : -1;
+    }
+  }
+  el.addEventListener('keydown', (e) => {
+    const i = buttons.indexOf(document.activeElement);
+    if (i < 0) return;
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    const j = step ? (i + step + buttons.length) % buttons.length
+      : e.key === 'Home' ? 0 : e.key === 'End' ? buttons.length - 1 : -1;
+    if (j < 0) return;
+    e.preventDefault();
+    buttons[j].focus();
+    buttons[j].click();
+  });
+  set(value);
+  el.set = set;
+  return el;
 }
 
 // ------------------------------------------------------------------ 状态视图
@@ -266,14 +323,16 @@ export async function render(host, loader, view) {
     mount(host, body);
     return data;
   } catch (err) {
-    if (!fresh()) return null;
+    // 离开页面时请求被中止（api.with）：这不是错，页面已经不在了
+    if (!fresh() || err?.name === 'AbortError') return null;
     mount(host, errorBox(err, () => render(host, loader, view)));
     return null;
   }
 }
 
 // ------------------------------------------------------------------ 状态
-// 任务 / 运行 / 处理的状态，全平台一份叫法（原来五个页面各写一份：失败 / 没跑完、进行中 / 运行中 / 处理中、
+// 任务 / 运行 / 处理的状态，全平台一份叫法（原来五个页面各写一份：失败 / 没跑完、
+// 进行中 / 运行中 / 处理中、
 // 已取消 / 已停止，C070）。后端的状态值：queued | running | ok | failed | cancelled
 export const STATUS = { queued: '排队中', running: '进行中', ok: '完成', failed: '失败', cancelled: '已停止' };
 export const statusText = (s) => STATUS[s] || s || '';

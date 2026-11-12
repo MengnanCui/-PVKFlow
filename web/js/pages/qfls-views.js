@@ -1,7 +1,7 @@
 // QFLS 成像的三个标签：总览 / 排名与筛选 / 多点对比。数据全来自 qfls-state.js 里已经取好的那次处理。
 
 import { api } from '../api.js';
-import { h, mount, empty, errorBox, skeletonRows, toast } from '../ui.js';
+import { h, mount, empty, errorBox, skeletonRows, toast, metric, segmented } from '../ui.js';
 import { xyChart } from '../chart.js';
 import { figure, selectControl } from '../components/figure.js';
 import { boxPlot } from '../components/relation-charts.js';
@@ -18,7 +18,8 @@ export const gradeChip = (g) => h(`span.qfls-grade.g-${g || 'x'}`, g || '无效'
 export function limits(extra = null) {
   return h('div.notice.notice-warn.qfls-limits', h('div.grow',
     h('span.strong', '读之前：'),
-    '不同物镜（20X / 100X）的绝对 QFLS 和面积占比不能直接比较 —— 比较只在同一物镜内做，或看组内 z；',
+    '不同物镜（20X / 100X）的绝对 QFLS 和面积占比不能直接比较 —— '
+    + '比较只在同一物镜内做，或看组内 z；',
     '只有单一光强（1 sun），不做伪 JV、理想因子、PCE、FF。', extra));
 }
 
@@ -50,9 +51,6 @@ export function overviewTab(ctx) {
   const nA = valid.filter((p) => p.grade === 'A').length;
   const host = h('div');
 
-  const kpi = (label, value, note) => h('div.metric', h('div.metric-label', label),
-    h('div.metric-value' + (value ? '' : '.is-zero'), String(value)), h('div.metric-note', note));
-
   const boxHost = h('div.qfls-grid');
   const drawBoxes = () => {
     const [mul, unit] = scaled(S.metric);
@@ -82,10 +80,10 @@ export function overviewTab(ctx) {
   mount(host,
     limits(),
     h('div.metrics.metrics-4.mt-4',
-      kpi('样点', rows.length, `${S.summary.n_frames} 帧里筛出的`),
-      kpi('有效', valid.length, `${rows.length - valid.length} 帧数据无效、不打分`),
-      kpi('有异常标记', rows.filter((p) => p.anomaly).length, 'warn / error 级'),
-      kpi('A 级', nA, valid.length ? `占有效的 ${Math.round((100 * nA) / valid.length)}%` : '—')),
+      metric('样点', rows.length, `${S.summary.n_frames} 帧里筛出的`),
+      metric('有效', valid.length, `${rows.length - valid.length} 帧数据无效、不打分`),
+      metric('有异常标记', rows.filter((p) => p.anomaly).length, 'warn / error 级'),
+      metric('A 级', nA, valid.length ? `占有效的 ${Math.round((100 * nA) / valid.length)}%` : '—')),
 
     h('div.section.mt-6',
       h('div.section-head', h('div.section-title', '等级分布（实验 × 物镜）'),
@@ -121,7 +119,8 @@ function gradeTable(rows, ctx) {
   }
   if (!groups.size) return h('div.panel', empty('筛选之后一个样点都没有'));
   const code = (name) => S.summary.experiments.find((e) => e.name === name)?.code || '';
-  const keys = [...groups.keys()].sort((a, b) => a.split('|')[1].localeCompare(b.split('|')[1]) || code(a.split('|')[0]).localeCompare(code(b.split('|')[0])));
+  const keys = [...groups.keys()].sort((a, b) => a.split('|')[1].localeCompare(b.split('|')[1])
+    || code(a.split('|')[0]).localeCompare(code(b.split('|')[0])));
   return h('div.panel.panel-body.flush.table-wrap', h('table.data',
     h('thead', h('tr', h('th', '实验'), h('th', '物镜'), ...GRADES.map((g) => h('th.num', g)), h('th.num', '无效'),
       h('th.num', '异常'), h('th.num', '中位分'), h('th.num', 'QFLS 中位数 (eV)'))),
@@ -147,7 +146,9 @@ function scanReport() {
     h('div.panel.panel-body.flush.table-wrap', h('table.data',
       h('thead', h('tr', h('th', '编号'), h('th', '实验'), h('th', '批次'), h('th.num', '点位'), h('th.num', '帧'))),
       h('tbody', ...sc.experiments.map((e) => h('tr',
-        h('td.mono', e.code), h('td', e.name, e.name !== e.raw_name ? h('div.xsmall.dim', `磁盘上的名字是乱码「${e.raw_name}」，显示时修成了 UTF-8`) : null),
+        h('td.mono', e.code), h('td', e.name, e.name !== e.raw_name
+          ? h('div.xsmall.dim', `磁盘上的名字是乱码「${e.raw_name}」，显示时修成了 UTF-8`)
+          : null),
         h('td.small', ...e.batches.map((b) => h('div', h('span.mono.xsmall.dim', `${b.code} `), b.name,
           b.looks_like_hash ? null : h('span.xsmall.dim', '（不像哈希）')))),
         h('td.num', String(e.n_points)), h('td.num', String(e.n_frames))))))),
@@ -200,12 +201,10 @@ export function rankTab(ctx) {
   return h('div',
     limits(S.valueMode === 'z' ? ' 组内 z = 同实验、同物镜里的 (x − 组均值) / 组标准差，|z| ≥ 2 标色。' : null),
     h('div.row.gap-3.mt-4.wrap',
-      selectControl('排序', k, [['score', '综合分'], ['rank', '全局排名'], ...RANK_COLS.filter((c) => c !== 'score').map((c) => [c, defs[c]?.label || c])],
+      selectControl('排序', k, [['score', '综合分'], ['rank', '全局排名'],
+        ...RANK_COLS.filter((c) => c !== 'score').map((c) => [c, defs[c]?.label || c])],
         (v) => { S.sort = { key: v, desc: v === 'score' }; ctx.refresh(); }),
-      h('div.agent-seg', { role: 'radiogroup', 'aria-label': '显示' },
-        ...[['raw', '原值'], ['z', '组内 z']].map(([v, t]) => h('button', {
-          role: 'radio', 'aria-checked': String(S.valueMode === v), onclick: () => { S.valueMode = v; ctx.refresh(); },
-        }, t))),
+      segmented('显示', S.valueMode, [['raw', '原值'], ['z', '组内 z']], (v) => { S.valueMode = v; ctx.refresh(); }),
       h('span.small.muted', '单位：差值 meV、占比 %、密度 个/百万像素、变程 像素'),
       h('span.grow'),
       h('button.btn.btn-sm' + (n >= 2 ? '.btn-primary' : ''), {
@@ -214,7 +213,8 @@ export function rankTab(ctx) {
     sorted.length
       ? h('div.panel.panel-body.flush.table-wrap.mt-3', h('table.data.qfls-rank',
           h('thead', h('tr',
-            h('th', h('span.sr-only', '加入对比')), th('rank', '排名'), h('th', '编号'), h('th', '实验 · 位置'), h('th', '物镜'),
+            h('th', h('span.sr-only', '加入对比')), th('rank', '排名'), h('th', '编号'),
+            h('th', '实验 · 位置'), h('th', '物镜'),
             th('score', '分'), h('th', '等级'),
             ...RANK_COLS.filter((c) => c !== 'score').map((c) => th(c, defs[c]?.label || c)),
             h('th', '异常标记'))),
@@ -230,7 +230,8 @@ export function rankTab(ctx) {
             });
             return h(`tr.is-clickable.lv-${p.level}`, { ...clickableRow(() => ctx.openPoint(p.key)), title: '打开这个样点' },
               h('td', box),
-              h('td.num', p.rank ? String(p.rank) : '—', p.rank_in_objective ? h('div.xsmall.dim', `${p.objective} 内 ${p.rank_in_objective}`) : null),
+              h('td.num', p.rank ? String(p.rank) : '—',
+                p.rank_in_objective ? h('div.xsmall.dim', `${p.objective} 内 ${p.rank_in_objective}`) : null),
               h('td.mono.small', p.code),
               h('td.small', p.experiment, h('div.xsmall.dim', `${p.batch} / ${p.slot} / ${p.point}`)),
               h('td', p.objective || '?'),
@@ -314,7 +315,8 @@ function compareBody(ctx, pts, details, objs) {
   };
   return [
     objs.length > 1
-      ? limits(` 这几个样点物镜不同（${objs.join('、')}）：均值、中位数、低荧光绝对占比、连通域面积和数量、亮点密度、变程都不要横着比，看形状和组内 z。`)
+      ? limits(` 这几个样点物镜不同（${objs.join('、')}）：均值、中位数、低荧光绝对占比、`
+        + '连通域面积和数量、亮点密度、变程都不要横着比，看形状和组内 z。')
       : limits(),
     h('div.row.gap-2.mt-4.wrap', ...pts.map((p) => h('span.qfls-pick',
       h('button.linklike.mono.small', { onclick: () => ctx.openPoint(p.key) }, p.code), gradeChip(p.grade),
@@ -324,7 +326,8 @@ function compareBody(ctx, pts, details, objs) {
 
     h('div.section.mt-4',
       h('div.section-head', h('div.section-title', '热图（同一物镜同一色标）'),
-        h('div.section-note', '色标 = 该物镜所有帧 P1 的第 5 百分位 到 P99 的第 95 百分位；物镜之间色标不同、不可比')),
+        h('div.section-note',
+          '色标 = 该物镜所有帧 P1 的第 5 百分位 到 P99 的第 95 百分位；物镜之间色标不同、不可比')),
       h('div.qfls-grid', ...pts.map((p) => h('div.qfls-cell',
         h('div.small.strong.mono', p.code, h('span.muted', ` · ${p.experiment}`)),
         h('img.qfls-heat', { src: api.qflsFile(S.runId, `points/${p.key}/heatmap_group.png`), alt: `${p.code} 热图`, loading: 'lazy' }),
@@ -335,11 +338,13 @@ function compareBody(ctx, pts, details, objs) {
         overlay('直方图（像素占比）', 'hist', { series: hist, x_label: 'QFLS (eV)', y_label: '像素占比' }),
         overlay('水平剖面（中间 5% 行的平均）', 'profile',
                 { series: prof, x_label: allUm ? '位置 (µm)' : '位置（像素）', y_label: 'QFLS (eV)' }),
-        overlay('变异函数', 'variogram', { series: vario, x_label: allUm ? '滞后 (µm)' : '滞后（像素）', y_label: 'γ (meV²)' },
+        overlay('变异函数', 'variogram',
+                { series: vario, x_label: allUm ? '滞后 (µm)' : '滞后（像素）', y_label: 'γ (meV²)' },
                 '横轴按各自的像素尺寸换成 µm；γ 第一次到 95% 基台的地方就是变程。'))),
 
     h('div.section',
-      h('div.section-head', h('div.section-title', '指标对照'), h('div.section-note', '每行最好的那个加粗（只标有「好坏方向」的指标）')),
+      h('div.section-head', h('div.section-title', '指标对照'),
+        h('div.section-note', '每行最好的那个加粗（只标有「好坏方向」的指标）')),
       h('div.panel.panel-body.flush.table-wrap', h('table.data',
         h('thead', h('tr', h('th', '指标'), h('th', '单位'), ...pts.map((p) => h('th.num.mono', p.code)))),
         h('tbody',

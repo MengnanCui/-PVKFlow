@@ -43,7 +43,7 @@ export async function loadSlices() {
   drawSlices();
   const wins = S.win2 ? [WIN_HEAD, S.win2] : [WIN_HEAD];
   try {
-    const slices = await api.batchSlices(S.runId, wins);
+    const slices = await refs.api.batchSlices(S.runId, wins);
     if (!alive() || !fresh()) return;
     S.slices = slices;
     S.tMax = maxT(S.slices.rows);

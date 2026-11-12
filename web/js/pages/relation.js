@@ -12,7 +12,7 @@ import {
   h, mount, render, empty, errorBox, skeletonRows, fmtInt, latest,
 } from '../ui.js';
 import { figure, selectControl } from '../components/figure.js';
-import { fieldNameCell, unitCell } from '../components/field-cells.js';
+import { fieldTable } from '../components/field-cells.js';
 import { scatterChart, boxPlot } from '../components/relation-charts.js';
 import { downloadMenu } from '../download.js';
 import { rowsToCsv } from '../csv.js';
@@ -143,7 +143,10 @@ function statsPanel(d) {
   const r3 = (v) => (Math.abs(v) >= 0.9995 ? v.toFixed(4) : v.toFixed(3));
   const warn = [];
   for (const f of [d.x, d.y]) {
-    if (f.mixed_units) warn.push(`「${f.label || f.field_name}」在不同样品上单位不一致（${f.units.join(' / ')}），这里的相关不可信 —— 多半是某个模块的单位写得不一致`);
+    if (f.mixed_units) {
+      warn.push(`「${f.label || f.field_name}」在不同样品上单位不一致（${f.units.join(' / ')}），`
+        + '这里的相关不可信 —— 多半是某个模块的单位写得不一致');
+    }
   }
   const missing = [];
   if (d.n_only_x) missing.push(`${fmtInt(d.n_only_x)} 个只有 X`);
@@ -164,10 +167,13 @@ function statsPanel(d) {
       : h('div.notice.notice-warn.mt-2', h('div.small', st.why)),
     ...warn.map((w) => h('div.notice.notice-warn.mt-2', h('div.small', w))),
     h('p.xsmall.dim.mt-2.measure',
-      '皮尔逊 r 看的是「像不像一条直线」，斯皮尔曼 ρ 只看「是不是一个涨另一个也涨」（排名的相关，不怕个别极端值）。',
-      '两者都在 −1 到 1 之间，越接近 ±1 越强。p 是「两者其实无关、只是碰巧」时看到这么强相关的概率，',
+      '皮尔逊 r 看的是「像不像一条直线」，斯皮尔曼 ρ 只看「是不是一个涨另一个也涨」'
+      + '（排名的相关，不怕个别极端值）。',
+      '两者都在 −1 到 1 之间，越接近 ±1 越强。'
+      + 'p 是「两者其实无关、只是碰巧」时看到这么强相关的概率，',
       '常用的门槛是 0.05。虚线是最小二乘直线，只是帮眼睛看趋势。',
-      h('strong', '相关不等于因果'), ' —— 批次之间的差别（比如前驱体换了一瓶）也会让两个量一起变。'));
+      h('strong', '相关不等于因果'),
+      ' —— 批次之间的差别（比如前驱体换了一瓶）也会让两个量一起变。'));
 }
 
 /** 审核改了当前值 —— 散点、统计、箱线图都可能变，安静地重取一遍。 */
@@ -181,7 +187,8 @@ function pointTable(d) {
     h('summary.small', `逐个样品（${fmtInt(d.points.length)}）`),
     h('div.panel.panel-body.flush.mt-2',
       h('p.xsmall.dim', { style: { padding: '6px 12px 0' } },
-        '作废一个数，这个样品的这个字段就退回上一次没作废的结果；一次都没有了，这个点就从图上拿掉。'),
+        '作废一个数，这个样品的这个字段就退回上一次没作废的结果；'
+        + '一次都没有了，这个点就从图上拿掉。'),
       h('table.data',
         h('thead', h('tr', h('th', '样品'), h('th', '批次'),
           h('th.num', axisLabel(d.x)), h('th', 'X 审核'), h('th.num', axisLabel(d.y)), h('th', 'Y 审核'))),
@@ -228,7 +235,8 @@ function drawGroups() {
       body: chart,
       note: h('div.relation-stats',
         h('div.small', `${fmtInt(d.n)} 个样品、${fmtInt(d.groups.length)} 个批次。`,
-          '箱 = 中间一半样品（Q1–Q3），粗线 = 中位数，须 = 1.5 倍箱长以内最远的样品，须外的点单独画出来。'),
+          '箱 = 中间一半样品（Q1–Q3），粗线 = 中位数，须 = 1.5 倍箱长以内最远的样品，'
+          + '须外的点单独画出来。'),
         d.y.mixed_units ? h('div.notice.notice-warn.mt-2', h('div.small',
           `这个字段在不同样品上单位不一致（${d.y.units.join(' / ')}），箱的位置不可信`)) : null,
         outliers.length
@@ -252,13 +260,7 @@ function fieldsSection() {
     h('details',
       h('summary.small', '展开'),
       h('div.panel.panel-body.flush.mt-2',
-        h('table.data',
-          h('thead', h('tr', h('th', '字段'), h('th', '单位'), h('th.num', '样本数'), h('th.num', '范围'))),
-          h('tbody', ...S.fields.map((f) => h('tr',
-            fieldNameCell(f), unitCell(f),
-            h('td.num', fmtInt(f.n_numeric)),
-            h('td.num.small.muted', f.min_v === null ? '—'
-              : `${Number(f.min_v).toPrecision(3)} — ${Number(f.max_v).toPrecision(3)}`))))))));
+        fieldTable(S.fields, { numeric: true }))));
 }
 
 function laterSection() {

@@ -12,24 +12,24 @@ export const meta = {
   desc: '导入策略、命名规则、模型接入',
 };
 
+// 这一次进入页面：nav / signal / alive 都从 ctx 来（原来靠全局的 hte:nav 事件重画自己，技术债 C076）。
+// signal：离开时把还在跑的批量测速一起停掉（原来离开后还会把整串模型测完，C070）
+let page = { nav: null, signal: null, alive: () => false };
+
 /**
  * 存完东西之后过一会儿重画设置页，让新状态显示出来。
  *
- * **只在你还停在设置页时才重画。** 原来是无条件发「去设置页」：存完马上点去别的页面，
+ * **只在你还停在这一次的设置页时才重画**（alive）。原来是无条件发「去设置页」：
+ * 存完马上点去别的页面，
  * 半秒后又被拽回设置页（审查 §6 前端部分）。
  */
 function reloadSoon(ms) {
-  setTimeout(() => {
-    if (location.hash.slice(1).replace(/^\/+/, '').split('/')[0] !== 'settings') return;
-    window.dispatchEvent(new CustomEvent('hte:nav', { detail: 'settings' }));
-  }, ms);
+  const mine = page;
+  setTimeout(() => { if (mine.alive()) mine.nav('settings'); }, ms);
 }
 
-// 这一次进入页面的 signal：离开时把还在跑的批量测速一起停掉（原来离开后还会把整串模型测完，C070）
-let pageSignal = null;
-
 export function view(host, ctx = {}) {
-  pageSignal = ctx.signal || null;
+  page = { nav: ctx.nav, signal: ctx.signal || null, alive: ctx.alive || (() => true) };
   return render(host,
     () => Promise.all([api.settings(), api.models(), api.health(), api.modules()]),
     ([cfg, models, health, mods]) => h('div',
@@ -316,7 +316,8 @@ function modelSection(models) {
   const providers = models.providers || [];
   const status = h('div.mt-3');
 
-  return section('模型', 'OpenAI 兼容或 Anthropic 协议。没配也没关系 —— 导入、处理、批处理、对比都不需要模型',
+  return section('模型',
+    'OpenAI 兼容或 Anthropic 协议。没配也没关系 —— 导入、处理、批处理、对比都不需要模型',
     h('div.panel.panel-body',
       h('div.notice',
         h('div.grow',
@@ -350,17 +351,23 @@ function simpleForm(providers, presets) {
   const first = providers[0] || {};
   const saved = (first.models || []).map((m) => m.id);
 
-  // 本地状态：拉回来的候选、勾中的、手填的那些，以及逐个测速的结果（照 IFlow：同家族只测最新的那个）
+  // 本地状态：拉回来的候选、勾中的、手填的那些，以及逐个测速的结果（照 IFlow：
+  // 同家族只测最新的那个）
   const F = { found: [], chosen: new Set(saved), manual: saved.join(', '),
               probe: new Map(), folded: [], ctl: null };
 
   // 协议：OpenAI 兼容（/chat/completions）或 Anthropic（/v1/messages）—— 照 IFlow 的 provider 选择
   const apiSel = h('select.select', { 'aria-label': '协议', style: { maxWidth: '220px' } },
-    h('option', { value: 'openai-completions', selected: (first.api || 'openai-completions') === 'openai-completions' }, 'OpenAI 兼容'),
+    h('option', {
+      value: 'openai-completions',
+      selected: (first.api || 'openai-completions') === 'openai-completions',
+    }, 'OpenAI 兼容'),
     h('option', { value: 'anthropic-messages', selected: first.api === 'anthropic-messages' }, 'Anthropic'));
-  // 思考：各家写法不一样，平台按模型名认出来再发。缺省「关」：IFlow 在内网网关上实测开着会把输出吞掉或挂住
+  // 思考：各家写法不一样，平台按模型名认出来再发。缺省「关」：
+  // IFlow 在内网网关上实测开着会把输出吞掉或挂住
   const thinkSel = h('select.select', { 'aria-label': '思考', style: { maxWidth: '300px' } },
-    ...[['off', '关（推荐，回答更快更稳）'], ['on', '开（慢，但可能更深）'], ['default', '不发参数（按网关自己的默认）']]
+    ...[['off', '关（推荐，回答更快更稳）'], ['on', '开（慢，但可能更深）'],
+      ['default', '不发参数（按网关自己的默认）']]
       .map(([v, t]) => h('option', { value: v, selected: (first.thinking || 'off') === v }, t)));
 
   const url = h('input.input', {
@@ -480,18 +487,22 @@ function simpleForm(providers, presets) {
           },
         });
         const r = F.probe.get(m.id);
-        return h(`label.model-opt${r && !r.pending && !r.ok ? '.is-bad' : ''}`, { title: r?.reply ? `↳ ${r.reply}` : (r?.error || '') },
+        return h(`label.model-opt${r && !r.pending && !r.ok ? '.is-bad' : ''}`,
+          { title: r?.reply ? `↳ ${r.reply}` : (r?.error || '') },
           cb, h('span.mono.xsmall', m.id), badge(m.id),
           m.owned_by ? h('span.xsmall.dim', m.owned_by) : null);
       })));
   }
 
-  /** 逐个测速：并发 3，边测边显示，随时可以停（照 IFlow 的 LLMSettings）。测完通的按延迟排前面，不通的沉底。 */
+  /**
+   * 逐个测速：并发 3，边测边显示，随时可以停（照 IFlow 的 LLMSettings）。
+   * 测完通的按延迟排前面，不通的沉底。
+   */
   async function probeAll(ids) {
     F.ctl = new AbortController();
     const signal = F.ctl.signal;
     const ctl = F.ctl;
-    pageSignal?.addEventListener('abort', () => ctl.abort(), { once: true });
+    page.signal?.addEventListener('abort', () => ctl.abort(), { once: true });
     for (const id of ids) F.probe.set(id, { id, pending: true });
     drawModels();
     drawProbeBtns();
@@ -595,7 +606,8 @@ function simpleForm(providers, presets) {
          '这些都存在本机的 ',
          h('span.mono', 'workspace/config/providers.json'), '，不会进仓库。']),
       field('协议', apiSel,
-        ['绝大多数网关（vLLM、NewAPI、DeepSeek、通义……）是 OpenAI 兼容；直连 Anthropic 官方或它的转发选 Anthropic。',
+        ['绝大多数网关（vLLM、NewAPI、DeepSeek、通义……）是 OpenAI 兼容；'
+         + '直连 Anthropic 官方或它的转发选 Anthropic。',
          '上面的常见地址会顺手把协议填好。']),
       field('密钥（apiKey）', key,
         providers.length && first.has_key
@@ -611,7 +623,8 @@ function simpleForm(providers, presets) {
           '上面勾的会同步到这一栏。也可以直接手打，多个用逗号分开 —— ',
           '存下来的模型在右侧 AI 助手里可以随时切换。')),
       field('思考', thinkSel,
-        '会思考的模型（Qwen3、DeepSeek-V4、Kimi-K2、GLM-5、Claude……）按模型名认出写法再发；认不出的模型什么都不发。'),
+        '会思考的模型（Qwen3、DeepSeek-V4、Kimi-K2、GLM-5、Claude……）按模型名认出写法再发；'
+        + '认不出的模型什么都不发。'),
       field('给它起个名字（可选）', name, '只是界面上显示用，随便叫')),
     h('div.row.gap-2.mt-3',
       h('button.btn.btn-primary', {
@@ -767,7 +780,7 @@ function workspaceSection(cfg) {
             try {
               const r = await api.clearCache();
               toast(`已清空，腾出 ${fmtBytes(r.freed_bytes ?? used)}`, 'ok');
-              window.dispatchEvent(new CustomEvent('hte:nav', { detail: 'settings' }));
+              page.nav('settings');
             } catch (err) { toast(err.message, 'err'); }
             busy(e.target, false);
           },

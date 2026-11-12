@@ -22,7 +22,7 @@ async function say(p, text, wait = 2500) {
   await sleep(wait);
 }
 const lastBot = (p) => p.evaluate((L) => [...document.querySelectorAll(`${L} .agent-msg.is-bot`)].pop()?.textContent || '', L);
-const checked = (p, group) => p.$eval(`#page-agent .agent-seg[aria-label="${group}"] [aria-checked="true"]`, (x) => x.textContent);
+const checked = (p, group) => p.$eval(`#page-agent .seg[aria-label="${group}"] [aria-checked="true"]`, (x) => x.textContent);
 
 (async () => {
   const b = await chromium.launch();

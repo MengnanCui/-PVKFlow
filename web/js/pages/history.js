@@ -22,8 +22,8 @@ export async function view(host, ctx) {
   // 两个请求一起发。钉住计数一次查完，不是一行一个查询。
   await render(host, async () => {
     const [d, pins] = await Promise.all([
-      api.batchRuns(),
-      api.pinCounts().catch(() => ({ counts: {} })),   // 取不到就当没有，不挡住列表
+      api.with(ctx.signal).batchRuns(),
+      api.with(ctx.signal).pinCounts().catch(() => ({ counts: {} })),   // 取不到就当没有，不挡住列表
     ]);
     return { ...d, pinCounts: pins.counts || {} };
   }, (d) => {

@@ -9,7 +9,7 @@
 
 import { api } from '../api.js';
 import {
-  h, mount, clear, toast, empty, skeletonRows, errorBox, fmtInt, fmtTime, sampleLabel, confirmDialog,
+  h, mount, clear, toast, empty, skeletonRows, errorBox, fmtInt, fmtTime, sampleLabel, confirmDialog, metric,
 } from '../ui.js';
 import { drawChart, loadCurves } from './batch-curves.js';
 import { drawRecipe, loadRecipe } from './batch-recipe.js';
@@ -42,7 +42,7 @@ export async function view(host, ctx) {
   // 还没回来的请求不许再改 S —— S 是模块级的，下一次进来的页面也用它。
   // 原来离开后轮询照跑，跑完把你此刻所在页面的标题改掉、把正在看的对比换掉（自查 §6 #6）。
   const alive = ctx.alive || (() => true);
-  resetRefs({ host, nav: ctx.nav, alive });
+  resetRefs({ host, nav: ctx.nav, alive, api: api.with(ctx.signal) });
 
   const arg = ctx.arg;
   if (!arg) {
@@ -67,7 +67,7 @@ export async function view(host, ctx) {
   mount(host, skeletonRows(8));
   let detail;
   try {
-    detail = await api.batchDetail(S.runId);
+    detail = await refs.api.batchDetail(S.runId);
   } catch (err) {
     if (alive()) mount(host, errorBox(err, () => view(host, ctx)));
     return;
@@ -164,7 +164,7 @@ async function loadPins() {
   const alive = refs.alive;
   let pins;
   try {
-    pins = (await api.pins(S.runId)).pins || [];
+    pins = (await refs.api.pins(S.runId)).pins || [];
   } catch {
     pins = [];          // 钉住是锦上添花，取不到不该影响看结果
   }
@@ -213,11 +213,6 @@ function header() {
       metric('曲线表', d.tables.length ? d.tables[0].n_rows : 0, '长表行数')),
     refs.recipeHost);
 }
-
-const metric = (label, value, note) => h('div.metric',
-  h('div.metric-label', label),
-  h('div.metric-value' + (value ? '' : '.is-zero'), fmtInt(value)),
-  note ? h('div.metric-note', note) : null);
 
 // ------------------------------------------------------------------ 状态表
 function drawTable() {

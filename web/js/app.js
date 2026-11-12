@@ -130,11 +130,6 @@ window.addEventListener('hashchange', () => {
   const { id, arg } = fromHash();
   navigate(id, { push: false, arg });
 });
-window.addEventListener('hte:nav', (e) => {
-  const d = e.detail;
-  if (typeof d === 'string') navigate(d);
-  else navigate(d.page, { arg: d.arg });
-});
 
 // ------------------------------------------------------------------ 健康检查
 async function checkHealth() {

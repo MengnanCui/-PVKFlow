@@ -2,8 +2,8 @@
 
 import { api } from '../api.js';
 import { infoDot, withInfo } from '../components/info.js';
-import { fieldNameCell, unitCell } from '../components/field-cells.js';
-import { h, mount, clear, render, fmtBytes, fmtInt, fmtTime, empty, latest, busy, toast } from '../ui.js';
+import { fieldTable } from '../components/field-cells.js';
+import { h, mount, clear, render, fmtBytes, fmtInt, fmtTime, empty, latest, busy, toast, metric } from '../ui.js';
 
 export const meta = {
   id: 'storage',
@@ -31,7 +31,7 @@ function storageSpot(d) {
 }
 
 export function view(host, ctx = {}) {
-  return render(host, () => api.storageStats(), (d) => {
+  return render(host, () => api.with(ctx.signal).storageStats(), (d) => {
     const modes = Object.fromEntries(d.by_mode.map((m) => [m.storage_mode, m]));
     const copied = modes.copied || { n: 0, bytes: 0 };
     const referenced = modes.referenced || { n: 0, bytes: 0 };
@@ -64,7 +64,7 @@ export function view(host, ctx = {}) {
           h('div.section-title', '关键字段目录'),
           h('div.section-note', '构效关系页的 X / Y 候选就来自这张表')),
         d.fields.length
-          ? h('div.panel.panel-body.flush', fieldTable(d.fields))
+          ? h('div.panel.panel-body.flush', fieldTable(d.fields, { numeric: true }))
           : h('div.panel', empty('还没有跑过处理，所以还没有结构化字段'))),
 
       d.tables.length
@@ -101,7 +101,8 @@ export function view(host, ctx = {}) {
 // ------------------------------------------------------------------ 断链巡检
 /**
  * 原始文件还在不在。引用型只登记了路径，原文件挪走 / 改名 / 移动硬盘没插，平台都不知道 ——
- * 要到有人打开那个样品才炸。这里一键查一遍，找不到的列出来：哪个文件、记录在哪、属于哪个样品。
+ * 要到有人打开那个样品才炸。这里一键查一遍，找不到的列出来：哪个文件、记录在哪、
+ * 属于哪个样品。
  */
 function verifySection(d, ctx) {
   const out = h('div');
@@ -129,7 +130,8 @@ function verifySection(d, ctx) {
 }
 
 function verifyReport(r, ctx) {
-  const head = `查了 ${fmtInt(r.checked)} 个（引用 ${fmtInt(r.checked_referenced)} / 复制 ${fmtInt(r.checked_copied)}），${fmtInt(r.ms)} ms。`;
+  const head = `查了 ${fmtInt(r.checked)} 个（引用 ${fmtInt(r.checked_referenced)} / `
+    + `复制 ${fmtInt(r.checked_copied)}），${fmtInt(r.ms)} ms。`;
   if (!r.missing.length) {
     return h('div.small', h('span.status.status-ok', '都在'), ' ', head,
       r.restored.length ? ` 其中 ${fmtInt(r.restored.length)} 个之前找不到、现在放回去了，已标回正常。` : '');
@@ -140,7 +142,8 @@ function verifyReport(r, ctx) {
       fresh ? ` 其中 ${fmtInt(fresh)} 个是这次新发现的。` : '',
       r.restored.length ? ` 另有 ${fmtInt(r.restored.length)} 个放回去了。` : ''),
     h('p.xsmall.dim.mt-2',
-      '把文件放回「记录的位置」那一栏的路径，再点一次检查就会标回正常；放不回去的话，从数据处理页重新导入它。',
+      '把文件放回「记录的位置」那一栏的路径，再点一次检查就会标回正常；'
+      + '放不回去的话，从数据处理页重新导入它。',
       '这些样品的处理结果还在库里，只是打不开原始数据。'),
     h('div.panel.panel-body.flush.mt-2',
       h('table.data.missing-files',
@@ -153,13 +156,6 @@ function verifyReport(r, ctx) {
           h('td.small', m.storage_mode === 'copied' ? '复制（工作区里）' : '引用'),
           h('td.mono.xsmall.dim', { style: { wordBreak: 'break-all' } }, m.path)))))),
     r.truncated ? h('div.xsmall.dim.mt-2', `只列了前 ${fmtInt(r.missing_files.length)} 个`) : null);
-}
-
-function metric(label, value, note) {
-  return h('div.metric',
-    h('div.metric-label', label),
-    h('div.metric-value' + (value ? '' : '.is-zero'), fmtInt(value)),
-    h('div.metric-note', note));
 }
 
 function layers(copied, referenced, d) {
@@ -187,20 +183,6 @@ function layers(copied, referenced, d) {
         h('span.tag.tag-accent', tech),
         h('span.xsmall.dim', { style: { marginLeft: 'auto' } }, next)),
       h('p.small.muted.mt-2.measure', desc))));
-}
-
-function fieldTable(fields) {
-  return h('table.data',
-    h('thead', h('tr',
-      h('th', '字段'), h('th', '单位'), h('th.num', '条数'),
-      h('th.num', '其中数值'), h('th.num', '最小'), h('th.num', '最大'))),
-    h('tbody', ...fields.map((f) => h('tr',
-      fieldNameCell(f),
-      unitCell(f),
-      h('td.num', fmtInt(f.n)),
-      h('td.num.small.muted', fmtInt(f.n_numeric)),
-      h('td.num.small', f.min_v === null ? '—' : Number(f.min_v).toPrecision(4)),
-      h('td.num.small', f.max_v === null ? '—' : Number(f.max_v).toPrecision(4))))));
 }
 
 // ------------------------------------------------------------------ 全库搜索
