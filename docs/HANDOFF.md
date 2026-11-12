@@ -117,7 +117,9 @@
 ## 4. 每个菜单：做什么、怎么进出、页面里的逻辑
 
 侧栏三组：**平台**（数据的正向流程：总览 → 数据处理 → 数据存储 → 构效关系）、**分析**（回头看、或自成一套的：对比历史、
-QFLS 成像、智能体）、**系统**（设置）。另有三个**下钻页**不在侧栏（样品、批处理结果、QFLS 样点），进去后侧栏高亮它的父级。
+QFLS 成像、智能体）、**系统**（设置）。另有三个**下钻页**不在侧栏（样品、批处理结果、QFLS 样点）：页头右上角第一个按钮是「← 你来的那一页」，
+侧栏高亮跟着来处走（从构效关系点进样品，亮的是构效关系）；直接打开链接 / 刷新时回页面声明的父页（`meta.parent`、`meta.parentArg`，`app.js` 的 `backOf`，C077）。
+切页有方向：点进下钻页从右推进来、返回从左回来、侧栏换页从下面浮上来（C078，§6.3）。
 地址栏 `#页面id/参数`，能刷新、能后退、能分享。完整清单见 `docs/REFERENCE.md` §1。
 
 右上角的 **AI 助手**（抽屉）在每个页面都在：它看到的是「当前页面的数据范围」（数据处理页的筛选 / 勾选、对比页的那次批处理……）。
@@ -125,8 +127,8 @@ QFLS 成像、智能体）、**系统**（设置）。另有三个**下钻页**�
 ### 4.1 总览 `#overview`（`pages/overview.js`）
 - **做什么**：只显示库里真实存在的数（样品、原始文件、关键结果、待复核）；有找不到的文件 / 失败的处理时给提示和入口；
   三层结构的入口；最近的处理；已有的关键字段。
-- **进出**：首页。各卡片 / 行点进对应页面。
-- **逻辑缺口**（已知）：「最近的处理」那几行点不进去；没提 QFLS 和智能体；「构效关系」描述还写着「后续阶段」。
+- **进出**：首页。各卡片 / 行点进对应页面；「最近的处理」一行点进那次对比（单独跑的点进样品，C077）。
+- **逻辑缺口**（已知）：没提 QFLS 和智能体；「构效关系」描述还写着「后续阶段」。
 
 ### 4.2 数据处理 `#process`（`pages/process*.js`）
 - **做什么**：选一个功能（目前只有「吸收光谱 & 膜厚」可用；QFLS 那格跳到 QFLS 成像页；荧光两格「规划中」）→
@@ -136,14 +138,15 @@ QFLS 成像、智能体）、**系统**（设置）。另有三个**下钻页**�
 - **进出**：点样品行 → 样品页；批处理 → 批处理结果页；当前筛选会被构效关系页、AI 抽屉读到（`web/js/scope.js`）。
 - **文件**：`process.js`（入口、功能页签、列表）、`process-filter.js`（筛选面板、样品集）、`process-select.js`（勾选手势）、
   `process-run.js`（批处理对话框、AI 卡片发起的批处理）、`process-state.js`（共享状态与 hooks）。
-- **已知不一致**：AI 卡片发起的批处理留在本页轮询，手点的直接跳到批处理结果页（两条路，交接时还没合并）。
+- 手点「直接对比」和 AI 卡片发起的批处理是同一条路：提交后落到批处理结果页、在那里看进度（C077 合并）。
 
 ### 4.3 样品 `#sample/<artifact_id>`（下钻，`pages/sample.js`）
 - **做什么**：一个样品的全部处理，从上到下：**光谱处理**（手写：热力图 + 多时刻叠加谱）→ 每个**功能模块**一节（膜厚、特殊处理、
   同事装的，界面按模块声明渲染：`components/module-panel.js`）→ **关键结果**（当前值 + 历史，在这里审核：可信 / 待查 / 作废）。
 - **逻辑**：A 档面板拖控件时浏览器里实时算（`ops.js`），B 档松手后打后端（`/api/modules/{id}/compute`）；
   热力图是服务端 PNG（`/api/spectra/{id}/heatmap.png`），曲线是前端 SVG。
-- **进出**：从数据处理、存储页、构效关系的点 / 离群点进来；返回固定回数据处理（已知：从构效关系进来的返回也落到数据处理）。
+- **进出**：从数据处理、存储页、构效关系的点 / 离群点、批处理结果页的样品行、总览进来；「返回」回你来的那一页（C077）。
+- **速度**：模块的全分辨率计算按（模块、版本、文件、内容 sha、参数）缓存在内存里，回到同一个样品不再重算（`app/modules/results_cache.py`，C078）。
 
 ### 4.4 数据存储 `#storage`（`pages/storage.js`）
 - **做什么**：全库的文件清单与搜索、占用、复制 / 引用两种落地方式的统计；**断链巡检**（引用的原文件被挪走了的列出来）。
@@ -160,12 +163,15 @@ QFLS 成像、智能体）、**系统**（设置）。另有三个**下钻页**�
 - **做什么**：等任务跑完 → 叠图 / 分位数带（每个模块声明的批处理曲线各一格）→ 两个时刻窗的切片对比（柱状图 + 表）→
   改参数重跑 → 导出 `plot.py + data.csv`（可先预览）→ 钉住的 AI 分析。
 - **叫法**：侧栏和文档里叫「对比」，页面标题叫「批处理结果」—— 同一个东西。
+- 跑完后地址栏从 `#batch/task_…` 换成 `#batch/run_…`；运行状态表里一行点进那个样品（C077）。
 - **文件**：`batch.js`（入口、等任务、样品表、钉住）、`batch-curves.js`（叠图）、`batch-slices.js`（时刻切片）、
   `batch-recipe.js`（参数与重跑）、`batch-state.js`。
 
 ### 4.7 对比历史 `#history`（`pages/history.js`）
 - **做什么**：每一次批处理都在这里，标出没跑完的（已停止只有一部分 / 失败 / 进行中），点进批处理结果页。
-- **已知**：不能删除或改名。
+- **改名 / 删除**（C077，`app/batch_history.py`）：删之前确认框列出会带走什么（样品数、关键结果 —— 其中几条是当前值、几条审核过、
+  曲线表、钉住的 AI 分析）。删的是这次写的关键结果，样品的当前值退回上一次对比的；原始数据、样品、别的对比、AI 对话不动；
+  还在跑的不能删（D-199，**待你确认**）。
 
 ### 4.8 QFLS 成像 `#qfls/<标签>`（`pages/qfls*.js`）+ QFLS 样点 `#qfls-point/<处理编号>/<样点key>`
 - **做什么**：独立流水线（不进样品库）。顶栏：选看哪次处理 · 处理新数据…（浏览目录 → 扫描预览：认出什么、跳过什么和原因 → 开始）·
@@ -237,9 +243,13 @@ AI 抽屉：当前页面的「已知事实」（汇总 + 逐样品标量 + 曲�
 
 ```
 app/main.py         装配：中间件（security）、路由、静态文件、异常 → 统一错误结构；启动时建目录 / 迁移 / 加载模块 / 收尾中断的任务
-app/api/*.py        路由：只做参数校验、调用领域函数、把异常翻译成 ApiError。普通 def。
-app/storage/*.py    数据库与文件落地（SQL 写在这里；schema.sql + migrations.py）
-app/batch.py        批处理（后台任务）      app/tasks.py   任务队列（一次一个、可取消、重启收尾）
+app/api/*.py        路由：收参数（请求体模型在 api/bodies.py）、调领域函数、guard() 把领域异常翻成 HTTP。普通 def。
+                    流式响应共用 api/streaming.py；路由之间不互相 import
+app/errors.py       领域层只抛这两种：NotFound（→404）、Invalid（→400），都带 kind；普通 KeyError / TypeError 是 bug，报 500
+app/util/*          共用小工具：原子写（files）、字节 → 文本（text）、CSV 防公式（csvsafe）、时间与 id（ids：一律 UTC）
+app/storage/*.py    数据库与文件落地（SQL 写在这里；schema.sql + migrations.py；catalog.py 是各页的列表 / 统计查询）
+app/batch.py        批处理（后台任务）  batch_views.py 对比页的只读查询  batch_history.py 改名 / 删除
+app/tasks.py        任务队列（一次一个、可取消）；重启时每种任务的收尾由它注册的 on_interrupted 做
 app/modules/*       功能模块的契约、加载、验证、算子          app/analysis/*  纯算法（fringe_ot 冻结）
 app/parsers/*       文件解析与位图渲染                        app/plotting/*  导出可自己跑的绘图脚本
 app/ai/*            模型网关、provider 配置、给模型的上下文
@@ -256,8 +266,10 @@ app/qfls/*          QFLS 流水线（不碰数据库）
 web/index.html → web/js/app.js（导航、主题、健康检查、AI 抽屉）
   pages/<id>.js       一个菜单一个文件（大的拆成 <id>-*.js，共享状态放 <id>-state.js，依赖无环）
   components/*.js     跨页面复用：figure（一格图）、heatmap、facets（筛选面板）、filepicker、module-panel、ai-drawer、info（ⓘ）…
-  ui.js               h() 建 DOM、render() 三态、latest()、modal / confirmDialog / toast、busy()
-  api.js              所有后端调用的包装（错误统一成 ApiError）
+  ui.js               h() 建 DOM、render() 三态、latest()、modal / confirmDialog / toast、busy()，
+                      共用小组件：metric / metricRow（指标卡）、segmented（分段控件，认方向键）、rowLink（能点进去的表格行）
+  components/figure.js  一格图、selectControl（下拉）；components/field-cells.js 的 fieldTable（字段表）
+  api.js              所有后端调用的包装（错误统一成 ApiError）；api.with(signal) 让这一页的请求离开时真的中止
   chart.js            自写 SVG 图：xyChart / barChart / 坐标轴 / 宽度追踪；relation-charts.js 有散点和箱线图
   css/tokens.css      **唯一定义颜色、字号、间距的地方**（明暗两套）
 ```
@@ -269,7 +281,12 @@ web/index.html → web/js/app.js（导航、主题、健康检查、AI 抽屉）
 - 轮询 / 定时器 / 页面外的监听，离开时要停（`ctx.signal.addEventListener('abort', …)`）
 - 会被连续触发的请求用 `latest()`：发之前取号，回来 `if (!fresh()) return;`
 - 按钮请求期间 `busy(btn, true)`；会删东西的先 `confirmDialog(…, {danger: true})`
-- 可点的非按钮元素给 `tabindex` + `onkeydown`；颜色只用 `tokens.css` 的变量
+- 可点的非按钮元素给 `tabindex` + `onkeydown`（表格行直接用 `rowLink`）；颜色只用 `tokens.css` 的变量
+- 加载重的页面用 `api.with(ctx.signal)` 发请求：离开时请求真的中止，抛 AbortError，`render()` 和 `alive()` 都当「过期」处理
+- `render()` 第二次进同一页时旧内容先留着（顶上一条细线），新数据到了原地换；不要在 `render` 外面自己先 mount 骨架屏
+- 下钻页在 `meta` 里写 `parent`（和可选的 `parentArg`），**不要自己画返回按钮** —— `app.js` 统一放在页头
+- 动效只动 `transform` / `opacity`；不要用 View Transitions、背景模糊（`backdrop-filter`）、动宽高 —— 实测都掉帧（§10）
+- 前端一行不超过 140 个字符；指标卡、分段控件、下拉、字段表用共用的，不要再抄一份（`tests/test_frontend_style.py` 守着）
 
 ---
 
@@ -403,6 +420,11 @@ web/index.html → web/js/app.js（导航、主题、健康检查、AI 抽屉）
 | 批处理列表默认只给 20 条 | 验收脚本数「多了一次」数不出来 | 要全量时显式 `limit` |
 | Moran's I 逐像素算 | 光学模糊让相邻像素天然相关，I 永远接近 1 | 在 32 × 48 块网格上算（D-170） |
 | matplotlib 默认没有中文字体 | 图里中文变方框 | 图里一律英文 + 编号，对照表在网页 / summary.json |
+| 切页用 View Transitions、弹窗背景加模糊 | 实测 p95 帧时间 17 → 67–100 ms（C078） | 只让新页进场；遮罩只变暗不模糊 |
+| 「当前值」视图全改成 GROUP BY 写法 | 整表汇总快 20 倍，但放进逐样品 EXISTS 子查询里 9 秒 | 两个视图各用各的（`key_result_current` 逐样品、`_all` 整表） |
+| 用 `awk length` 数行长 | 按字节数，一个汉字算 3 —— 误报一大片 | 用 Python 按字符数（测试就是这么数的） |
+| 模块结果缓存只按版本号失效 | 同事改了代码没改版本号，拿到旧结果 | 模块一重新加载就整个清空 |
+| 弹窗关的时候还叫 `.modal` | 退场那 150 ms 里，键盘、测试脚本、再开一个会碰到它 | 关的那一刻改名 `.modal-leaving` |
 
 ---
 
@@ -420,37 +442,33 @@ web/index.html → web/js/app.js（导航、主题、健康检查、AI 抽屉）
 - 智能体跑命令**不是沙箱**（以用户身份运行，只能事后发现动了平台核心）
 - 万级样品：批处理流式写表、分页等还没做（§7 K 组）
 
-### 11.1 已知技术债（体检时发现、没在这一轮改的）
+### 11.1 技术债（P18 体检列出的那张清单，P19 全部清掉了）
 
-按「影响大小」排。改之前先看对应的代码注释，有几条是有意的取舍。
+P18 体检时列了后端 10 条、前端 8 条，P19（C073 – C077）一条条改完，每条对应的提交：
 
-**后端**
-- 路由层里还有业务逻辑：批处理的时间窗切片统计（`app/api/batch.py`）、模块 zip 的解压 / 暂存 / 升级判定（`app/api/modules.py`，
-  应进 `app/modules/install.py`）、几处直接写 SQL（`api/results.py`、`api/batch.py`）、AI 抽屉的系统提示和卡片解析（`api/chat.py`，应进 `app/ai`）
-- 路由之间互相 import 私有函数：智能体的流式响应用的是 `api/chat.py` 的 `_ClosingStream / _frame / _resolve_or_501`
-  （应抽成 `api/streaming.py`）；`api/modules.py` 用 `spectra._load`
-- 小工具各有几份：原子写 4 份（`qfls/pipeline._dump`、`agent/files`、`storage/ingest`、`parsers/matrix`；存密钥的
-  `openai_compat.save_config` 反而不是原子写）、防公式注入放在 `plotting/script_export.guard_formula`、编码探测 3 份 —— 该合成 `app/util/`
-- 时间两种写法：`db.now()` 是带 `+00:00` 的 UTC；测量时间、迁移记录、QFLS 的 run.json、智能体事件是不带时区的本地时间。
-  id 三种格式（`db.new_id`、QFLS 的 `qr_…`、文件改动的 `日期-hex6`）
-- `guard()` 把所有 KeyError 都翻成 404 —— 程序自己的 bug 会显示成「没有这个：xxx」。领域层最好改抛专门的 NotFound
-- `batch._process_one` 在 4 个计算线程里读库（找不到文件时还会写 `missing`）；`_write_child` 出错时剩下的样品还会算完才报
-- 上传没有大小上限；`set_quality_many` 的 ids 没有上限、不去重
-- 请求体全是 `dict`，没有 pydantic 模型 —— `/api/docs` 里看不出参数（参数说明以 `docs/REFERENCE.md` 和路由的 docstring 为准）
-- QFLS 的 `score()` 写死了七项，没有完全由 `PARAMS["score"]` 驱动；`render.global_figures` 里画哪几个指标是写死的
-- 后台任务没有「中断收尾钩子」：批处理收尾写在 `tasks.reap_interrupted`，QFLS 的在 `qfls.pipeline.reap_interrupted`，各管各的
+| 原来的问题 | 改在 |
+|---|---|
+| 原子写 4 份、防公式注入放错地方、编码探测 3 份；存密钥的配置反而不是原子写 | C073 `app/util/` |
+| 时间两种写法、id 三种格式 | C073 `app/util/ids.py`（一律 UTC；可排序 id `前缀_时间_hex6`） |
+| `guard()` 把所有 KeyError 都翻成 404，程序 bug 显示成「没有这个」 | C073 `app/errors.py` NotFound / Invalid |
+| 路由层里有业务逻辑（时间窗切片、模块 zip、SQL、AI 提示词） | C074 `batch_views.py` / `modules/install.py` / `storage/catalog.py` / `ai/assistant.py` |
+| 路由之间互相 import 私有函数 | C074 `api/streaming.py`、`artifacts.load_matrix` |
+| 批处理计算线程里读库；落库出错要等剩下的全部算完 | C074 |
+| 上传没上限；批量标质量不去重、没上限 | C074（512 MB、500 条） |
+| 后台任务没有中断收尾钩子 | C074 `tasks.register(kind, on_interrupted=…)` |
+| QFLS 分数写死七项、箱线图画哪几个写死 | C074 `PARAMS["score"]` 驱动、`metrics.BOX_FIGURE` |
+| 请求体全是 dict，`/api/docs` 看不出参数 | C075 `api/bodies.py`（拼错的键回 400） |
+| 指标卡 4 份、字段表 3 份、下拉 2 份、分段控件 2 份不认方向键 | C076 `ui.js` / `field-cells.js` |
+| 智能体页报错用提醒框；`busy` 重名；设置页靠全局事件；`api.get` 不收 signal；一百多行超长 | C076 |
+| AI 卡片发起的批处理留在本页轮询（两条路） | C077 |
+| 下钻页的返回写死、位置不一 | C077 `app.js` backOf |
+| 总览最近的处理点不进去；对比历史不能删改；批处理结果的样品表点不进去；地址栏停在 task_ | C077 |
 
-**前端**
-- AI 卡片发起的批处理（`process-run.js` 的 `batchDialog`）留在数据处理页轮询，手点的直接跳批处理结果页 —— 两条路，约 90 行可以删
-- 下钻页的返回：样品页固定回数据处理（从构效关系、存储页进来的也是）；三个下钻页的返回入口位置不一
-- 指标卡（4 份）、字段表（3 份）、下拉（`batch-state.select` 和 `figure.selectControl` 逐字相同）、分段控件
-  （`agent.js` 的 `seg()`、QFLS 抄了 `.agent-seg`，且不支持方向键）该提成共用组件
-- 智能体页的报错用 `notice-warn` 而不是 `errorBox`；本地的 `busy(on)` 和 `ui.busy(btn, on)` 重名
-- 设置页 `view(host)` 收了 `ctx` 但还靠全局 `hte:nav` 事件刷新自己
-- `api.js` 的 `get` 不接受 `signal`：页面只能丢弃过期结果，不能真正中止请求
-- 新页面（qfls*、agent）有些行超过 140 字符，老页面没有
-- 总览「最近的处理」点不进去；对比历史不能删 / 改名；批处理结果页的样品表点不进样品页；
-  任务跑完后地址栏还停在 `#batch/task_…`
+**还剩的、有意没动的**
+- 响应体没有模型（返回结构见路由 docstring 和 `docs/REFERENCE.md`）
+- `api.with(signal)` 接在了加载最重的几页（总览、存储、对比历史、批处理结果）；样品页的光谱帧、QFLS 页还是「回来再丢掉」
+- 样品页第一次进要 0.5 s 左右（870 KB 光谱帧 + 第一次膜厚计算）；要更快得改加载顺序（先低分辨率再补全），没做
+- 删一次对比不能撤销（D-199 待确认；要「回收站」再说）
 
 **建议的下一步**（用户还没定，别擅自开工大块）：
 1. 拿到真实 QFLS 文件夹 → 校阈值、确认 qvdf 格式、补「把 QFLS 指标写进关键结果」（要先和用户定样品身份怎么对上）

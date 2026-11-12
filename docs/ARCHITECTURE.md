@@ -34,16 +34,25 @@ app/
 ├─ main.py           应用装配、静态挂载、端口被占时往后找
 ├─ config.py         工作区路径（可用 HTE_WORKSPACE 搬走）
 ├─ security.py       只认本机 Host、只认自己页面的 Origin（见「安全边界」）
-├─ tasks.py          后台任务：一次跑一个（批处理、QFLS 处理共用一个队列，互相排队），进度 / 取消 / 重启后收尾
-├─ batch.py          ★ 批处理：配方 → 每个样品跑一遍各模块 → 长表 + 关键结果
-├─ api/              路由。错误统一翻译成 {error:{message,kind,detail}}；**全部是普通函数**（放线程池，见下）
+├─ errors.py         领域层只抛 NotFound（→404）/ Invalid（→400），都带 kind；别的异常是 bug，报 500
+├─ util/             共用小工具：files（原子写）· text（字节 → 文本）· csvsafe（CSV 防公式）· ids（时间一律 UTC、可排序 id）
+├─ tasks.py          后台任务：一次跑一个（批处理、QFLS 处理共用一个队列，互相排队），进度 / 取消；
+│                    重启后每种任务的收尾由它注册的 on_interrupted 做
+├─ batch.py          ★ 批处理：配方 → 每个样品跑一遍各模块 → 长表 + 关键结果（计算线程不碰数据库）
+├─ batch_views.py    对比页的只读查询：详情、曲线、时刻切片、导出包
+├─ batch_history.py  对比历史：改名、删之前看会带走什么、删
+├─ api/              路由：只收参数、调领域函数、guard() 翻错误；**全部是普通函数**（放线程池，见下）
+│   ├─ bodies.py     ★ 全部请求体模型（只收声明过的键，拼错回 400；/api/docs 照它出）
+│   ├─ common.py     guard()、ApiError、统一错误结构
+│   └─ streaming.py  流式响应共用（SSE 帧、没配模型在开流前 501、流结束收尾）
 ├─ storage/
-│   ├─ schema.sql    数据模型（15 张表 + 1 个视图，见 DATA_MODEL.md）
+│   ├─ schema.sql    数据模型（15 张表 + 2 个视图：当前值的两种写法 —— 逐样品用 key_result_current，整表汇总用 _all）
 │   ├─ migrations.py ★ 版本号 + 迁移；升级前先备份（见下）
 │   ├─ db.py         连接（按线程缓存）、WAL、设置读写
 │   ├─ ingest.py     ★ 分类落地策略、sha256 去重、断链巡检、导入时判定是不是光谱矩阵
 │   ├─ naming.py     ★ 文件夹名 / 文件名 → 样品、批次、测量时间
-│   ├─ artifacts.py  artifact 查询、local_path() 吃掉复制/引用差异
+│   ├─ artifacts.py  artifact 查询、local_path() 吃掉复制/引用差异、load_matrix()（样品页和模块计算共用）
+│   ├─ catalog.py    各页的列表 / 统计查询（最近文件、样品清单、存储统计、文件筛选项）
 │   ├─ selection.py  筛选式 → SQL（一次选择是一个筛选式，不是一串 ID）
 │   ├─ results.py    analysis_run + key_result 读写、字段列表
 │   ├─ relation.py   构效关系：把关键结果「当前值」透视成每个样品一行（范围用数据处理页的筛选式）
@@ -56,6 +65,8 @@ app/
 │   ├─ ops.py        A 档实时算子（与 web/js/ops.js 逐点一致，tests/test_ops.py 守着）
 │   ├─ registry.py   发现、加载（先装到新容器再一次换上）、模块目录
 │   ├─ validate.py   装之前的验证 + 试跑
+│   ├─ install.py    装 / 卸 / 导出 zip（大小闸、暂存、升级判定）
+│   ├─ results_cache.py  模块计算结果的内存缓存（按文件内容 sha + 参数；模块重载就清空）
 │   ├─ check.py      命令行验证：python -m app.modules.check <目录>
 │   └─ builtin/      thickness（膜厚）· special_processing（谱斜率 / 波段积分）
 ├─ analysis/
@@ -71,6 +82,7 @@ app/
 │   ├─ provider.py       AIProvider 抽象
 │   ├─ gateway.py        ★ 模型网关（照 IFlow）：OpenAI 兼容 / Anthropic 两种协议、退避重试、思考参数、拒收降级、拉列表与测速
 │   ├─ openai_compat.py  provider 配置（providers.json）、预设；请求都交给 gateway.py
+│   ├─ assistant.py      AI 抽屉的系统提示、术语解释提示、动作卡片解析
 │   └─ context.py        给模型的「已知事实」：汇总、逐样品标量、曲线摘要
 └─ agent/            智能体（「智能体」页；设计照 IFlow 的 lib/agent，砍到这个平台用得上的部分）
     ├─ tools.py      ★ 工具与风险等级：read 直接跑 / write 先问（可记住）/ irreversible 每次问；参数校验、结果截断
@@ -134,17 +146,18 @@ B 档（自己写 `compute()` 的）松手后由后端算。
 ```
 web/
 ├─ index.html
-├─ css/   tokens（唯一定义颜色的地方）· base · layout · components
+├─ css/   tokens（唯一定义颜色的地方）· base · layout · components（末尾「动效」一节：切页 / 弹窗 / 抽屉，只动 transform / opacity）
 └─ js/
-    ├─ ui.js       h() DOM 助手、toast（aria-live）、modal（dialog、焦点困住 / 归还）、空/加载/错误三态、latest()、
+    ├─ ui.js       h() DOM 助手、toast（aria-live）、modal（dialog、焦点困住 / 归还、退场动画）、空/加载/错误三态
+    │              （再进一页旧内容先留着）、共用小组件 metric / segmented / rowLink、latest()、
     │              busy()、全平台一份的状态叫法 STATUS / statusText
-    ├─ api.js      fetch 封装，错误结构统一
+    ├─ api.js      fetch 封装，错误结构统一；api.with(signal) —— 这一页的请求离开时真的中止
     ├─ chart.js    自写 SVG 图表（框选缩放、悬停读数、明暗自适应）
     ├─ ops.js      A 档实时算子（与 app/modules/ops.py 逐点一致）
     ├─ spectra.js  选时刻叠谱、认出饱和的短波端
     ├─ csv.js      图表数据 → CSV（不碰 DOM；文字格子防公式注入）
     ├─ download.js 「下载 ▾」：图片 / 数据
-    ├─ app.js      导航（PAGES + 三组侧栏）、主题、健康检查
+    ├─ app.js      导航（PAGES + 三组侧栏）、下钻页的「返回」（回你来的那一页）、切页方向（html[data-nav]）、主题、健康检查
     ├─ glossary.js ⓘ 术语表（27 条）       scope.js  数据处理页的筛选范围，给构效关系页和 AI 抽屉用
     ├─ components/ ai-drawer · info（ⓘ 浮层）· chat-client（两者共用：模型选择 + 流式发问）
     │              figure · heatmap · module-panel · facets · filepicker · virtual-list · field-cells

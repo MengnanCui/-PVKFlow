@@ -185,13 +185,13 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <header class="doc">
   <h1>HTE Studio 开发计划与进度</h1>
   <div class="meta">
-    <span>版本 v10</span><span>更新于 2026-11-09（P18 结束）</span>
+    <span>版本 v11</span><span>更新于 2026-11-12（P19 结束）</span>
     <span>基于提交 <code>14f5d19</code></span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
   </div>
   <div class="cards">
-    <div class="card"><div class="k">修改报告</div><div class="v">78</div><div class="d">C001 – C078</div></div>
-    <div class="card"><div class="k">阶段</div><div class="v">P1–P18</div><div class="d">P18 = 全项目体检 + 交接文档</div></div>
-    <div class="card"><div class="k">测试</div><div class="v">586</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 11 组（12 + 15 + 13 + 8 + 13 + 22 + 15 + 5 + 8 + 10 + 11 条）</div></div>
+    <div class="card"><div class="k">修改报告</div><div class="v">79</div><div class="d">C001 – C079</div></div>
+    <div class="card"><div class="k">阶段</div><div class="v">P1–P19</div><div class="d">P19 = 技术债清零 + 流畅性</div></div>
+    <div class="card"><div class="k">测试</div><div class="v">601</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 18 组（P19 新加 c076 / c077 / motion / perf 四组）</div></div>
     <div class="card"><div class="k">你明确指定的</div><div class="v">59</div><div class="d">P-01 … P-59（P-54 … P-58 是 QFLS 成像的规格；P-59 是流畅性）</div></div>
     <div class="card"><div class="k">我自行决定的</div><div class="v">203</div><div class="d">D-01 … D-203，<b>28</b> 项还待你确认</div></div>
     <div class="card"><div class="k">自查发现</div><div class="v">30 / 30</div><div class="d"><b>全部处理完</b>（P10 12 条 · P11 11 条 · P12 7 条）</div></div>
@@ -648,11 +648,16 @@ ol.steps li, ul.plain li { margin: 4px 0; }
       <strong>输出写进独立目录、原始数据不动</strong>；网页有总览、排名与筛选、单点详情、多点对比、方法说明，能导出当前筛选。
       用自己生成的 60 帧假想数据做了分析：造进去的 10 类已知答案全部找到，划痕 6 / 6、误报 0，物镜差 −24.2 meV（造的 −24）。顺带修了图宽度跟不上容器的老问题。</p>
       <p class="note"><a href="phases/P17_2026-W46_QFLS成像.md">阶段报告 P17</a> · <a href="../QFLS_演示数据分析.md">演示数据分析</a></p></li>
-    <li class="now"><span class="t">P18 体检 + 交接文档（本次）</span><span class="d">11-09 · W46 · C068–C072 · → 586 测试</span>
+    <li><span class="t">P18 体检 + 交接文档</span><span class="d">11-09 · W46 · C068–C072 · → 586 测试</span>
       <p>你说「检查整个项目，写一个非常完备的文档，让别的模型也能接着做」：三路体检（每个菜单、后端分层与扩展接口、文档与代码）+ 机器核对，
       修了 15 个 bug（智能体会话跨线程会串、QFLS 切标签丢筛选、<strong>matplotlib 没进必装清单</strong>……），统一状态叫法、删死代码；
       写了交接文档 <code>docs/HANDOFF.md</code>、从代码生成的参考手册 <code>docs/REFERENCE.md</code>（测试守着不过期）和 <code>AGENTS.md</code>。</p>
       <p class="note"><a href="phases/P18_2026-W46_体检与交接文档.md">阶段报告 P18</a> · <a href="../HANDOFF.md">交接文档</a> · <a href="../REFERENCE.md">参考手册</a></p></li>
+    <li class="now"><span class="t">P19 技术债清零 + 流畅性（本次）</span><span class="d">11-10 – 11-12 · W46 · C073–C079 · → 601 测试</span>
+      <p>体检列出的技术债 18 条全部改完：公用工具合一、领域层只抛 NotFound / Invalid、业务逻辑搬出路由、请求体都有模型（拼错的键回 400）、
+      前端共用组件只留一份、离开页面真的中止请求、下钻页回你来的地方、对比历史能改名能删。然后按你的要求做了流畅性：切页、弹窗、抽屉都有过渡
+      （起步快、慢慢收住，背后的页面暗下去），<strong>一帧没掉</strong>；总览 / 存储接口快 10–15 倍，回到同一个样品膜厚不再重算（330 → 20 ms）。</p>
+      <p class="note"><a href="phases/P19_2026-W46_技术债与流畅性.md">阶段报告 P19</a></p></li>
   </ul>
 </section>
 
@@ -756,7 +761,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id">E2</td><td><strong>构效关系第二步</strong>：异常识别（偏离趋势的样品挑出来、标在图上、点进去回溯到原始文件）+ 让模型写一段总结（可以直接用智能体的工具：相关、按批次比较、样品结果）</td><td>第三层「看出问题」</td><td>1–2 天</td><td><span class="chip danger">建议下一个</span></td></tr>
     </tbody>
   </table></div>
-  <div class="callout warn"><b>等你定（P18 之后）：</b>项目体检做完了，文档也沉淀好了 —— 换任何模型接着做，让它先读 <code>docs/HANDOFF.md</code>（或 <code>AGENTS.md</code>）。最有价值的下一步仍然只有你能做：<b>给一个真实的 QFLS 实验文件夹</b>（哪怕一个 slot、几个点，连同 qvdf），拿它校阈值、确认 qvdf 格式。其次：在内网网关上试智能体；Windows 实机清单。代码这边可以接着做的：HANDOFF §11.1 的技术债、构效关系第二步（E2）。§4 里 <b>27 项</b>「还待你确认」，D-02 最要紧；QFLS 的 10 项里最影响结论的是 <b>D-172 综合分怎么扣</b>和 <b>D-166 低荧光阈值 1.10 eV</b>。</div>
+  <div class="callout warn"><b>等你定（P19 之后）：</b>技术债清单清零了，流畅性也做了（数字见 C078）。<b>新的一项要你确认：D-199 删除一次对比会把它写的关键结果一起删掉</b>（样品的当前值退回上一次对比的；原始数据不动）—— 想要「只藏起来」就说。还可以做的：样品页第一次进的 0.5 s（先出低分辨率再补全）、构效关系第二步（E2）。最有价值、只有你能给的仍然是<b>一个真实的 QFLS 实验文件夹</b>。§4 里 <b>28 项</b>「还待你确认」，D-02 最要紧。</div>
 </section>
 
 <!-- ================================================================ 8 -->
@@ -856,6 +861,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C076_2026-11-12_本提交.md">C076</a></td><td class="nowrap">11-12</td><td>P19</td><td>技术债（前端一）：共用组件只留一份、离开页面真的中止请求、设置页不靠全局事件、智能体报错、长行</td><td class="small">你的要求（修技术债）</td></tr>
 <tr><td class="id"><a href="changes/C077_2026-11-12_本提交.md">C077</a></td><td class="nowrap">11-12</td><td>P19</td><td>技术债（前端二）：批处理一条路、下钻页回你来的地方、该点得进去的都点得进去、对比历史能改名能删</td><td class="small">你的要求（修技术债）</td></tr>
 <tr><td class="id"><a href="changes/C078_2026-11-12_本提交.md">C078</a></td><td class="nowrap">11-12</td><td>P19</td><td>流畅性：切页 / 弹窗 / 抽屉的过渡（有起步速度、有深浅），再进一页不闪骨架屏，接口快十几倍，模块结果缓存</td><td class="small">你的要求（P-59）</td></tr>
+<tr><td class="id"><a href="changes/C079_2026-11-12_本提交.md">C079</a></td><td class="nowrap">11-12</td><td>P19</td><td>P19 收尾：阶段报告、交接文档跟上（技术债清单清零）、计划文档 v11</td><td class="small">记录规则（阶段结束）</td></tr>
     </tbody>
   </table></div>
 </section>
