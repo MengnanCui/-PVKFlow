@@ -312,8 +312,9 @@ def page(flt: dict, limit: int = 100, offset: int = 0, order: str = "name") -> d
                        AND a.display_path LIKE '%/%') AS display_path,
                    (SELECT COUNT(*) FROM artifact a
                      WHERE a.sample_id = s.sample_id AND a.kind='raw') AS n_files,
-                   (SELECT COUNT(*) FROM key_result_current k
-                     WHERE k.sample_id = s.sample_id) AS n_results,
+                   -- 当前值的条数 = 有没作废值的字段数（和 key_result_current 同一个口径，不用逐行去找最大 id，C078）
+                   (SELECT COUNT(DISTINCT k.field_name) FROM key_result k
+                     WHERE k.sample_id = s.sample_id AND k.quality != 'reject') AS n_results,
                    mx.artifact_id AS matrix_id,
                    mx.filename    AS matrix_name,
                    mx.size        AS matrix_size,
@@ -434,7 +435,7 @@ def _field_facet(c: Compiled, selected: list[dict]) -> list[dict]:
         SELECT k.field_name AS name, k.unit AS unit,
                COUNT(DISTINCT s.sample_id) AS n,
                MIN(k.value_num) AS lo, MAX(k.value_num) AS hi
-        FROM sample s JOIN key_result_current k ON k.sample_id = s.sample_id
+        FROM sample s JOIN key_result_current_all k ON k.sample_id = s.sample_id
         {c.clause} {'AND' if c.where else 'WHERE'} k.value_num IS NOT NULL
         GROUP BY k.field_name, k.unit
         HAVING COUNT(DISTINCT s.sample_id) > 1

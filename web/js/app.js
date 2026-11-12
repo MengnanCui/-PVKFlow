@@ -48,6 +48,10 @@ let life = null;
 // 回调里认出它就不再渲染第二遍 —— 原来每次点导航，页面都渲染两次、接口全部翻倍。
 let selfWritten = null;
 
+// 页面切换的过渡（C078）：方向写在 <html data-nav>，新页照它进场（components.css「页面切换」）。
+// 没用浏览器的 View Transitions（旧页、新页各拍一张一起动）：实测切页时 p95 帧时间从 17 ms 涨到 83–100 ms ——
+// 它要把整个主区拍成图再合成，大表格、大图的页面尤其重。只让新页进场，帧时间和不加动画一样（17 ms）。
+
 // ------------------------------------------------------------------ 主题
 const THEME_KEY = 'hte.theme';
 function applyTheme(mode) {
@@ -80,11 +84,41 @@ function navigate(id, { push = true, arg = null, back = false } = {}) {
   const page = BY_ID[id];
   if (!page) return navigate('overview');
 
+  const dir = navDirection(current, id, back);
   // 记下来处。按「返回」回去的那一步不记 —— 不然样品 → 对比页 → 返回样品之后，样品的「返回」就成了对比页，来回打转。
   // 同一页换参数（下一个样点、换一个样品）沿用原来的来处
   if (page.meta.parent && !back && current && current !== id) backOf.set(id, { id: current, arg: currentArg });
   current = id;
   currentArg = arg;
+  // 旧页的生命周期结束（它还没回来的请求、轮询现在就停）
+  life?.abort();
+  life = new AbortController();
+  const { signal } = life;
+  document.documentElement.dataset.nav = dir;
+  showPage(page, id, arg, signal);
+
+  const target = arg ? `${id}/${arg}` : id;
+  if (push && location.hash.slice(1) !== target) {
+    selfWritten = target;
+    location.hash = target;
+  }
+  document.title = `${page.meta.title} · HTE Studio`;
+}
+
+/** 往哪个方向动：点进下钻页 forward、返回 back，侧栏之间换 swap。 */
+function navDirection(from, to, back) {
+  if (!from || from === to) return 'swap';
+  if (back) return 'back';
+  const toMeta = BY_ID[to].meta;
+  const fromMeta = BY_ID[from]?.meta || {};
+  if (toMeta.parent) return 'forward';
+  // 从下钻页回到它来的那一页（浏览器后退、点侧栏回去）也算返回
+  if (fromMeta.parent && backTarget(from).id === to) return 'back';
+  return 'swap';
+}
+
+/** 真正换页：导航高亮、页头、内容。 */
+function showPage(page, id, arg, signal) {
   // 下钻页面把来处那一项保持高亮（顺着来处往上找到侧栏里有的那一页），用户才不会觉得自己「掉出去」了
   const highlight = navOwner(id);
   document.querySelectorAll('.nav-item').forEach((b) => {
@@ -105,19 +139,8 @@ function navigate(id, { push = true, arg = null, back = false } = {}) {
   }
   for (const [pid, node] of mounted) node.classList.toggle('is-active', pid === id);
 
-  life?.abort();
-  life = new AbortController();
-  const { signal } = life;
-
-  // 每次进入都重新取数 —— 数据会变，缓存一份旧的更糟
+  // 每次进入都重新取数 —— 数据会变，缓存一份旧的更糟（再进一次时旧内容先留着、新数据到了再换，见 ui.render）
   page.view(host, { nav: navigate, arg, signal, alive: () => !signal.aborted });
-
-  const target = arg ? `${id}/${arg}` : id;
-  if (push && location.hash.slice(1) !== target) {
-    selfWritten = target;
-    location.hash = target;
-  }
-  document.title = `${page.meta.title} · HTE Studio`;
   viewport.scrollTop = 0;
 }
 

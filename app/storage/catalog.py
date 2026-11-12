@@ -22,7 +22,9 @@ def list_samples(limit: int = 500) -> list[dict]:
     return db.query(
         "SELECT s.*,"
         " (SELECT COUNT(*) FROM artifact a WHERE a.sample_id = s.sample_id) AS n_files,"
-        " (SELECT COUNT(*) FROM key_result_current k WHERE k.sample_id = s.sample_id) AS n_results"
+        # 当前值的条数 = 有没作废值的字段数（同 key_result_current 的口径，C078）
+        " (SELECT COUNT(DISTINCT k.field_name) FROM key_result k"
+        "   WHERE k.sample_id = s.sample_id AND k.quality != 'reject') AS n_results"
         " FROM sample s ORDER BY s.created_at DESC LIMIT ?", (limit,))
 
 

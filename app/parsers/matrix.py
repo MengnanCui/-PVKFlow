@@ -32,6 +32,8 @@ class SpectralMatrix:
     M: np.ndarray                   # (L, T) float32
     meta: dict[str, Any] = field(default_factory=dict)
     orientation: str = "wavelength_rows"
+    # 文件内容的 sha256（load_cached 填）。模块计算的结果缓存拿它当钥匙的一部分：内容一样才算同一份数据（C078）
+    content_sha: str = ""
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -326,6 +328,7 @@ def load_cached(path: str | Path, sha256: str | None = None) -> SpectralMatrix:
                 lam=z["lam"], t=z["t"], M=z["M"],
                 meta=dict(z["meta"].item()) if "meta" in z else {},
                 orientation=str(z["orientation"]) if "orientation" in z else "wavelength_rows",
+                content_sha=sha256,
             )
         except Exception:
             cache.unlink(missing_ok=True)      # 缓存坏了就重来，不要卡住用户
@@ -341,6 +344,7 @@ def load_cached(path: str | Path, sha256: str | None = None) -> SpectralMatrix:
 
     # 写完顺手看一眼总量。超了就淘汰最久没用的 —— 上千个样品能堆到几个 GB。
     _maybe_evict()
+    sm.content_sha = sha256
     return sm
 
 

@@ -195,7 +195,7 @@ def list_fields() -> list[dict]:
         "       COUNT(*) AS n,"
         "       SUM(CASE WHEN value_num IS NOT NULL THEN 1 ELSE 0 END) AS n_numeric,"
         "       MIN(value_num) AS min_v, MAX(value_num) AS max_v"
-        " FROM key_result_current GROUP BY field_name, unit, label"
+        " FROM key_result_current_all GROUP BY field_name, unit, label"
     )
     merged: dict[str, dict] = {}
     for r in rows:
@@ -268,9 +268,9 @@ def overview_counts() -> dict[str, int]:
     return {
         "samples": db.scalar("SELECT COUNT(*) FROM sample") or 0,
         "artifacts": db.scalar("SELECT COUNT(*) FROM artifact WHERE kind='raw'") or 0,
-        "results": db.scalar("SELECT COUNT(*) FROM key_result_current") or 0,
+        "results": db.scalar("SELECT COUNT(*) FROM key_result_current_all") or 0,
         "pending_review": db.scalar(
-            "SELECT COUNT(*) FROM key_result_current WHERE quality='review'") or 0,
+            "SELECT COUNT(*) FROM key_result_current_all WHERE quality='review'") or 0,
         "runs": db.scalar("SELECT COUNT(*) FROM analysis_run") or 0,
         "failed_runs": db.scalar("SELECT COUNT(*) FROM analysis_run WHERE status='failed'") or 0,
         "missing_files": db.scalar("SELECT COUNT(*) FROM artifact WHERE status='missing'") or 0,

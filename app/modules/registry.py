@@ -116,6 +116,9 @@ class ModuleRegistry:
             if root.exists():
                 self._load_dir(root, origin, (modules, dirs), errors)
         self._modules, self._errors, self._dirs = modules, errors, dirs
+        # 模块换了（装 / 卸 / 升级 / 改了代码重载）：之前算的结果一律作废（版本号没改、代码改了也一样）
+        from app.modules import results_cache
+        results_cache.clear()
 
     def _load_dir(self, root: Path, origin: str, into: tuple[dict, dict],
                   errors: list) -> None:

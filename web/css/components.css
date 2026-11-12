@@ -227,7 +227,6 @@ table.data tr:last-child td { border-bottom: 0; }
   background: var(--paper); border: 1px solid var(--line);
   border-radius: var(--r); box-shadow: var(--shadow-pop);
   font-size: var(--t-sm); color: var(--ink);
-  animation: toast-in var(--dur) var(--ease);
 }
 .toast-ok::before, .toast-err::before, .toast-info::before,
 .toast-warn::before, .toast-danger::before {
@@ -242,15 +241,7 @@ table.data tr:last-child td { border-bottom: 0; }
 .toast-danger::before { background: var(--danger); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 
-.modal-backdrop {
-  position: fixed; inset: 0; z-index: var(--z-modal);
-  /* 遮罩跟着主题走。写死一个浅灰在深色页面上等于没遮。 */
-  background: var(--scrim);
-  display: grid; place-items: center; padding: var(--s6x);
-  animation: fade var(--dur) var(--ease);
-}
-@keyframes fade { from { opacity: 0; } }
-.modal {
+.modal, .modal-leaving {
   width: min(920px, 100%); max-height: min(84vh, 760px);
   display: flex; flex-direction: column;
   background: var(--paper); border: 1px solid var(--line);
@@ -1225,3 +1216,94 @@ table.qfls-rank tr.lv-warn:hover td, table.qfls-rank tr.lv-error:hover td { back
 .row-actions .btn { opacity: .55; }
 tr:hover .row-actions .btn, tr:focus-within .row-actions .btn, .row-actions .btn:focus-visible { opacity: 1; }
 .block { display: block; }
+
+/* ================================================================ 动效（C078）
+ *
+ * 你的要求（P-59）：所有页面点击之后有过渡；点开窗口是**滑出来**的，有初始速度的变化（起步快、慢慢收住），
+ * 有页面深浅的变化（后面的页面暗下去、窗口浮在上面）。
+ *
+ * 三条规矩（我定的，D-200）：
+ *  1. 只动 transform 和 opacity（合成层上算，不重排）。宽度、高度、top/left 一律不做过渡 ——
+ *     AI 抽屉动宽度那次实测 p95 帧时间从 17 ms 涨到 27 ms（见下面抽屉那段的老注释）
+ *  2. 进场慢一点、退场快一点：东西出现时你在看它，消失时你已经在看下一样东西了
+ *  3. 系统设置了「减少动态效果」就全部关掉（base.css 的 prefers-reduced-motion，再加 view transition 那一段）
+ */
+
+:root {
+  /* 进场：起步快、收得长 —— 像被推出来又被轻轻接住（expo-out） */
+  --ease-enter: cubic-bezier(.16, 1, .3, 1);
+  /* 窗口：同上，末尾带一点点过冲（1.04），落位时有「弹」一下的手感但看不出在晃 */
+  --ease-sheet: cubic-bezier(.2, 1.04, .32, 1);
+  /* 退场：一开始就加速走开 */
+  --ease-exit: cubic-bezier(.4, 0, 1, 1);
+  --dur-page: 260ms;
+  --dur-sheet: 320ms;
+  --dur-exit: 150ms;
+}
+
+/* ---------------------------------------------------------------- 页面切换
+ * 方向（app.js 设 html[data-nav]）：
+ *   forward —— 点进下钻页：新页从右边推进来
+ *   back    —— 返回：从左边回来
+ *   swap    —— 侧栏换一页：从下面浮上来、带一点点缩放（像从后面浮到前面）
+ * 只有新页进场；旧页瞬时让开。试过浏览器的 View Transitions（两页一起动、旧页退后变暗）：
+ * 实测切页 p95 帧时间 83–100 ms（不加动画 17 ms）—— 它要把整个主区拍成图再合成，掉帧明显，不用。
+ */
+@keyframes page-in-swap  { from { opacity: 0; transform: translateY(12px) scale(.992); } }
+@keyframes page-in-right { from { opacity: 0; transform: translateX(40px); } }
+@keyframes page-in-left  { from { opacity: 0; transform: translateX(-40px); } }
+html[data-nav="forward"] .page.is-active { animation: page-in-right var(--dur-page) var(--ease-enter) backwards; }
+html[data-nav="back"] .page.is-active { animation: page-in-left var(--dur-page) var(--ease-enter) backwards; }
+html[data-nav="swap"] .page.is-active { animation: page-in-swap var(--dur-page) var(--ease-enter) backwards; }
+
+/* ---------------------------------------------------------------- 弹窗
+ * 遮罩从透明暗下去（深浅），窗口从下面滑上来、末尾轻轻落位（--ease-sheet）。
+ * 没给背后的页面加模糊（backdrop-filter）：实测开弹窗那一段 p95 帧时间从 17 ms 涨到 67–83 ms，去掉就回到 17 ms。
+ * 关的时候反过来、更快；关的那一刻类名就换掉（.modal → .modal-leaving），
+ * 所以「页面上还有没有弹窗」的判断（键盘、测试脚本）不会把正在退场的那个算进去。
+ */
+.modal-backdrop, .modal-backdrop-leaving {
+  position: fixed; inset: 0; z-index: var(--z-modal);
+  background: var(--scrim);
+  display: grid; place-items: center; padding: var(--s6x);
+}
+.modal-backdrop { animation: scrim-in var(--dur-sheet) var(--ease-enter) both; }
+.modal-backdrop-leaving { animation: scrim-out var(--dur-exit) var(--ease-exit) both; pointer-events: none; }
+.modal { animation: sheet-in var(--dur-sheet) var(--ease-sheet) both; }
+.modal-leaving { animation: sheet-out var(--dur-exit) var(--ease-exit) both; }
+@keyframes scrim-in  { from { background: transparent; } }
+@keyframes scrim-out { to   { background: transparent; } }
+@keyframes sheet-in  { from { opacity: 0; transform: translateY(22px) scale(.965); } }
+@keyframes sheet-out { to   { opacity: 0; transform: translateY(10px) scale(.98); } }
+
+/* ---------------------------------------------------------------- AI 抽屉、浮层、菜单、提示
+ * 抽屉：从右边滑进来（只动 transform —— 宽度仍然瞬时到位，见上面那段实测）。铺满屏时从下面浮上来。
+ */
+.ai-drawer:not([hidden]) { animation: drawer-in var(--dur-sheet) var(--ease-enter) backwards; }
+.ai-drawer.is-full:not([hidden]) { animation-name: page-in-swap; }
+@keyframes drawer-in { from { opacity: 0; transform: translateX(40px); } }
+
+.info-pop, .ai-menu { animation: pop-in 200ms var(--ease-sheet) backwards; transform-origin: top left; }
+@keyframes pop-in { from { opacity: 0; transform: translateY(-6px) scale(.96); } }
+
+.toast { animation: toast-slide var(--dur-sheet) var(--ease-sheet) backwards; }
+@keyframes toast-slide { from { opacity: 0; transform: translateX(28px) scale(.98); } }
+
+/* 按下去的手感：按钮、导航项按住时缩一点点（80 ms 回弹） */
+.btn, .nav-item, .icon-btn { transition-property: background, border-color, color, transform;
+                             transition-duration: var(--dur), var(--dur), var(--dur), 80ms; }
+.btn:active:not(:disabled), .nav-item:active, .icon-btn:active { transform: scale(.97); }
+
+/* 再进一次页面时，旧内容先留着、新数据到了再换（ui.render）：顶上一条细进度线说明「在刷新」 */
+.is-refreshing { position: relative; }
+.is-refreshing::before {
+  content: ''; position: absolute; left: 0; right: 0; top: -2px; height: 2px; z-index: 1;
+  background: linear-gradient(90deg, transparent, var(--accent-solid), transparent);
+  background-size: 40% 100%; background-repeat: no-repeat;
+  animation: refresh-bar 900ms var(--ease) infinite;
+}
+@keyframes refresh-bar { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .btn:active:not(:disabled), .nav-item:active, .icon-btn:active { transform: none; }
+}

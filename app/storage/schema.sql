@@ -297,3 +297,18 @@ WHERE k.quality != 'reject'
               WHERE k2.sample_id IS k.sample_id
                 AND k2.field_name = k.field_name
                 AND k2.quality != 'reject');
+
+-- 同一个口径，换一种写法，**只给整表汇总用**（字段清单、总览计数、分面的字段范围 —— C078）。
+--
+-- 上面那种写法每一行都去查一遍「同一格里最大的 id」：按样品取、按样品关联的查询（EXISTS、LEFT JOIN）
+-- 走索引很快；但整表汇总时 1.7 万行各查一遍，55 个样品就要 40–75 ms，样品和批处理越多越慢。
+-- 这种写法先按 (样品, 字段) 分组取一次最大 id 再连回来，整表汇总 2–3 ms；
+-- 反过来，放进逐样品关联的子查询里它会每次重算整张分组表（实测 9 秒），所以**两种都留着、各用各的**。
+-- 两个视图结果逐行相同（tests/test_results_current.py 守着）。
+DROP VIEW IF EXISTS key_result_current_all;
+CREATE VIEW key_result_current_all AS
+SELECT k.* FROM key_result k
+JOIN (SELECT MAX(id) AS id FROM key_result
+      WHERE quality != 'reject' GROUP BY sample_id, field_name) m ON m.id = k.id;
+-- 上面分组用的覆盖索引（id 就是 rowid，不用单列）
+CREATE INDEX IF NOT EXISTS idx_kr_current ON key_result(sample_id, field_name, quality);

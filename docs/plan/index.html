@@ -189,11 +189,11 @@ ol.steps li, ul.plain li { margin: 4px 0; }
     <span>基于提交 <code>14f5d19</code></span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
   </div>
   <div class="cards">
-    <div class="card"><div class="k">修改报告</div><div class="v">77</div><div class="d">C001 – C077</div></div>
+    <div class="card"><div class="k">修改报告</div><div class="v">78</div><div class="d">C001 – C078</div></div>
     <div class="card"><div class="k">阶段</div><div class="v">P1–P18</div><div class="d">P18 = 全项目体检 + 交接文档</div></div>
     <div class="card"><div class="k">测试</div><div class="v">586</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 11 组（12 + 15 + 13 + 8 + 13 + 22 + 15 + 5 + 8 + 10 + 11 条）</div></div>
-    <div class="card"><div class="k">你明确指定的</div><div class="v">58</div><div class="d">P-01 … P-58（P-54 … P-58 是 QFLS 成像的规格）</div></div>
-    <div class="card"><div class="k">我自行决定的</div><div class="v">199</div><div class="d">D-01 … D-199，<b>28</b> 项还待你确认</div></div>
+    <div class="card"><div class="k">你明确指定的</div><div class="v">59</div><div class="d">P-01 … P-59（P-54 … P-58 是 QFLS 成像的规格；P-59 是流畅性）</div></div>
+    <div class="card"><div class="k">我自行决定的</div><div class="v">203</div><div class="d">D-01 … D-203，<b>28</b> 项还待你确认</div></div>
     <div class="card"><div class="k">自查发现</div><div class="v">30 / 30</div><div class="d"><b>全部处理完</b>（P10 12 条 · P11 11 条 · P12 7 条）</div></div>
   </div>
 </header>
@@ -355,6 +355,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id">P-56</td><td>QFLS 的输出</td><td>每个样点输出热图、直方图、剖面图、异常图、汇总图并保留指标数值；全局给可比较的指标分布、箱线图、排名、按实验及物镜分组的标准化数值；<strong>所有输出写入独立目录，不改原始数据</strong><span class="why">11-09 你的原话（「在以上任务结束之后……基于自己生成的数据进行分析！设计，生成网站！」那条消息里的规格），按内容拆成 P-54 … P-58</span></td><td>C065</td><td class="loc">app/qfls/pipeline.py · render.py</td><td><span class="chip ok">落实 C065</span></td></tr>
 <tr><td class="id">P-57</td><td>QFLS 网站页面</td><td>据此生成总览、排序筛选排名、单点详情、多点对比、方法说明等页面；按实验和物镜筛选、异常高亮、当前筛选结果导出<span class="why">11-09 你的原话（「在以上任务结束之后……基于自己生成的数据进行分析！设计，生成网站！」那条消息里的规格），按内容拆成 P-54 … P-58</span></td><td>C066</td><td class="loc">pages/qfls*.js</td><td><span class="chip ok">落实 C066</span></td></tr>
 <tr><td class="id">P-58</td><td>QFLS 的使用限制</td><td>不同物镜的绝对 QFLS 和面积占比<strong>不可直接比较</strong>；仅单光强，<strong>不做伪 JV、理想因子、PCE、FF</strong>；Moran's I 约 0 为随机、<strong>大于 0.15 提示结构不均</strong>；中文路径可能 GBK 乱码，需统一 UTF-8<span class="why">11-09 你的原话（「在以上任务结束之后……基于自己生成的数据进行分析！设计，生成网站！」那条消息里的规格），按内容拆成 P-54 … P-58</span></td><td>C065</td><td class="loc">app/qfls/ · 方法说明页</td><td><span class="chip ok">落实 C065</span></td></tr>
+<tr><td class="id">P-59</td><td>流畅性：过渡与速度</td><td>所有页面点击之后要有<strong>过渡效果</strong>；点开窗口<strong>滑动出现</strong>，<strong>有初始速度变化</strong>（起步快、慢慢收住）、<strong>有页面深浅变化</strong>；优化操作速度；再查之后可能出的问题<span class="why">11-12 你的原话（「然后我需要你优化一下流畅性，比如所有页面点击之后，可以有过渡效果，点击窗口，滑动出现（有初始速度变化，有页面深浅变化）然后优化操作速度，之后可能的问题！」）</span></td><td>C078</td><td class="loc">web/css/components.css「动效」 · web/js/app.js · web/js/ui.js</td><td><span class="chip ok">落实 C078</span></td></tr>
     </tbody>
   </table></div>
 </section>
@@ -575,6 +576,10 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr data-c="显示"><td class="id">D-197</td><td class="nowrap">显示</td><td>下钻页（样品、批处理结果、QFLS 样点）的「返回」= 你来的那一页；同一页换参数沿用原来的来处，按「返回」回去那一步不记；没有来处（直接打开、刷新）时回页面声明的父页</td><td>原来样品页固定回数据处理，从别处点进来的也被送回去。</td><td>C077</td><td class="loc">web/js/app.js backOf</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="数据"><td class="id">D-198</td><td class="nowrap">数据</td><td>对比历史的名字最长 120 字，存在这次运行的参数里（和提交时填的名字同一个字段）</td><td>改名不该另起一个字段，导出和 AI 读到的是同一个名字。</td><td>C077</td><td class="loc">app/batch_history.py</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="数据" data-confirm="1"><td class="id">D-199</td><td class="nowrap">数据</td><td><strong>删除一次对比 = 删掉它写的关键结果</strong>：这些样品的当前值退回上一次对比算的（没有上一次就没有值），这次结果上的审核一起没了；曲线表文件、钉住的 AI 分析也删。原始数据、样品、别的对比、AI 对话不动；还在跑的不能删；删之前确认框列出会带走多少</td><td>另一种是「只藏起来、结果照样算数」—— 藏起来的结果还在当前值里，界面上却找不到是哪次算的。</td><td>C077</td><td class="loc">app/batch_history.py · web/js/pages/history.js</td><td><span class="chip warn">建议你确认</span></td></tr>
+<tr data-c="显示"><td class="id">D-200</td><td class="nowrap">显示</td><td>动效的数：切页 260 ms（下钻从右推进 40 px、返回从左、侧栏换页上浮 12 px + 缩放 0.992）、弹窗 320 ms（上滑 22 px、从 0.965 放大，末尾 1.04 轻过冲）、退场 150 ms、AI 抽屉右滑 40 px；进场 expo-out 缓动（起步快、收得长），退场先加速走开；只动 transform / opacity；系统「减少动态效果」时全关</td><td>你要的是「有初始速度变化、有深浅变化」，数是我定的。<strong>没用</strong> View Transitions（两页一起动）和背景模糊 —— 实测各让 p95 帧时间从 17 ms 涨到 67–100 ms。</td><td>C078</td><td class="loc">web/css/components.css「动效」</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="显示"><td class="id">D-201</td><td class="nowrap">显示</td><td>再进一次同一页时旧内容先留着、顶上一条细线说「在刷新」，新数据到了原地换掉；400 ms 还没回来才换成骨架屏</td><td>原来每进一次都先闪一下骨架屏，哪怕数据 10 ms 就回来了。</td><td>C078</td><td class="loc">web/js/ui.js render</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="平台"><td class="id">D-202</td><td class="nowrap">平台</td><td>模块计算结果在内存里缓存最多 64 份，钥匙 = 模块 id + 版本 + 文件 id + 文件内容 sha256 + 参数 + 只算的面板；模块一重新加载就整个清空</td><td>样品页每进一次都把膜厚全分辨率算一遍（300 多 ms），同一份数据同一套参数结果永远一样。</td><td>C078</td><td class="loc">app/modules/results_cache.py</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="平台"><td class="id">D-203</td><td class="nowrap">平台</td><td>「当前值」多一个写法 <code>key_result_current_all</code>（先分组取最大 id 再连回来）只给整表汇总用；逐样品查询仍用原来那个。两个逐行相同，测试守着</td><td>整表汇总从 40–75 ms 到 2–3 ms；新写法放进逐样品子查询里会到 9 秒，所以两个都留。</td><td>C078</td><td class="loc">app/storage/schema.sql</td><td><span class="chip info">可随时改</span></td></tr>
     </tbody>
   </table></div>
 </section>
@@ -850,6 +855,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C075_2026-11-10_本提交.md">C075</a></td><td class="nowrap">11-10</td><td>P19</td><td>技术债（后端三）：请求体都有模型 —— /api/docs 看得出参数，拼错的键回 400</td><td class="small">你的要求（修技术债）</td></tr>
 <tr><td class="id"><a href="changes/C076_2026-11-12_本提交.md">C076</a></td><td class="nowrap">11-12</td><td>P19</td><td>技术债（前端一）：共用组件只留一份、离开页面真的中止请求、设置页不靠全局事件、智能体报错、长行</td><td class="small">你的要求（修技术债）</td></tr>
 <tr><td class="id"><a href="changes/C077_2026-11-12_本提交.md">C077</a></td><td class="nowrap">11-12</td><td>P19</td><td>技术债（前端二）：批处理一条路、下钻页回你来的地方、该点得进去的都点得进去、对比历史能改名能删</td><td class="small">你的要求（修技术债）</td></tr>
+<tr><td class="id"><a href="changes/C078_2026-11-12_本提交.md">C078</a></td><td class="nowrap">11-12</td><td>P19</td><td>流畅性：切页 / 弹窗 / 抽屉的过渡（有起步速度、有深浅），再进一页不闪骨架屏，接口快十几倍，模块结果缓存</td><td class="small">你的要求（P-59）</td></tr>
     </tbody>
   </table></div>
 </section>

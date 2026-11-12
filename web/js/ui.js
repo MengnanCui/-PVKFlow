@@ -124,11 +124,14 @@ const modalStack = [];
  */
 export function modal({ title, body, foot, width, onClose, flush = false }) {
   const opener = document.activeElement;
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
     const at = modalStack.indexOf(panel);
     if (at >= 0) modalStack.splice(at, 1);
-    backdrop.remove();
     document.removeEventListener('keydown', onKey);
+    leave(backdrop, panel);
     onClose?.();
     if (opener?.isConnected && typeof opener.focus === 'function') opener.focus();
   };
@@ -162,6 +165,21 @@ export function modal({ title, body, foot, width, onClose, flush = false }) {
   document.body.appendChild(backdrop);
   panel.querySelector('input,select,textarea,button')?.focus();
   return { close, panel, backdrop };
+}
+
+/**
+ * 弹窗退场（C078）：先换类名（.modal → .modal-leaving）—— 从这一刻起它就不算「开着的弹窗」了，
+ * 键盘、测试脚本、再开一个弹窗都不会碰到它；放完退场动画（或最多 300 ms）再从页面上拿掉。
+ */
+function leave(backdrop, panel) {
+  backdrop.className = 'modal-backdrop-leaving';
+  panel.className = 'modal-leaving';
+  backdrop.inert = true;
+  backdrop.setAttribute('aria-hidden', 'true');
+  let gone = false;
+  const done = () => { if (!gone) { gone = true; backdrop.remove(); } };
+  backdrop.addEventListener('animationend', (e) => { if (e.target === backdrop) done(); });
+  setTimeout(done, 300);
 }
 
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),'
@@ -330,18 +348,33 @@ export async function render(host, loader, view) {
   // 同一个容器上，后发的 render 说了算（见 latest()）
   host.__renderTicket ??= latest();
   const fresh = host.__renderTicket();
-  mount(host, skeletonRows(4));
+  // 再进一次这一页（上次画好的内容还在）：**旧内容先留着**，顶上一条细线说「在刷新」，新数据到了原地换掉 ——
+  // 原来每进一次都先闪一下骨架屏，哪怕数据 50 ms 就回来了（C078）。400 ms 还没回来才换成骨架屏
+  const again = host.__rendered && host.firstChild;
+  let slow = null;
+  if (again) {
+    host.classList.add('is-refreshing');
+    host.setAttribute('aria-busy', 'true');
+    slow = setTimeout(() => { if (fresh()) mount(host, skeletonRows(4)); }, 400);
+  } else mount(host, skeletonRows(4));
+  const settle = () => {
+    clearTimeout(slow);
+    host.classList.remove('is-refreshing');
+    host.removeAttribute('aria-busy');
+  };
   try {
     const data = await loader();
     if (!fresh()) return null;
-    // 骨架屏（四根灰条）换成整页内容，跳变很大 —— 让内容淡入进来，
-    // 眼睛就有个「换了」的交代，不是凭空闪一下。
-    const body = h('div.enter', view(data));
-    mount(host, body);
+    settle();
+    // 第一次：骨架屏（四根灰条）换成整页内容跳变很大，让内容淡入进来。
+    // 刷新：原地换，不再淡入一遍（数字变了就变了，整页再闪一下反而像出了什么事）
+    mount(host, h(again ? 'div' : 'div.enter', view(data)));
+    host.__rendered = true;
     return data;
   } catch (err) {
     // 离开页面时请求被中止（api.with）：这不是错，页面已经不在了
-    if (!fresh() || err?.name === 'AbortError') return null;
+    if (!fresh() || err?.name === 'AbortError') { if (fresh()) settle(); return null; }
+    settle();
     mount(host, errorBox(err, () => render(host, loader, view)));
     return null;
   }

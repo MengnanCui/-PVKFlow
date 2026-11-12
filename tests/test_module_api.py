@@ -241,3 +241,26 @@ def test_compute_names_the_module_that_crashed(client, matrix_id):
 def test_compute_on_an_unknown_module_is_a_404(client, matrix_id):
     r = client.post("/api/modules/nope.nope/compute", json={"artifact_id": matrix_id})
     assert r.status_code == 404
+
+
+def test_compute_results_are_cached_and_dropped_when_modules_reload(client, matrix_id, monkeypatch):
+    """同一份文件、同一套参数第二次直接给结果（C078）；模块重新加载后不再用旧的。"""
+    from app.modules import results_cache
+    from app.modules.registry import registry, reload
+
+    mod = registry.get("special.slope_integral")
+    calls = []
+    real = type(mod).compute
+    monkeypatch.setattr(type(mod), "compute", lambda self, ctx: calls.append(1) or real(self, ctx))
+    body = {"artifact_id": matrix_id, "params": {}}
+    a = client.post("/api/modules/special.slope_integral/compute", json=body).json()
+    b = client.post("/api/modules/special.slope_integral/compute", json=body).json()
+    assert a == b and len(calls) == 1
+    # 换一个参数就是另一份
+    client.post("/api/modules/special.slope_integral/compute",
+                json={**body, "params": {"slope_center": 960}})
+    assert len(calls) == 2
+    assert len(results_cache._store) == 2
+    reload()                     # 重新加载会换成新的类（上面的计数挂不上了），所以直接看缓存是不是空了
+    assert len(results_cache._store) == 0
+    assert client.post("/api/modules/special.slope_integral/compute", json=body).json() == a

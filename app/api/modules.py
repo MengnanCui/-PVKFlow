@@ -12,7 +12,7 @@ from fastapi.responses import Response
 from app import config
 from app.api import bodies as B
 from app.api.common import ApiError, guard
-from app.modules import install, ops, validate
+from app.modules import install, ops, results_cache, validate
 from app.modules.base import ModuleContext
 from app.modules.registry import registry
 from app.storage import artifacts
@@ -67,10 +67,17 @@ def compute(module_id: str, body: B.ModuleComputeBody) -> dict:
     changed = payload.get("changed")
     ctx = ModuleContext(sm.lam, sm.M, sm.t, params,
                         meta=sm.meta, artifact_id=artifact_id)
+    only = None
     if isinstance(changed, list):
         ch = set(changed)
-        ctx.only(p.id for p in mod.spec.panels if p.uses and (set(p.uses) & ch))
+        only = [p.id for p in mod.spec.panels if p.uses and (set(p.uses) & ch)]
+        ctx.only(only)
 
+    # 同一份文件、同一套参数，算出来永远一样：回到同一个样品页时不再重算（膜厚一次 300 多 ms，C078）
+    ck = results_cache.key(module_id, mod.spec.version, artifact_id, sm.content_sha, params, only)
+    hit = results_cache.get(ck)
+    if hit is not None:
+        return hit
     try:
         out = mod.compute(ctx)
     except Exception as exc:                        # noqa: BLE001
@@ -79,12 +86,14 @@ def compute(module_id: str, body: B.ModuleComputeBody) -> dict:
         raise ApiError(f"模块「{mod.spec.name}」算不出来：{type(exc).__name__}: {exc}",
                        400, "module_failed") from exc
 
-    return {
+    res = {
         "module_id": module_id,
         "panels": {pid: d.as_dict() for pid, d in out.items()},
         "n_points": int(len(sm.t)),
         "params": params,
     }
+    results_cache.put(ck, res)
+    return res
 
 
 # ---------------------------------------------------------------- 装 / 卸 / 传（逻辑在 app/modules/install.py）
