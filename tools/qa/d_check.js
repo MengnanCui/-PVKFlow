@@ -141,7 +141,7 @@ const post = (p, path, body) => p.evaluate(async ([path, body]) => (await fetch(
     const ask = (how) => p.evaluate(async (how) => {
       const ui = await import('/assets/js/ui.js');
       const pr = ui.confirmDialog('QA：确定吗？', { confirmLabel: '好' });
-      const btns = [...document.querySelectorAll('.modal-foot button')];
+      const btns = [...document.querySelectorAll('.modal .modal-foot button')];
       if (how === 'ok') btns.find((x) => x.textContent === '好').click();
       else if (how === 'cancel') btns.find((x) => x.textContent === '取消').click();
       else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));

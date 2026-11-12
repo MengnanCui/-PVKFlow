@@ -54,7 +54,7 @@ async function fresh(b, hash, init) {
     if (num) { await num.fill('5'); await num.press('Enter'); await sleep(1500); }
     rec('改时间窗重新切片', !!num && sliceCalls >= 1, num ? `改窗口后 /slices 请求 ${sliceCalls} 次` : '没找到时间窗输入框');
     await p.click('#chartHost button:has-text("导出脚本")'); await sleep(500);
-    const dlg = await p.textContent('.modal-head h3').catch(() => null);
+    const dlg = await p.textContent('.modal .modal-head h3').catch(() => null);
     rec('导出对话框', dlg === '导出绘图脚本', `弹窗标题「${dlg}」`);
     rec('对比页零报错', p.errors.length === 0, p.errors.slice(0, 2).join(' | ') || '无');
     await ctx.close(); }
@@ -80,7 +80,7 @@ async function fresh(b, hash, init) {
 
     await p.click('button.filter-chip.is-clear').catch(() => {}); await sleep(1000);
     await p.click('#runBatchBtn'); await sleep(800);
-    const ok = await p.$('.modal-foot button.btn-primary');
+    const ok = await p.$('.modal .modal-foot button.btn-primary');
     if (ok) { await ok.click(); }
     await p.waitForFunction(() => location.hash.startsWith('#batch/'), null, { timeout: 15000 }).catch(() => {});
     // 跑多久看样品数（45 个样品要十几秒）；等到叠图出来为止
