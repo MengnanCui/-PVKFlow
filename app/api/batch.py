@@ -5,6 +5,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import Response
 
 from app import batch as batch_mod
+from app import batch_history as history
 from app import batch_views as views
 from app import tasks
 from app.api import bodies as B
@@ -61,6 +62,24 @@ def runs(limit: int = Query(20, ge=1, le=100)) -> dict:
 @router.get("/runs/{parent_run_id}")
 def detail(parent_run_id: str) -> dict:
     return guard(views.detail, parent_run_id)
+
+
+@router.patch("/runs/{parent_run_id}")
+def rename_run(parent_run_id: str, body: B.RenameRunBody) -> dict:
+    """给一次批处理改名（对比历史里显示的名字）。"""
+    return guard(history.rename, parent_run_id, body.title)
+
+
+@router.get("/runs/{parent_run_id}/footprint")
+def run_footprint(parent_run_id: str) -> dict:
+    """删掉这次会带走什么：几个样品、几条关键结果（其中几条是当前值、几条审核过）、几张长表、几条钉住的分析。"""
+    return guard(history.footprint, parent_run_id)
+
+
+@router.delete("/runs/{parent_run_id}")
+def delete_run(parent_run_id: str) -> dict:
+    """删掉一次批处理：运行、它写的关键结果和长表、钉住的分析（原始数据和样品不动；还在跑的不能删）。"""
+    return guard(history.delete, parent_run_id)
 
 
 @router.get("/runs/{parent_run_id}/axes")

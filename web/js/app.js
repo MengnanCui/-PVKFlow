@@ -28,9 +28,16 @@ const MAIN_NAV = ['overview', 'process', 'storage', 'relation'];
 const ANALYSIS_NAV = ['history', 'qfls', 'agent'];
 const SYSTEM_NAV = ['settings'];
 
+const NAV_PAGES = new Set([...MAIN_NAV, ...ANALYSIS_NAV, ...SYSTEM_NAV]);
+
 const viewport = $('#viewport');
 const mounted = new Map();
 let current = null;
+let currentArg = null;
+// 下钻页（样品、批处理结果、QFLS 样点）「返回」回哪：**你是从哪来的就回哪**，不是写死的父页。
+// 原来样品页固定回数据处理 —— 从构效关系、存储页、对比页点进来的也被送回数据处理（技术债 C077）。
+// 直接打开链接 / 刷新时没有来处，退回页面声明的 meta.parent（和 meta.parentArg）。
+const backOf = new Map();
 // 当前这一次「进入页面」的生命周期。离开（导航到任何地方，包括同一页换参数）时 abort ——
 // 页面里还没回来的请求、还在跑的轮询、挂在外面的监听，凭它知道自己该停了。
 //
@@ -69,13 +76,17 @@ function buildNav(hostId, ids, heading) {
  * navigate('process') 或 navigate('sample', {arg: 'art_xxx'})
  * hash 形如 #sample/art_xxx —— 下钻页面可以直接分享链接、可以刷新、可以后退。
  */
-function navigate(id, { push = true, arg = null } = {}) {
+function navigate(id, { push = true, arg = null, back = false } = {}) {
   const page = BY_ID[id];
   if (!page) return navigate('overview');
 
+  // 记下来处。按「返回」回去的那一步不记 —— 不然样品 → 对比页 → 返回样品之后，样品的「返回」就成了对比页，来回打转。
+  // 同一页换参数（下一个样点、换一个样品）沿用原来的来处
+  if (page.meta.parent && !back && current && current !== id) backOf.set(id, { id: current, arg: currentArg });
   current = id;
-  // 下钻页面把父级导航项保持高亮，用户才不会觉得自己"掉出去"了
-  const highlight = page.meta.parent || id;
+  currentArg = arg;
+  // 下钻页面把来处那一项保持高亮（顺着来处往上找到侧栏里有的那一页），用户才不会觉得自己「掉出去」了
+  const highlight = navOwner(id);
   document.querySelectorAll('.nav-item').forEach((b) => {
     if (b.dataset.page === highlight) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
@@ -83,7 +94,8 @@ function navigate(id, { push = true, arg = null } = {}) {
 
   $('#pageTitle').textContent = page.meta.title;
   $('#pageDesc').textContent = page.meta.desc || '';
-  mount($('#pageActions'), ...(page.actions?.(navigate, arg) || []));
+  // 下钻页的「返回」统一放在页头右上角第一个（原来三个下钻页各放各的：页头、内容区、写死的目标）
+  mount($('#pageActions'), page.meta.parent ? backButton(id) : null, ...(page.actions?.(navigate, arg) || []));
 
   let host = mounted.get(id);
   if (!host) {
@@ -107,6 +119,29 @@ function navigate(id, { push = true, arg = null } = {}) {
   }
   document.title = `${page.meta.title} · HTE Studio`;
   viewport.scrollTop = 0;
+}
+
+function backTarget(id) {
+  const meta = BY_ID[id].meta;
+  return backOf.get(id) || { id: meta.parent, arg: meta.parentArg || null };
+}
+
+/** 侧栏里该亮哪一项：自己在侧栏里就是自己；下钻页顺着来处往上找（最多几层，防环）。 */
+function navOwner(id) {
+  for (let i = 0, cur = id; i < 6 && cur; i += 1) {
+    if (NAV_PAGES.has(cur)) return cur;
+    cur = BY_ID[cur]?.meta.parent ? backTarget(cur).id : null;
+  }
+  return BY_ID[id].meta.parent || id;
+}
+
+function backButton(id) {
+  const t = backTarget(id);
+  const title = BY_ID[t.id]?.meta.title || '上一页';
+  return h('button.btn.btn-sm.back-btn', {
+    title: `回到「${title}」`,
+    onclick: () => navigate(t.id, { arg: t.arg, back: true }),
+  }, `← ${title}`);
 }
 
 buildNav('#navMain', MAIN_NAV, '平台');

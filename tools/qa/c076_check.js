@@ -38,7 +38,10 @@ const rec = (name, ok, detail) => { out.push(ok); console.log(`${ok ? 'PASS' : '
   // 3. 进对比页马上离开：曲线请求被中止（不是等它下完）
   const aborted = [];
   p.on('requestfailed', (r) => { if (r.url().includes('/curves')) aborted.push(r.failure()?.errorText); });
-  await p.goto(`http://127.0.0.1:8799/#batch/${run}`); await sleep(120);
+  // 等第一个曲线请求发出去（还在路上）就离开
+  const started = p.waitForRequest((r) => r.url().includes('/curves'), { timeout: 15000 });
+  await p.goto(`http://127.0.0.1:8799/#batch/${run}`);
+  await started;
   await p.click('.nav-item[data-page="overview"]'); await sleep(1500);
   const title = await p.textContent('#pageTitle');
   rec('离开页面中止请求', aborted.length > 0 && title === '总览', `中止 ${aborted.length} 个曲线请求（${aborted[0] || '—'}），标题「${title}」`);

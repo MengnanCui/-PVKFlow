@@ -3,7 +3,7 @@
 import { api } from '../api.js';
 import { withInfo } from '../components/info.js';
 import { fieldTable } from '../components/field-cells.js';
-import { h, render, fmtInt, fmtTime, empty, sampleLabel, statusText, statusClass, metricRow } from '../ui.js';
+import { h, render, fmtInt, fmtTime, empty, sampleLabel, statusText, statusClass, metricRow, rowLink } from '../ui.js';
 
 export const meta = {
   id: 'overview',
@@ -54,7 +54,7 @@ export function view(host, { nav, signal }) {
             ? h('button.btn.btn-sm', { onclick: () => nav('process') }, '去处理')
             : null),
         data.recent_runs.length
-          ? h('div.panel.panel-body.flush', runTable(data.recent_runs))
+          ? h('div.panel.panel-body.flush', runTable(data.recent_runs, nav))
           : h('div.panel', empty('还没有跑过任何处理'))),
 
       data.fields.length
@@ -105,17 +105,28 @@ function stageList(nav, counts) {
           h('p.small.muted.mt-2.measure', desc)))));
 }
 
-function runTable(runs) {
+/**
+ * 一行点得进去（C077）：批处理（和它里面的一个样品）→ 那次对比；单独跑的 → 那个样品。
+ * 原来只能看不能点 —— 「最近的处理」看见一行失败，还得自己去对比历史里找是哪次。
+ */
+function runTable(runs, nav) {
+  const target = (r) => (r.parent_run_id ? ['batch', r.parent_run_id]
+    : String(r.skill_id).startsWith('batch.') && !r.sample_id ? ['batch', r.analysis_run_id]   // 批处理本身那一行
+      : r.sample_id ? ['sample', r.sample_id] : null);
+  const cells = (r) => [
+    h('td', h('span.strong', r.skill_name || r.skill_id)),
+    h('td', sampleLabel(r.sample_name, r.sample_batch)),
+    h('td', h('span.status.' + statusClass(r.status), statusText(r.status))),
+    h('td.num', fmtInt(r.n_results)),
+    h('td.mono.xsmall.muted', r.skill_version),
+    h('td.small.muted', fmtTime(r.started_at))];
   return h('table.data',
     h('thead', h('tr',
       h('th', '处理'), h('th', '样品'), h('th', '状态'),
       h('th.num', '结果数'), h('th', '版本'), h('th', '时间'))),
-    h('tbody', ...runs.map((r) => h('tr',
-      h('td', h('span.strong', r.skill_name || r.skill_id)),
-      h('td', sampleLabel(r.sample_name, r.sample_batch)),
-      h('td', h('span.status.' + statusClass(r.status), statusText(r.status))),
-      h('td.num', fmtInt(r.n_results)),
-      h('td.mono.xsmall.muted', r.skill_version),
-      h('td.small.muted', fmtTime(r.started_at))))));
+    h('tbody', ...runs.map((r) => {
+      const t = target(r);
+      return t ? rowLink(() => nav(t[0], { arg: t[1] }), null, ...cells(r)) : h('tr', ...cells(r));
+    })));
 }
 

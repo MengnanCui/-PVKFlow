@@ -1219,3 +1219,9 @@ table.qfls-rank tr.lv-warn:hover td, table.qfls-rank tr.lv-error:hover td { back
 .qfls-method p { margin: 0 0 8px; font-size: var(--t-sm); line-height: 1.65; max-width: 90ch; }
 .qfls-method ul { margin: 0 0 8px; padding-left: 1.3em; font-size: var(--t-sm); line-height: 1.7; }
 .qfls-method table.data td { vertical-align: top; }
+
+/* 表格行里的小按钮（对比历史的「改名」「删除」）：平时淡一点，指到这一行再显出来 —— 行本身是能点进去的（C077） */
+.row-actions { text-align: right; }
+.row-actions .btn { opacity: .55; }
+tr:hover .row-actions .btn, tr:focus-within .row-actions .btn, .row-actions .btn:focus-visible { opacity: 1; }
+.block { display: block; }

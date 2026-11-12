@@ -9,7 +9,7 @@
 
 import { api } from '../api.js';
 import {
-  h, mount, clear, toast, empty, skeletonRows, errorBox, fmtInt, fmtTime, sampleLabel, confirmDialog, metric,
+  h, mount, clear, toast, empty, skeletonRows, errorBox, fmtInt, fmtTime, sampleLabel, confirmDialog, metric, rowLink,
 } from '../ui.js';
 import { drawChart, loadCurves } from './batch-curves.js';
 import { drawRecipe, loadRecipe } from './batch-recipe.js';
@@ -25,7 +25,6 @@ export const meta = {
 
 export function actions(nav) {
   return [
-    h('button.btn.btn-sm', { onclick: () => nav('history') }, '← 对比历史'),
     h('button.btn.btn-sm', { onclick: () => nav('process') }, '挑样品'),
   ];
 }
@@ -59,6 +58,9 @@ export async function view(host, ctx) {
     const done = await waitForTask(host, arg, ctx);
     if (!done) return;
     S.runId = done;
+    // 跑完了：地址栏换成这次对比的编号（原来一直停在 #batch/task_… —— 收藏、刷新、发给别人都要再等一遍任务，C077）。
+    // replaceState 不触发 hashchange，也不多一条后退记录
+    if (alive() && location.hash === `#batch/${arg}`) history.replaceState(history.state, '', `#batch/${done}`);
   } else {
     S.taskId = null;
     S.runId = arg;
@@ -233,12 +235,17 @@ function drawTable() {
     allTable(d.children));
 }
 
+/** 一个样品一行：点进样品页（键盘也行），在那里按「返回」回到这次对比（C077）。样品被删了就只是一行字。 */
+function sampleRow(c, ...cells) {
+  return c.sample_id ? rowLink(() => refs.nav('sample', { arg: c.sample_id }), null, ...cells) : h('tr', ...cells);
+}
+
 /** 失败的样品单独列在最上面 —— 跑 1000 个样品时这张表比图重要。 */
 function failedTable(failed) {
   return h('div.panel.panel-body.flush.mb-3',
     h('table.data',
       h('thead', h('tr', h('th', '样品'), h('th', '批次'), h('th', '失败原因'))),
-      h('tbody', ...failed.map((c) => h('tr',
+      h('tbody', ...failed.map((c) => sampleRow(c,
         h('td.strong', sampleLabel(c.sample_name, c.batch)),
         h('td.small.muted', c.batch || '—'),
         h('td.small', { style: { color: 'var(--danger)' } },
@@ -246,7 +253,7 @@ function failedTable(failed) {
 }
 
 function warningBlock(warned) {
-  const rows = warned.slice(0, 50).map((c) => h('tr',
+  const rows = warned.slice(0, 50).map((c) => sampleRow(c,
     h('td.strong', sampleLabel(c.sample_name, c.batch)),
     h('td.small.muted', (c.warnings || []).join('；'))));
   return h('details.mb-3',
@@ -257,7 +264,7 @@ function warningBlock(warned) {
 }
 
 function allTable(children) {
-  const rows = children.map((c) => h('tr',
+  const rows = children.map((c) => sampleRow(c,
     h('td', sampleLabel(c.sample_name, c.batch)),
     h('td.small.muted', c.batch || '—'),
     h('td', h('span.status.' + (c.status === 'ok' ? 'status-ok' : 'status-danger'),

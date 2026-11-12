@@ -13,8 +13,6 @@ export const S = {
   checked: new Set(),   // 手工勾选的 sample_id
   anchor: null,         // 上次点选的行号，shift 范围选从这儿起
   sets: [],
-  task: null,
-  pollTimer: null,
 };
 
 export const refs = {};

@@ -21,7 +21,7 @@
 
 ## 2. 接口
 
-共 109 个接口。全部是本机接口（只认 127.0.0.1 / localhost，见 `app/security.py`）；错误一律是 `{"error": {"message", "kind", "detail"}}`。交互式文档：启动后打开 `/api/docs`。
+共 112 个接口。全部是本机接口（只认 127.0.0.1 / localhost，见 `app/security.py`）；错误一律是 `{"error": {"message", "kind", "detail"}}`。交互式文档：启动后打开 `/api/docs`。
 
 ### agent（`app/api/agent.py`）
 
@@ -62,11 +62,14 @@
 | POST | `/api/batch/preview` |  | [`FilterBody`](#filterbody) | 跑之前先看会处理多少个、有多少个没有矩阵。 |
 | POST | `/api/batch/run` |  | [`BatchRunBody`](#batchrunbody) | 提交一次批处理。 |
 | GET | `/api/batch/runs` | limit |  |  |
+| DELETE | `/api/batch/runs/{parent_run_id}` |  |  | 删掉一次批处理：运行、它写的关键结果和长表、钉住的分析（原始数据和样品不动；还在跑的不能删）。 |
 | GET | `/api/batch/runs/{parent_run_id}` |  |  |  |
+| PATCH | `/api/batch/runs/{parent_run_id}` |  | [`RenameRunBody`](#renamerunbody) | 给一次批处理改名（对比历史里显示的名字）。 |
 | GET | `/api/batch/runs/{parent_run_id}/axes` |  |  | 这批数据的波长轴和时间轴范围（读不到返回 available=false，不报错）。 |
 | GET | `/api/batch/runs/{parent_run_id}/curves` | column, max_series |  | 批处理的曲线，按样品分组返回（最多 max_series 条，并说明截断了多少）。 |
 | GET | `/api/batch/runs/{parent_run_id}/export` | column, mode, group_by, max_series |  | 打包 plot.py + data.csv + README.md 下载 —— 平台内置图型不够用时，拿脚本走人随便改。 |
 | GET | `/api/batch/runs/{parent_run_id}/export/preview` | column, mode, group_by |  | 先读脚本，再决定要不要下载。 |
+| GET | `/api/batch/runs/{parent_run_id}/footprint` |  |  | 删掉这次会带走什么：几个样品、几条关键结果（其中几条是当前值、几条审核过）、几张长表、几条钉住的分析。 |
 | GET | `/api/batch/runs/{parent_run_id}/slices` | windows |  | 不同样品在若干个时间窗内的平均膜厚（口径见 app/batch_views.slices）。 |
 
 ### chat（`app/api/chat.py`）
@@ -403,6 +406,12 @@
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `name` | str | `""` | 新名字 |
+
+#### RenameRunBody
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `title` | str | `""` | 新名字（最多 120 字） |
 
 #### RollbackBody
 

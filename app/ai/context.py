@@ -86,7 +86,8 @@ def build(scope: dict | None, *, detail_max: int = DETAIL_MAX,
 
     comp = _comparison(run_id)
     if comp:
-        facts["你正在看的这次对比" if run_id else "最近一次对比"] = comp
+        here = run_id and comp["运行号"] == run_id
+        facts["你正在看的这次对比" if here else "最近一次对比"] = comp
 
     # 曲线摘要放在**最后**：事实包超长时 to_prompt 从尾部截断，
     # 宁可少几条曲线，也不能把标量表和对比诊断截掉。
@@ -208,6 +209,7 @@ def _comparison(run_id: str = "") -> dict | None:
             "         WHERE c.parent_run_id = p.analysis_run_id"
             "           AND c.status = 'failed') AS n_failed"
             "  FROM analysis_run p WHERE p.analysis_run_id = ?", (run_id,))
+    gone = bool(run_id) and r is None             # 问的那次已经从对比历史里删掉了（C077）
     if r is None:
         runs = batch_mod.recent_batches(limit=1)
         if not runs:
@@ -226,6 +228,8 @@ def _comparison(run_id: str = "") -> dict | None:
         "失败数": r.get("n_failed", 0),
         "时间": r.get("started_at"),
     }
+    if gone:
+        out["说明"] = f"你问的那次对比（{run_id}）已经从对比历史里删掉了，下面是最近一次对比"
     if recipe.get("band_min"):
         out["膜厚窗口(nm)"] = [recipe["band_min"], recipe["band_max"]]
 

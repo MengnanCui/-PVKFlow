@@ -18,7 +18,7 @@ import { openImportDialog, bindDropUpload } from '../components/filepicker.js';
 import { filterSummary } from '../components/facets.js';
 import { virtualList } from '../components/virtual-list.js';
 import { drawFacets, loadSets, publishScope, saveSetDialog, setFilter } from './process-filter.js';
-import { batchDialog, progressBlock, startCompare, stopPolling } from './process-run.js';
+import { batchDialog, startCompare } from './process-run.js';
 import { beginSelect, extendSelect, rowKey } from './process-select.js';
 import { S, hooks, refs, resetRefs } from './process-state.js';
 
@@ -69,7 +69,6 @@ export async function view(host, ctx) {
   resetRefs({ host, nav: ctx.nav, ctx, alive: ctx.alive || (() => true) });
   // 勾选不在这里清：从样品页回来还要在（原来每次进页面都清空，C070）。改筛选时 process-filter 会清，
   // 切功能时下面清
-  stopPolling();
 
   const shell = h('div');
   mount(host, h('div.section', functionTabs()), shell);
@@ -155,8 +154,6 @@ function drawList() {
           disabled: !S.facets?.total,
           onclick: () => saveSetDialog(),
         }, '存为样品集'))),
-
-    S.task ? progressBlock() : null,
 
     h('div.panel',
       h('div.panel-head',

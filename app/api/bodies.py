@@ -132,6 +132,10 @@ class BatchRunBody(Req):
     title: str = Field("", description="这次运行的名字")
 
 
+class RenameRunBody(Req):
+    title: str = Field("", description="新名字（最多 120 字）")
+
+
 # ---------------------------------------------------------------- AI 抽屉（/api/chat）
 class ModelChoice(Req):
     provider: str | None = Field(None, description="用哪个模型网关；不给 = 设置里的默认")

@@ -13,6 +13,7 @@ export const meta = {
   title: 'QFLS 样点',
   desc: '一个样点的全部指标、分数来由、异常和图',
   parent: 'qfls',
+  parentArg: 'rank',     // 直接打开时「返回」回排名表；从别处点进来回别处（app.js，C077）
 };
 
 export function view(host, ctx) {
@@ -60,7 +61,6 @@ function page(ctx, runId, d) {
 
   return h('div',
     h('div.row.gap-2.wrap',
-      h('button.btn.btn-sm', { onclick: () => ctx.nav('qfls', { arg: 'rank' }) }, '← 排名'),
       h('button.btn.btn-sm', { disabled: i <= 0, onclick: () => go(order[i - 1]) }, '上一个'),
       h('button.btn.btn-sm', { disabled: i < 0 || i >= order.length - 1, onclick: () => go(order[i + 1]) }, '下一个'),
       h('span.small.muted', i >= 0 ? `当前筛选里第 ${i + 1} / ${order.length} 个` : '不在当前筛选里'),

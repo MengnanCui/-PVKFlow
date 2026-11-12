@@ -65,9 +65,7 @@ const S = {
 
 let refs = {};
 
-export function actions(nav) {
-  return [h('button.btn.btn-sm', { onclick: () => nav('process') }, '← 返回样品列表')];
-}
+// 「返回」由 app.js 统一放在页头（回你来的那一页；直接打开时回数据处理）
 
 export async function view(host, ctx) {
   // 上一次进这个页面挂的滚动监听要先摘掉 —— 一个 SPA 里翻十次样品就会

@@ -159,6 +159,10 @@ export const api = {
   batchRun: (body) => post('/api/batch/run', body),
   batchRuns: () => get('/api/batch/runs'),
   batchDetail: (id) => get(`/api/batch/runs/${id}`),
+  // 对比历史：改名、删之前看会带走什么、删（C077）
+  renameBatchRun: (id, title) => request(`/api/batch/runs/${id}`, { method: 'PATCH', body: { title } }),
+  batchRunFootprint: (id) => get(`/api/batch/runs/${id}/footprint`),
+  deleteBatchRun: (id) => request(`/api/batch/runs/${id}`, { method: 'DELETE' }),
   batchCurves: (id, params) => get(`/api/batch/runs/${id}/curves`, params),
   // 这批数据的波长轴/时间轴范围。模块控件声明 range_from 时要用
   batchAxes: (id) => get(`/api/batch/runs/${id}/axes`),

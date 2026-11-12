@@ -258,6 +258,23 @@ export function segmented(name, value, options, onPick) {
   return el;
 }
 
+/**
+ * 能点进去的表格行：鼠标点、Tab 到行上回车 / 空格都行（原来对比历史一份、别处没有，C077）。
+ * 行里有自己的按钮时，点按钮不算点行（按钮自己 stopPropagation 也行，这里先看 e.target）。
+ */
+export function rowLink(open, props, ...cells) {
+  const fromInner = (e) => e.target !== e.currentTarget && e.target.closest('button,a,input,select,textarea');
+  return h('tr.is-clickable', {
+    ...props,
+    tabindex: '0',
+    onclick: (e) => { if (!fromInner(e)) open(); },
+    onkeydown: (e) => {
+      if (e.target !== e.currentTarget) return;
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+    },
+  }, ...cells);
+}
+
 // ------------------------------------------------------------------ 状态视图
 export function empty(text, action) {
   return h('div.empty', h('div.empty-text', text), action ? h('div.empty-action', action) : null);

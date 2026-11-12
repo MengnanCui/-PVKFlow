@@ -1,8 +1,8 @@
-// 数据处理页：把选中的样品交给批处理 —— 确认对话框、排队、进度、跑完跳到对比页。
+// 数据处理页：把选中的样品交给批处理 —— 确认对话框，提交后落到对比页（进度在那里看）。
 
 import { api } from '../api.js';
-import { h, toast, busy, fmtInt, modal, statusText } from '../ui.js';
-import { S, hooks, refs } from './process-state.js';
+import { h, toast, busy, fmtInt, modal } from '../ui.js';
+import { S, refs } from './process-state.js';
 
 // 「选择即示例」那个建议条删掉了：它挂在列表上方向下弹出，一出现就把
 // 下面的样品行推走，正在挑样品的时候根本点不中。后端 /api/selection/suggest
@@ -101,9 +101,9 @@ export async function batchDialog(recipeOverride = null) {
             const r = await api.batchRun({ filter, recipe,
               title: title.trim() || `${pv.with_matrix} 个样品` });
             m.close();
-            S.task = r.task;
-            hooks.drawList();
-            startPolling(r.task.task_id);
+            // 和「直接对比」同一条路：落到对比页，进度在那里看（原来 AI 卡片发起的这条留在本页轮询，
+            // 两条路两套进度条，C077）
+            refs.nav('batch', { arg: r.task.task_id });
           } catch (err) {
             busy(e.target, false);
             toast(err.message, 'err', 6000);
@@ -112,81 +112,4 @@ export async function batchDialog(recipeOverride = null) {
       }, '开始'),
     ],
   });
-}
-
-export function progressBlock() {
-  const t = S.task;
-  const pct = t.percent ?? 0;
-  return h('div.progress-card.mb-3',
-    h('div.row-between',
-      h('div',
-        h('div.small.strong', t.title || '批处理'),
-        h('div.xsmall.dim.mt-2', t.message || statusText(t.status))),
-      h('div.row.gap-2',
-        t.done
-          ? h('button.btn.btn-sm', {
-              onclick: () => { S.task = null; hooks.drawList(); } }, '收起')
-          : h('button.btn.btn-sm', {
-              onclick: async (e) => {
-                busy(e.target, true);
-                try { await api.cancelTask(t.task_id); } catch (err) { toast(err.message, 'err'); }
-                busy(e.target, false);
-              } }, '取消'),
-        t.done && t.status === 'ok' && t.result?.parent_run_id
-          ? h('button.btn.btn-primary.btn-sm', {
-              onclick: () => refs.nav('batch', { arg: t.result.parent_run_id }),
-            }, '看结果')
-          : null)),
-    h('div.progress-bar', h('i', { style: { width: `${pct}%` } })),
-    h('div.row-between',
-      h('span.xsmall.dim', `${fmtInt(t.progress)} / ${fmtInt(t.total)}`),
-      h('span.xsmall.dim',
-        t.n_failed ? `${fmtInt(t.n_ok)} 成功 · ${fmtInt(t.n_failed)} 失败`
-                   : `${fmtInt(t.n_ok)} 成功`)));
-}
-
-
-function startPolling(taskId) {
-  stopPolling();
-  // 只在你还在这一页时轮询。原来离开之后照跑，跑完了把你从别的页面
-  // **强行拉到对比页** —— 你可能正看着别的东西。离开了就停；结果在「对比历史」里。
-  const alive = refs.alive || (() => true);
-  let misses = 0;
-  S.pollTimer = setInterval(async () => {
-    if (!alive()) { stopPolling(); return; }
-    try {
-      const t = await api.getTask(taskId);
-      if (!alive()) { stopPolling(); return; }
-      misses = 0;
-      S.task = t;
-      hooks.drawList();
-      if (t.done) {
-        stopPolling();
-        if (t.status === 'ok') {
-          toast(`处理完成：${t.n_ok} 成功` + (t.n_failed ? `，${t.n_failed} 失败` : ''), 'ok');
-          // 跑完直接落到对比页。以前还要再点一下「看结果」，而那个按钮
-          // 一刷新就没了 —— 「比完就没了、找不到在哪儿」说的就是这个。
-          // 现在它同时也进了「对比历史」，随时点得回来。
-          if (t.result?.parent_run_id) {
-            refs.nav('batch', { arg: t.result.parent_run_id });
-            return;
-          }
-          hooks.reload();
-        } else if (t.status === 'failed') {
-          toast(t.error?.split('\n')[0] || '批处理失败', 'err', 8000);
-        }
-      }
-    } catch (err) {
-      // 原来一次取不到就悄悄停掉，进度条从此卡住。偶尔一次失败再等等；
-      // 连着三次就停下并说出来
-      if (++misses >= 3) {
-        stopPolling();
-        if (alive()) toast(`取不到批处理进度：${err.message}。结果会出现在「对比历史」里`, 'warn', 8000);
-      }
-    }
-  }, 700);
-}
-
-export function stopPolling() {
-  if (S.pollTimer) { clearInterval(S.pollTimer); S.pollTimer = null; }
 }

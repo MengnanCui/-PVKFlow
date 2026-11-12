@@ -189,11 +189,11 @@ ol.steps li, ul.plain li { margin: 4px 0; }
     <span>基于提交 <code>14f5d19</code></span><span>分支 <code>claude/trusting-ride-pvg4aa</code></span>
   </div>
   <div class="cards">
-    <div class="card"><div class="k">修改报告</div><div class="v">76</div><div class="d">C001 – C076</div></div>
+    <div class="card"><div class="k">修改报告</div><div class="v">77</div><div class="d">C001 – C077</div></div>
     <div class="card"><div class="k">阶段</div><div class="v">P1–P18</div><div class="d">P18 = 全项目体检 + 交接文档</div></div>
     <div class="card"><div class="k">测试</div><div class="v">586</div><div class="d">全部通过；CI 每次推送都跑；另有浏览器验收 11 组（12 + 15 + 13 + 8 + 13 + 22 + 15 + 5 + 8 + 10 + 11 条）</div></div>
     <div class="card"><div class="k">你明确指定的</div><div class="v">58</div><div class="d">P-01 … P-58（P-54 … P-58 是 QFLS 成像的规格）</div></div>
-    <div class="card"><div class="k">我自行决定的</div><div class="v">196</div><div class="d">D-01 … D-196，<b>27</b> 项还待你确认</div></div>
+    <div class="card"><div class="k">我自行决定的</div><div class="v">199</div><div class="d">D-01 … D-199，<b>28</b> 项还待你确认</div></div>
     <div class="card"><div class="k">自查发现</div><div class="v">30 / 30</div><div class="d"><b>全部处理完</b>（P10 12 条 · P11 11 条 · P12 7 条）</div></div>
   </div>
 </header>
@@ -572,6 +572,9 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr data-c="平台"><td class="id">D-194</td><td class="nowrap">平台</td><td>任务中断收尾由各任务注册的 <code>on_interrupted</code> 做；批处理的收尾把所有「运行中」的分析运行标失败</td><td>原来两份收尾分在任务队列和 main.py 里，各管各的。</td><td>C074</td><td class="loc">app/tasks.py register · app/batch.py · app/qfls/task.py</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="平台"><td class="id">D-195</td><td class="nowrap">平台</td><td>请求体只收声明过的键（<code>app/api/bodies.py</code>），别的键回 400「不认识的参数」；<code>POST /api/settings</code> 例外（任意键，按 editable 核对）</td><td>原来拼错一个键静悄悄地被当成没给。</td><td>C075</td><td class="loc">app/api/bodies.py · app/main.py bad_request</td><td><span class="chip info">可随时改</span></td></tr>
 <tr data-c="显示"><td class="id">D-196</td><td class="nowrap">显示</td><td>前端一行最多 140 个字符（<code>glossary.js</code> 术语正文除外），测试守着；页面里不再自己拼指标卡 / 分段控件 / 下拉</td><td>新页面一百多行超长；共用组件各抄了几份。</td><td>C076</td><td class="loc">tests/test_frontend_style.py</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="显示"><td class="id">D-197</td><td class="nowrap">显示</td><td>下钻页（样品、批处理结果、QFLS 样点）的「返回」= 你来的那一页；同一页换参数沿用原来的来处，按「返回」回去那一步不记；没有来处（直接打开、刷新）时回页面声明的父页</td><td>原来样品页固定回数据处理，从别处点进来的也被送回去。</td><td>C077</td><td class="loc">web/js/app.js backOf</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="数据"><td class="id">D-198</td><td class="nowrap">数据</td><td>对比历史的名字最长 120 字，存在这次运行的参数里（和提交时填的名字同一个字段）</td><td>改名不该另起一个字段，导出和 AI 读到的是同一个名字。</td><td>C077</td><td class="loc">app/batch_history.py</td><td><span class="chip info">可随时改</span></td></tr>
+<tr data-c="数据" data-confirm="1"><td class="id">D-199</td><td class="nowrap">数据</td><td><strong>删除一次对比 = 删掉它写的关键结果</strong>：这些样品的当前值退回上一次对比算的（没有上一次就没有值），这次结果上的审核一起没了；曲线表文件、钉住的 AI 分析也删。原始数据、样品、别的对比、AI 对话不动；还在跑的不能删；删之前确认框列出会带走多少</td><td>另一种是「只藏起来、结果照样算数」—— 藏起来的结果还在当前值里，界面上却找不到是哪次算的。</td><td>C077</td><td class="loc">app/batch_history.py · web/js/pages/history.js</td><td><span class="chip warn">建议你确认</span></td></tr>
     </tbody>
   </table></div>
 </section>
@@ -846,6 +849,7 @@ ol.steps li, ul.plain li { margin: 4px 0; }
 <tr><td class="id"><a href="changes/C074_2026-11-10_本提交.md">C074</a></td><td class="nowrap">11-10</td><td>P19</td><td>技术债（后端二）：业务逻辑搬出路由、流式响应共用、批处理线程不碰库、上限、任务中断钩子、QFLS 分数由参数表驱动</td><td class="small">你的要求（修技术债）</td></tr>
 <tr><td class="id"><a href="changes/C075_2026-11-10_本提交.md">C075</a></td><td class="nowrap">11-10</td><td>P19</td><td>技术债（后端三）：请求体都有模型 —— /api/docs 看得出参数，拼错的键回 400</td><td class="small">你的要求（修技术债）</td></tr>
 <tr><td class="id"><a href="changes/C076_2026-11-12_本提交.md">C076</a></td><td class="nowrap">11-12</td><td>P19</td><td>技术债（前端一）：共用组件只留一份、离开页面真的中止请求、设置页不靠全局事件、智能体报错、长行</td><td class="small">你的要求（修技术债）</td></tr>
+<tr><td class="id"><a href="changes/C077_2026-11-12_本提交.md">C077</a></td><td class="nowrap">11-12</td><td>P19</td><td>技术债（前端二）：批处理一条路、下钻页回你来的地方、该点得进去的都点得进去、对比历史能改名能删</td><td class="small">你的要求（修技术债）</td></tr>
     </tbody>
   </table></div>
 </section>
